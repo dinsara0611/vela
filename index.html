@@ -1,0 +1,780 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vela | Premium Expense & Savings Tracker</title>
+    
+    <!-- PWA Settings -->
+    <link rel="manifest" href="manifest.json">
+    <meta name="theme-color" content="#0d0d11">
+    <link rel="apple-touch-icon" href="icon-192.png">
+    <link rel="icon" type="image/png" href="icon-192.png">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Chart.js -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    
+    <!-- Style Sheet -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar (Desktop Navigation) -->
+        <aside class="sidebar" id="sidebar">
+            <div class="sidebar-brand">
+                <div class="brand-logo">
+                    <svg viewBox="0 0 24 24" class="logo-icon" fill="none">
+                        <!-- Left foresail (purple) -->
+                        <path d="M8.5 6 L8.5 18 L4 17 Z" fill="rgba(155, 81, 224, 0.3)" stroke="#9b51e0" stroke-width="1.5"/>
+                        <!-- Mast (gray) -->
+                        <line x1="9.5" y1="4" x2="9.5" y2="20" stroke="#8e8e9f" stroke-width="1.8" stroke-linecap="round"/>
+                        <!-- Right mainsail (pinkish red) -->
+                        <path d="M10.5 5 Q17 11, 19 16 L10.5 19 Z" fill="#ff2a5f" stroke="#ff2a5f" stroke-width="1.5" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+                <span class="brand-name">Vela</span>
+            </div>
+            
+            <nav class="sidebar-nav">
+                <button class="nav-item active" data-tab="dashboard">
+                    <svg viewBox="0 0 24 24" class="nav-icon" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="7" height="9" rx="1" stroke-linecap="round" stroke-linejoin="round"/>
+                        <rect x="14" y="3" width="7" height="5" rx="1" stroke-linecap="round" stroke-linejoin="round"/>
+                        <rect x="14" y="12" width="7" height="9" rx="1" stroke-linecap="round" stroke-linejoin="round"/>
+                        <rect x="3" y="16" width="7" height="5" rx="1" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="nav-label">Dashboard</span>
+                </button>
+                <button class="nav-item" data-tab="expenses">
+                    <svg viewBox="0 0 24 24" class="nav-icon" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="12" y1="1" x2="12" y2="23" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="nav-label">Expenses</span>
+                </button>
+                <button class="nav-item" data-tab="savings">
+                    <svg viewBox="0 0 24 24" class="nav-icon" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" stroke-linecap="round" stroke-linejoin="round"/>
+                        <polyline points="17 21 17 13 7 13 7 21" stroke-linecap="round" stroke-linejoin="round"/>
+                        <polyline points="7 3 7 8 15 8" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="nav-label">Savings</span>
+                </button>
+                <button class="nav-item" data-tab="analytics">
+                    <svg viewBox="0 0 24 24" class="nav-icon" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="20" x2="18" y2="10" stroke-linecap="round" stroke-linejoin="round"/>
+                        <line x1="12" y1="20" x2="12" y2="4" stroke-linecap="round" stroke-linejoin="round"/>
+                        <line x1="6" y1="20" x2="6" y2="14" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="nav-label">Analytics</span>
+                </button>
+                <button class="nav-item" data-tab="settings">
+                    <svg viewBox="0 0 24 24" class="nav-icon" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="3" stroke-linecap="round" stroke-linejoin="round"/>
+                        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" stroke-linecap="round" stroke-linejoin="round"/>
+                    </svg>
+                    <span class="nav-label">Settings</span>
+                </button>
+            </nav>
+            
+            <div class="sidebar-footer">
+                <div class="avatar-container">
+                    <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=256" alt="Profile" class="avatar">
+                    <span class="status-indicator"></span>
+                </div>
+                <div class="user-meta">
+                    <div class="user-name">User Account</div>
+                    <div class="user-role">Master Planner</div>
+                </div>
+            </div>
+        </aside>
+
+        <!-- Bottom Navigation for Mobile -->
+        <nav class="bottom-nav">
+            <button class="bottom-nav-item active" data-tab="dashboard">
+                <svg viewBox="0 0 24 24" class="nav-icon" fill="none" stroke="currentColor" stroke-width="2">
+                    <rect x="3" y="3" width="7" height="9" rx="1" />
+                    <rect x="14" y="3" width="7" height="5" rx="1" />
+                    <rect x="14" y="12" width="7" height="9" rx="1" />
+                    <rect x="3" y="16" width="7" height="5" rx="1" />
+                </svg>
+            </button>
+            <button class="bottom-nav-item" data-tab="expenses">
+                <svg viewBox="0 0 24 24" class="nav-icon" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="12" y1="1" x2="12" y2="23"/>
+                    <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                </svg>
+            </button>
+            <button class="bottom-nav-item" data-tab="savings">
+                <svg viewBox="0 0 24 24" class="nav-icon" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+                    <polyline points="17 21 17 13 7 13 7 21"/>
+                    <polyline points="7 3 7 8 15 8"/>
+                </svg>
+            </button>
+            <button class="bottom-nav-item" data-tab="analytics">
+                <svg viewBox="0 0 24 24" class="nav-icon" fill="none" stroke="currentColor" stroke-width="2">
+                    <line x1="18" y1="20" x2="18" y2="10"/>
+                    <line x1="12" y1="20" x2="12" y2="4"/>
+                    <line x1="6" y1="20" x2="6" y2="14"/>
+                </svg>
+            </button>
+            <button class="bottom-nav-item" data-tab="settings">
+                <svg viewBox="0 0 24 24" class="nav-icon" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="12" r="3"/>
+                </svg>
+            </button>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Header (Global Top Bar) -->
+            <header class="top-header">
+                <div class="header-left">
+                    <h1 class="page-title" id="page-title">Dashboard</h1>
+                    <div class="live-status">
+                        <span class="pulse-dot" id="connection-indicator"></span>
+                        <span class="status-text" id="connection-status">Connecting Live Rates...</span>
+                    </div>
+                </div>
+                
+                <div class="header-right">
+                    <!-- Exchange Rate Notice -->
+                    <div class="rate-badge">
+                        <span class="rate-label">Rate:</span>
+                        <span class="rate-value" id="current-rate-display">1 USD = -- LKR</span>
+                    </div>
+                    
+                    <!-- Currency Toggle Switcher -->
+                    <div class="currency-toggle-wrapper">
+                        <button class="currency-btn active" id="currency-usd" data-currency="USD">USD</button>
+                        <button class="currency-btn" id="currency-lkr" data-currency="LKR">LKR</button>
+                    </div>
+                    
+                    <!-- Theme Toggle Button -->
+                    <div class="icon-action-btn" id="theme-toggle-btn" title="Toggle Light/Dark Mode" style="margin-right: 0.25rem;">
+                        <!-- Moon icon (for dark mode) -->
+                        <svg viewBox="0 0 24 24" class="header-icon theme-icon-dark" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                        </svg>
+                        <!-- Sun icon (for light mode) -->
+                        <svg viewBox="0 0 24 24" class="header-icon theme-icon-light" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="5" />
+                            <line x1="12" y1="1" x2="12" y2="3" />
+                            <line x1="12" y1="21" x2="12" y2="23" />
+                            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+                            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                            <line x1="1" y1="12" x2="3" y2="12" />
+                            <line x1="21" y1="12" x2="23" y2="12" />
+                            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+                            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                        </svg>
+                    </div>
+                    
+                    <!-- Notification Bell -->
+                    <div class="icon-action-btn">
+                        <svg viewBox="0 0 24 24" class="header-icon" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 0 1-3.46 0" />
+                        </svg>
+                    </div>
+                </div>
+            </header>
+
+            <!-- Content Screens -->
+            <div class="tab-content-container">
+                <!-- 1. DASHBOARD TAB -->
+                <div class="tab-pane active" id="tab-dashboard">
+                    <!-- Key Statistics Cards -->
+                    <section class="stats-grid">
+                        <!-- Stat Card 1 -->
+                        <div class="stat-card pink-glow">
+                            <div class="card-inner">
+                                <div class="stat-header">
+                                    <span class="stat-title">This Month's Spending</span>
+                                    <div class="stat-icon-wrapper bg-pink">
+                                        <svg viewBox="0 0 24 24" class="stat-card-icon" fill="none" stroke="currentColor" stroke-width="2">
+                                            <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" />
+                                            <polyline points="17 6 23 6 23 12" />
+                                        </svg>
+                                    </div>
+                                </div>
+                                <div class="stat-value text-glow" id="dash-month-spend">$0.00</div>
+                                <div class="stat-desc">
+                                    <span class="trend-down" id="dash-spend-trend">0% vs last month</span>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <!-- Stat Card 2 -->
+                        <div class="stat-card purple-glow">
+                            <div class="card-inner">
+                                <div class="stat-header">
+                                    <span class="stat-title">Total Savings Pool</span>
+                                    <div class="stat-icon-wrapper bg-purple">
+                                        <svg viewBox="0 0 24 24" class="stat-card-icon" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z" />
+                                            <path d="M12 6v12M8 10h8M8 14h8" />
+                                        </svg>
+                                    </div>
+                                </div>
+                                <div class="stat-value text-glow" id="dash-total-savings">$0.00</div>
+                                <div class="stat-desc">
+                                    <span class="trend-up" id="dash-savings-status">0 goals active</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Stat Card 3 -->
+                        <div class="stat-card orange-glow">
+                            <div class="card-inner">
+                                <div class="stat-header">
+                                    <span class="stat-title">Top Expense Category</span>
+                                    <div class="stat-icon-wrapper bg-orange">
+                                        <svg viewBox="0 0 24 24" class="stat-card-icon" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                                            <path d="M2 17l10 5 10-5M2 12l10 5 10-5" />
+                                        </svg>
+                                    </div>
+                                </div>
+                                <div class="stat-value text-glow" id="dash-top-category">None</div>
+                                <div class="stat-desc">
+                                    <span class="trend-neutral" id="dash-top-category-amount">0% of total</span>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Stat Card 4 (Monthly Budget Tracker) -->
+                        <div class="stat-card blue-glow" id="budget-stat-card">
+                            <div class="card-inner">
+                                <div class="stat-header">
+                                    <span class="stat-title" id="budget-card-title-text">Monthly Budget Limit</span>
+                                    <div class="stat-icon-wrapper bg-blue" id="budget-icon-wrapper">
+                                        <svg viewBox="0 0 24 24" class="stat-card-icon" fill="none" stroke="currentColor" stroke-width="2">
+                                            <rect x="2" y="5" width="20" height="14" rx="2" />
+                                            <line x1="2" y1="10" x2="22" y2="10" />
+                                        </svg>
+                                    </div>
+                                </div>
+                                <div class="stat-value text-glow" id="dash-budget-value">$0.00</div>
+                                <div class="stat-desc" style="width: 100%;">
+                                    <div class="progress-bar-bg" style="height: 6px; margin: 6px 0; border-radius: 3px;">
+                                        <div class="progress-bar-fill" id="dash-budget-progress-fill" style="width: 0%; height: 100%; border-radius: 3px; background: var(--accent-purple);"></div>
+                                    </div>
+                                    <span id="dash-budget-desc" class="trend-neutral">Spent 0% of budget</span>
+                                </div>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Middle Area: Mini Analytics -->
+                    <section class="dashboard-middle">
+                        <div class="dashboard-chart-card glass-card">
+                            <div class="card-header">
+                                <h3 class="card-title">Recent Spending Trend</h3>
+                                <div class="card-actions">
+                                    <button class="chart-time-btn active" data-range="30">30 Days</button>
+                                    <button class="chart-time-btn" data-range="360">360 Days</button>
+                                </div>
+                            </div>
+                            <div class="chart-container" style="position: relative; height: 260px; width: 100%;">
+                                <canvas id="dashboard-trend-chart"></canvas>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- Bottom Area: Recent Entries & Quick Actions -->
+                    <section class="dashboard-bottom-grid">
+                        <!-- Recent Transactions -->
+                        <div class="glass-card flex-grow">
+                            <div class="card-header">
+                                <h3 class="card-title">Recent Expenditures</h3>
+                                <button class="link-btn" id="go-to-expenses-btn">View All</button>
+                            </div>
+                            <div class="table-container">
+                                <table class="recent-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Description</th>
+                                            <th>Category</th>
+                                            <th>Date</th>
+                                            <th class="text-right">Amount</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="recent-transactions-tbody">
+                                        <!-- Dynamically injected -->
+                                        <tr class="empty-state">
+                                            <td colspan="4" class="text-center">No transactions logged yet. Click "Add Expense" below!</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                        
+                        <!-- Quick Console Actions -->
+                        <div class="glass-card quick-actions-card">
+                            <div class="card-header">
+                                <h3 class="card-title">Quick Actions</h3>
+                            </div>
+                            <div class="actions-button-grid">
+                                <button class="btn-primary" id="btn-quick-add-expense">
+                                    <svg viewBox="0 0 24 24" class="btn-icon" fill="none" stroke="currentColor" stroke-width="2.5">
+                                        <line x1="12" y1="5" x2="12" y2="19"/>
+                                        <line x1="5" y1="12" x2="19" y2="12"/>
+                                    </svg>
+                                    Add Expense
+                                </button>
+                                <button class="btn-secondary" id="btn-quick-add-savings">
+                                    <svg viewBox="0 0 24 24" class="btn-icon" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z" />
+                                        <line x1="12" y1="8" x2="12" y2="16"/>
+                                        <line x1="8" y1="12" x2="16" y2="12"/>
+                                    </svg>
+                                    Add Savings Goal
+                                </button>
+                                <button class="btn-glass" id="btn-quick-log-funds">
+                                    <svg viewBox="0 0 24 24" class="btn-icon" fill="none" stroke="currentColor" stroke-width="2">
+                                        <rect x="2" y="5" width="20" height="14" rx="2" />
+                                        <line x1="2" y1="10" x2="22" y2="10" />
+                                    </svg>
+                                    Deposit Savings
+                                </button>
+                            </div>
+                        </div>
+                    </section>
+                </div>
+
+                <!-- 2. EXPENSES TAB -->
+                <div class="tab-pane" id="tab-expenses">
+                    <div class="section-actions-bar">
+                        <div class="search-filter-wrapper">
+                            <input type="text" id="expense-search" class="input-field search-input" placeholder="Search transactions...">
+                            <select id="expense-filter-category" class="input-field select-input">
+                                <option value="all">All Categories</option>
+                                <option value="Food">Food</option>
+                                <option value="Utilities">Utilities</option>
+                                <option value="Rent">Rent</option>
+                                <option value="Entertainment">Entertainment</option>
+                                <option value="Travel">Travel</option>
+                                <option value="Health">Health</option>
+                                <option value="Shopping">Shopping</option>
+                                <option value="Other">Other</option>
+                            </select>
+                        </div>
+                        <button class="btn-primary" id="btn-add-expense-main">
+                            <svg viewBox="0 0 24 24" class="btn-icon" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"/>
+                                <line x1="5" y1="12" x2="19" y2="12"/>
+                            </svg>
+                            New Expense
+                        </button>
+                    </div>
+
+                    <!-- Ledger Table -->
+                    <div class="glass-card ledger-card">
+                        <div class="ledger-table-wrapper">
+                            <table class="ledger-table" id="ledger-table">
+                                <thead>
+                                    <tr>
+                                        <th>Date</th>
+                                        <th>Description</th>
+                                        <th>Category</th>
+                                        <th>Raw Value</th>
+                                        <th class="text-right">Converted Amount</th>
+                                        <th class="text-center">Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="ledger-tbody">
+                                    <!-- Injected via JavaScript -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. SAVINGS TAB -->
+                <div class="tab-pane" id="tab-savings">
+                    <div class="section-actions-bar flex-end">
+                        <button class="btn-primary" id="btn-add-savings-main">
+                            <svg viewBox="0 0 24 24" class="btn-icon" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="5" x2="12" y2="19"/>
+                                <line x1="5" y1="12" x2="19" y2="12"/>
+                            </svg>
+                            Create Goal
+                        </button>
+                    </div>
+
+                    <!-- Savings grid layout -->
+                    <div class="savings-grid" id="savings-grid">
+                        <!-- Injected via JavaScript -->
+                    </div>
+                </div>
+
+                <!-- 4. ANALYTICS TAB -->
+                <div class="tab-pane" id="tab-analytics">
+                    <!-- Range selectors -->
+                    <div class="analytics-filter-bar glass-card">
+                        <span class="filter-label">Analytics Scope</span>
+                        <div class="range-selector-buttons">
+                            <button class="range-btn active" data-analytics-range="30">30 Days</button>
+                            <button class="range-btn" data-analytics-range="360">360 Days</button>
+                            <button class="range-btn" data-analytics-range="lifetime">Lifetime</button>
+                        </div>
+                    </div>
+
+                    <!-- Large Chart Panel -->
+                    <div class="analytics-charts-grid">
+                        <div class="glass-card analytics-chart-main">
+                            <div class="card-header">
+                                <h3 class="card-title">Accumulated Spending Trend</h3>
+                            </div>
+                            <div class="chart-container" style="position: relative; height: 350px; width: 100%;">
+                                <canvas id="analytics-history-chart"></canvas>
+                            </div>
+                        </div>
+
+                        <div class="glass-card analytics-chart-secondary">
+                            <div class="card-header">
+                                <h3 class="card-title">Expense Category Breakdown</h3>
+                            </div>
+                            <div class="chart-container donut-chart-container" style="position: relative; height: 280px; width: 100%;">
+                                <canvas id="analytics-category-chart"></canvas>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Stats summaries -->
+                    <div class="analytics-metrics-grid">
+                        <div class="glass-card metric-pill">
+                            <span class="metric-title">Average Daily Outgoings</span>
+                            <span class="metric-num text-glow" id="metric-avg-daily">$0.00</span>
+                        </div>
+                        <div class="glass-card metric-pill">
+                            <span class="metric-title">Highest Cost Single Spend</span>
+                            <span class="metric-num text-glow" id="metric-max-spend">$0.00</span>
+                            <span class="metric-sub" id="metric-max-spend-title">N/A</span>
+                        </div>
+                        <div class="glass-card metric-pill">
+                            <span class="metric-title">Total Registered Items</span>
+                            <span class="metric-num text-glow" id="metric-total-items">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 5. SETTINGS TAB -->
+                <div class="tab-pane" id="tab-settings">
+                    <div class="settings-grid">
+                        <!-- Exchange Rate config -->
+                        <div class="glass-card settings-card">
+                            <div class="card-header">
+                                <h3 class="card-title">Currency Configuration</h3>
+                            </div>
+                            <div class="settings-card-body">
+                                <p class="setting-desc">Set the exchange rate conversion benchmark. vela will auto-fetch live feeds when online, but you can override and locks manually below.</p>
+                                <div class="form-group inline-form">
+                                    <div class="field-wrapper">
+                                        <label class="form-label">Exchange Rate Benchmark</label>
+                                        <div class="input-suffix-wrapper">
+                                            <span class="input-prefix">1 USD =</span>
+                                            <input type="number" id="setting-rate" class="input-field" step="0.01" min="0.01" value="300.00">
+                                            <span class="input-suffix">LKR</span>
+                                        </div>
+                                    </div>
+                                    <div class="inline-form-buttons">
+                                        <button class="btn-primary" id="btn-save-rate">Apply</button>
+                                        <button class="btn-secondary" id="btn-sync-rate">
+                                            <svg viewBox="0 0 24 24" class="btn-icon" fill="none" stroke="currentColor" stroke-width="2.5">
+                                                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+                                            </svg>
+                                            Sync Live
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Budget Configuration -->
+                        <div class="glass-card settings-card">
+                            <div class="card-header">
+                                <h3 class="card-title">Budget Configuration</h3>
+                            </div>
+                            <div class="settings-card-body">
+                                <p class="setting-desc">Set your preferred monthly spending ceiling. Vela will track your outgoings against this limit and update alerts when reached.</p>
+                                <div class="form-group inline-form">
+                                    <div class="field-wrapper">
+                                        <label class="form-label">Monthly Spending Limit</label>
+                                        <div class="input-suffix-wrapper">
+                                            <input type="number" id="setting-budget" class="input-field" step="1" min="1" value="1000">
+                                            <span class="input-suffix" id="setting-budget-currency-suffix">USD</span>
+                                        </div>
+                                    </div>
+                                    <div class="inline-form-buttons">
+                                        <button class="btn-primary" id="btn-save-budget" style="width: 100%;">Save Limit</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Data Backups & Reset -->
+                        <div class="glass-card settings-card">
+                            <div class="card-header">
+                                <h3 class="card-title">Data Storage Ledger Backups</h3>
+                            </div>
+                            <div class="settings-card-body">
+                                <p class="setting-desc">Vela keeps all of your financial records directly on your local device. Export or import backups to sync across other computers or backup your data.</p>
+                                <div class="backup-actions">
+                                    <button class="btn-secondary" id="btn-export-data">
+                                        <svg viewBox="0 0 24 24" class="btn-icon" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                            <polyline points="17 8 12 3 7 8" />
+                                            <line x1="12" y1="3" x2="12" y2="15" />
+                                        </svg>
+                                        Export Ledger Backup (.json)
+                                    </button>
+                                    <button class="btn-glass" id="btn-import-trigger">
+                                        <svg viewBox="0 0 24 24" class="btn-icon" fill="none" stroke="currentColor" stroke-width="2">
+                                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                            <polyline points="7 10 12 15 17 10" />
+                                            <line x1="12" y1="15" x2="12" y2="3" />
+                                        </svg>
+                                        Import Ledger Backup (.json)
+                                    </button>
+                                    <input type="file" id="file-import" style="display: none;" accept=".json">
+                                </div>
+                                <div class="reset-danger-zone">
+                                    <span class="danger-title">Danger Zone</span>
+                                    <button class="btn-danger" id="btn-wipe-data">Wipe Local Ledger Forever</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- PWA Installer -->
+                        <div class="glass-card settings-card install-card hidden" id="install-card">
+                            <div class="card-header">
+                                <h3 class="card-title">Install Vela Mobile App</h3>
+                            </div>
+                            <div class="settings-card-body">
+                                <p class="setting-desc">Install Vela as a full-screen application on your desktop, home screen, or mobile device. Run it offline anytime.</p>
+                                <button class="btn-primary" id="btn-install-pwa">Install Vela App</button>
+                            </div>
+                        </div>
+
+                        <!-- Hosting Guide -->
+                        <div class="glass-card settings-card">
+                            <div class="card-header">
+                                <h3 class="card-title">Deployment & Play Store Publishing Guide</h3>
+                            </div>
+                            <div class="settings-card-body guide-body">
+                                <details class="guide-details">
+                                    <summary>How do I host this on a free domain?</summary>
+                                    <div class="details-content">
+                                        <p>You can host this website completely for free using <strong>GitHub Pages</strong>, <strong>Netlify</strong>, or <strong>Vercel</strong>.</p>
+                                        <ol>
+                                            <li>Create a free account on <a href="https://github.com" target="_blank">GitHub</a>.</li>
+                                            <li>Create a new repository named <code>vela</code>.</li>
+                                            <li>Upload the files (<code>index.html</code>, <code>style.css</code>, <code>app.js</code>, <code>manifest.json</code>, <code>sw.js</code>, and the icons).</li>
+                                            <li>Go to repository <strong>Settings</strong> -> <strong>Pages</strong>.</li>
+                                            <li>Select the <code>main</code> branch and click <strong>Save</strong>.</li>
+                                            <li>Within 1-2 minutes, your dashboard will be live at <code>https://&lt;your-username&gt;.github.io/vela/</code> for free!</li>
+                                        </ol>
+                                    </div>
+                                </details>
+                                <details class="guide-details">
+                                    <summary>How do I build this into a mobile app for Google Play Store?</summary>
+                                    <div class="details-content">
+                                        <p>Since Vela is configured as a fully compliant Progressive Web App (PWA), you can package it into an Android app package (.apk / .aab) to upload to the Play Store for free.</p>
+                                        <ol>
+                                            <li>Deploy your app to a free domain (e.g. your GitHub Pages domain).</li>
+                                            <li>Visit <a href="https://www.pwabuilder.com" target="_blank">PWABuilder.com</a>.</li>
+                                            <li>Paste your GitHub Pages URL and click <strong>Start</strong>.</li>
+                                            <li>PWABuilder will automatically scan your manifest file and package details.</li>
+                                            <li>Click <strong>Generate App Package</strong> -> <strong>Android (Google Play)</strong>.</li>
+                                            <li>Download your signed <code>.aab</code> package and upload it directly to your Google Play Console!</li>
+                                        </ol>
+                                    </div>
+                                </details>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- GLOBAL DIALOG MODALS -->
+    
+    <!-- 1. ADD EXPENSE MODAL -->
+    <div class="modal-overlay" id="modal-expense">
+        <div class="modal-box glass-card scale-up">
+            <div class="modal-header">
+                <h3 class="modal-title" id="expense-modal-title">Log Expense</h3>
+                <button class="modal-close-btn" id="btn-close-expense-modal">
+                    <svg viewBox="0 0 24 24" class="modal-close-icon" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <form id="expense-form" class="modal-body">
+                <input type="hidden" id="expense-id">
+                
+                <div class="form-group">
+                    <label class="form-label" for="expense-desc">Description</label>
+                    <input type="text" id="expense-desc" class="input-field" placeholder="e.g. Grocery buy" required>
+                </div>
+                
+                <div class="form-row-2">
+                    <div class="form-group">
+                        <label class="form-label" for="expense-amount">Amount</label>
+                        <input type="number" id="expense-amount" class="input-field" step="0.01" min="0.01" placeholder="0.00" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="expense-currency">Currency</label>
+                        <select id="expense-currency" class="input-field select-input">
+                            <option value="USD">USD ($)</option>
+                            <option value="LKR">LKR (Rs.)</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="form-row-2">
+                    <div class="form-group">
+                        <label class="form-label" for="expense-category">Category</label>
+                        <select id="expense-category" class="input-field select-input" required>
+                            <option value="Food">Food</option>
+                            <option value="Utilities">Utilities</option>
+                            <option value="Rent">Rent</option>
+                            <option value="Entertainment">Entertainment</option>
+                            <option value="Travel">Travel</option>
+                            <option value="Health">Health</option>
+                            <option value="Shopping">Shopping</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="expense-date">Date</label>
+                        <input type="date" id="expense-date" class="input-field" required>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label" for="expense-note">Notes (Optional)</label>
+                    <textarea id="expense-note" class="input-field textarea-field" placeholder="Any additional notes..."></textarea>
+                </div>
+                
+                <div class="modal-footer">
+                    <button type="button" class="btn-glass" id="btn-cancel-expense-modal">Cancel</button>
+                    <button type="submit" class="btn-primary" id="btn-submit-expense">Save Record</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 2. ADD SAVINGS GOAL MODAL -->
+    <div class="modal-overlay" id="modal-savings-goal">
+        <div class="modal-box glass-card scale-up">
+            <div class="modal-header">
+                <h3 class="modal-title" id="savings-goal-modal-title">Create Savings Goal</h3>
+                <button class="modal-close-btn" id="btn-close-savings-goal-modal">
+                    <svg viewBox="0 0 24 24" class="modal-close-icon" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <form id="savings-goal-form" class="modal-body">
+                <input type="hidden" id="savings-goal-id">
+                
+                <div class="form-group">
+                    <label class="form-label" for="savings-goal-name">Goal Name</label>
+                    <input type="text" id="savings-goal-name" class="input-field" placeholder="e.g. New Laptop, Emergency Fund" required>
+                </div>
+                
+                <div class="form-row-2">
+                    <div class="form-group">
+                        <label class="form-label" for="savings-goal-target">Target Amount</label>
+                        <input type="number" id="savings-goal-target" class="input-field" step="0.01" min="0.01" placeholder="0.00" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="savings-goal-currency">Currency</label>
+                        <select id="savings-goal-currency" class="input-field select-input">
+                            <option value="USD">USD ($)</option>
+                            <option value="LKR">LKR (Rs.)</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label" for="savings-goal-initial">Initial Savings Balance</label>
+                    <input type="number" id="savings-goal-initial" class="input-field" step="0.01" min="0" placeholder="0.00" value="0.00">
+                </div>
+                
+                <div class="modal-footer">
+                    <button type="button" class="btn-glass" id="btn-cancel-savings-goal-modal">Cancel</button>
+                    <button type="submit" class="btn-primary" id="btn-submit-savings-goal">Create Goal</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- 3. ADD SAVINGS TRANSACTION MODAL (Log Funds) -->
+    <div class="modal-overlay" id="modal-savings-funds">
+        <div class="modal-box glass-card scale-up">
+            <div class="modal-header">
+                <h3 class="modal-title">Deposit Savings Funds</h3>
+                <button class="modal-close-btn" id="btn-close-funds-modal">
+                    <svg viewBox="0 0 24 24" class="modal-close-icon" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <form id="savings-funds-form" class="modal-body">
+                <div class="form-group">
+                    <label class="form-label" for="funds-select-goal">Select Savings Goal</label>
+                    <select id="funds-select-goal" class="input-field select-input" required>
+                        <!-- Dynamic options -->
+                    </select>
+                </div>
+                
+                <div class="form-row-2">
+                    <div class="form-group">
+                        <label class="form-label" for="funds-amount">Contribution Amount</label>
+                        <input type="number" id="funds-amount" class="input-field" step="0.01" min="0.01" placeholder="0.00" required>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label" for="funds-currency">Currency</label>
+                        <select id="funds-currency" class="input-field select-input">
+                            <option value="USD">USD ($)</option>
+                            <option value="LKR">LKR (Rs.)</option>
+                        </select>
+                    </div>
+                </div>
+                
+                <div class="modal-footer">
+                    <button type="button" class="btn-glass" id="btn-cancel-funds-modal">Cancel</button>
+                    <button type="submit" class="btn-primary">Confirm Deposit</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Service worker registration scripts -->
+    <script>
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', () => {
+                navigator.serviceWorker.register('sw.js')
+                    .then(reg => console.log('Service Worker Registered successfully.', reg.scope))
+                    .catch(err => console.log('Service Worker Registration failed.', err));
+            });
+        }
+    </script>
+    <script src="app.js"></script>
+</body>
+</html>
