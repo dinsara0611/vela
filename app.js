@@ -199,8 +199,8 @@ const toggleTheme = () => {
 const getChartThemeColors = () => {
     const isLight = state.config.theme === 'light';
     return {
-        grid: isLight ? 'rgba(0, 0, 0, 0.05)' : 'rgba(255, 255, 255, 0.04)',
-        text: isLight ? '#585866' : '#8e8e9f',
+        grid: isLight ? 'rgba(0, 0, 0, 0.07)' : 'rgba(255, 255, 255, 0.04)',
+        text: isLight ? '#2a2b36' : '#8e8e9f',
         tooltipBg: isLight ? '#ffffff' : '#161622',
         tooltipBorder: isLight ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.1)',
         tooltipText: isLight ? '#191921' : '#fff'

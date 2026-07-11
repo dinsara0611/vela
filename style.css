@@ -1424,6 +1424,31 @@ button {
 }
 
 [data-theme="light"] {
+    /* Brand visibility fix in light mode */
+    .brand-name {
+        background: linear-gradient(135deg, var(--text-primary), var(--text-secondary)) !important;
+        -webkit-background-clip: text !important;
+        -webkit-text-fill-color: transparent !important;
+    }
+    
+    .brand-logo {
+        background-color: rgba(98, 0, 238, 0.05) !important;
+        border-color: var(--accent-purple) !important;
+        box-shadow: 0 4px 12px rgba(98, 0, 238, 0.12) !important;
+    }
+    
+    .nav-item {
+        color: #4a4b57;
+    }
+    
+    .nav-item .nav-icon {
+        stroke: #4a4b57;
+    }
+    
+    .nav-item.active .nav-icon {
+        stroke: var(--accent-purple);
+    }
+
     /* Remove glowing text effects */
     .text-glow {
         text-shadow: none !important;
