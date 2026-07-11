@@ -22,6 +22,15 @@
     --text-secondary: #8e8e9f;
     --text-muted: #57576b;
     --card-shadow: none;
+    
+    /* Layout heights & widths */
+    --sidebar-width: 260px;
+    --header-height: 80px;
+    --bottom-nav-height: 0px; /* Overridden on mobile */
+    
+    /* Fonts */
+    --font-heading: 'Outfit', sans-serif;
+    --font-body: 'Inter', sans-serif;
 }
 
 [data-theme="light"] {
@@ -42,16 +51,6 @@
     --text-secondary: #585866;
     --text-muted: #8b8b9d;
     --card-shadow: 0 4px 18px rgba(0, 0, 0, 0.04);
-}
-    
-    /* Layout heights & widths */
-    --sidebar-width: 260px;
-    --header-height: 80px;
-    --bottom-nav-height: 0px; /* Overridden on mobile */
-    
-    /* Fonts */
-    --font-heading: 'Outfit', sans-serif;
-    --font-body: 'Inter', sans-serif;
 }
 
 /* Reset */
