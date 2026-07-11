@@ -1,8 +1,8 @@
-const CACHE_NAME = 'vela-cache-v5';
+const CACHE_NAME = 'vela-cache-v6';
 const ASSETS = [
   'index.html',
-  'style.css?v=1.4',
-  'app.js?v=1.4',
+  'style.css?v=1.5',
+  'app.js?v=1.5',
   'manifest.json',
   'icon-192.png',
   'icon-512.png',

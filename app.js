@@ -190,10 +190,58 @@ const applyTheme = (theme) => {
     refreshActivePane();
 };
 
-const toggleTheme = () => {
+const toggleTheme = (e) => {
     const currentTheme = state.config.theme || 'dark';
     const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-    applyTheme(newTheme);
+    
+    // Calculate ripple coordinates from click event or fallback to button center
+    let x, y;
+    if (e && e.clientX !== undefined && e.clientY !== undefined) {
+        x = e.clientX;
+        y = e.clientY;
+    } else {
+        const btn = document.getElementById('theme-toggle-btn');
+        if (btn) {
+            const rect = btn.getBoundingClientRect();
+            x = rect.left + rect.width / 2;
+            y = rect.top + rect.height / 2;
+        } else {
+            x = window.innerWidth / 2;
+            y = window.innerHeight / 2;
+        }
+    }
+    
+    // Create/retrieve ripple element overlay
+    let ripple = document.getElementById('theme-ripple');
+    if (!ripple) {
+        ripple = document.createElement('div');
+        ripple.id = 'theme-ripple';
+        document.body.appendChild(ripple);
+    }
+    
+    // Match colors and trigger clip-path ripple
+    ripple.style.backgroundColor = newTheme === 'light' ? '#f4f5f8' : '#07070b';
+    ripple.style.clipPath = `circle(0% at ${x}px ${y}px)`;
+    ripple.style.opacity = '1';
+    
+    // Force layout reflow
+    ripple.offsetHeight;
+    
+    // Expand circle ripple
+    ripple.style.clipPath = `circle(150% at ${x}px ${y}px)`;
+    
+    // Apply theme changes underneath midway
+    setTimeout(() => {
+        applyTheme(newTheme);
+    }, 350);
+    
+    // Fade out ripple overlay
+    setTimeout(() => {
+        ripple.style.opacity = '0';
+        setTimeout(() => {
+            ripple.style.clipPath = 'circle(0% at 50% 50%)';
+        }, 300);
+    }, 700);
 };
 
 const getChartThemeColors = () => {
@@ -1071,8 +1119,8 @@ window.openDepositModal = (goalId) => {
 
 // --- ACTION EVENT HANDLERS ---
 const initActionListeners = () => {
-    document.getElementById('theme-toggle-btn').addEventListener('click', () => {
-        toggleTheme();
+    document.getElementById('theme-toggle-btn').addEventListener('click', (e) => {
+        toggleTheme(e);
     });
 
     document.getElementById('go-to-expenses-btn').addEventListener('click', () => {
