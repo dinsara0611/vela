@@ -765,6 +765,22 @@
         </div>
     </div>
 
+    <!-- Custom Confirmation Modal Overlay -->
+    <div class="modal-overlay" id="modal-confirm">
+        <div class="modal-box confirm-box" style="max-width: 440px;">
+            <div class="modal-header">
+                <h3 class="modal-title" id="confirm-title">Confirm Action</h3>
+            </div>
+            <div class="modal-body" style="padding: 1.5rem 0 0.5rem 0;">
+                <p id="confirm-message" style="margin-bottom: 1.5rem; line-height: 1.6; color: var(--text-secondary); font-size: 0.95rem;"></p>
+                <div class="modal-footer" style="display: flex; gap: 0.75rem; justify-content: flex-end; padding-top: 1rem; border-top: 1px solid var(--border-color); margin-top: 1rem;">
+                    <button type="button" class="btn-glass" id="btn-confirm-cancel" style="padding: 0.5rem 1.25rem;">Cancel</button>
+                    <button type="button" class="btn-primary" id="btn-confirm-ok" style="background-color: var(--accent-purple); border-color: var(--accent-purple); padding: 0.5rem 1.25rem;">Proceed</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Service worker registration scripts -->
     <script>
         if ('serviceWorker' in navigator) {

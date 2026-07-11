@@ -14,6 +14,75 @@ let state = {
     }
 };
 
+// --- CUSTOM TOASTS & DIALOG SYSTEM ---
+const showToast = (message, type = 'success') => {
+    let container = document.getElementById('toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'toast-container';
+        document.body.appendChild(container);
+    }
+    
+    const toast = document.createElement('div');
+    toast.className = `toast-message toast-${type}`;
+    
+    let iconSvg = '';
+    if (type === 'success') {
+        iconSvg = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
+    } else if (type === 'error') {
+        iconSvg = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
+    } else {
+        iconSvg = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`;
+    }
+    
+    toast.innerHTML = `
+        <div class="toast-icon">${iconSvg}</div>
+        <div class="toast-text">${message}</div>
+    `;
+    
+    container.appendChild(toast);
+    
+    setTimeout(() => {
+        toast.classList.add('visible');
+    }, 10);
+    
+    setTimeout(() => {
+        toast.classList.remove('visible');
+        toast.classList.add('fade-out');
+        setTimeout(() => {
+            toast.remove();
+        }, 300);
+    }, 3500);
+};
+
+const showConfirm = (title, message, onConfirm) => {
+    const modal = document.getElementById('modal-confirm');
+    if (!modal) return;
+    
+    document.getElementById('confirm-title').textContent = title;
+    document.getElementById('confirm-message').textContent = message;
+    
+    modal.classList.add('active');
+    
+    const btnOk = document.getElementById('btn-confirm-ok');
+    const btnCancel = document.getElementById('btn-confirm-cancel');
+    
+    const newBtnOk = btnOk.cloneNode(true);
+    const newBtnCancel = btnCancel.cloneNode(true);
+    
+    btnOk.parentNode.replaceChild(newBtnOk, btnOk);
+    btnCancel.parentNode.replaceChild(newBtnCancel, btnCancel);
+    
+    newBtnOk.addEventListener('click', () => {
+        modal.classList.remove('active');
+        onConfirm();
+    });
+    
+    newBtnCancel.addEventListener('click', () => {
+        modal.classList.remove('active');
+    });
+};
+
 // --- INITIAL DATA SEEDING (IF EMPTY) ---
 const seedData = () => {
     if (state.expenses.length === 0 && state.savings.length === 0) {
@@ -59,7 +128,6 @@ const loadState = () => {
     if (data) {
         try {
             state = JSON.parse(data);
-            // Ensure config defaults exist
             if (!state.config) state.config = {};
             if (state.config.rate === undefined) state.config.rate = 300.00;
             if (state.config.currency === undefined) state.config.currency = 'USD';
@@ -119,8 +187,6 @@ const applyTheme = (theme) => {
     document.documentElement.setAttribute('data-theme', theme);
     state.config.theme = theme;
     saveState();
-    
-    // Refresh visual stats on active tab
     refreshActivePane();
 };
 
@@ -130,7 +196,6 @@ const toggleTheme = () => {
     applyTheme(newTheme);
 };
 
-// Helper to retrieve color configuration based on theme for Chart.js
 const getChartThemeColors = () => {
     const isLight = state.config.theme === 'light';
     return {
@@ -176,7 +241,7 @@ const fetchLiveExchangeRate = async (showNotification = false) => {
             refreshActivePane();
             
             if (showNotification) {
-                alert(`Successfully synced live rate: 1 USD = ${state.config.rate.toFixed(2)} LKR`);
+                showToast(`Successfully synced live exchange rate: 1 USD = ${state.config.rate.toFixed(2)} LKR`, 'success');
             }
         } else {
             throw new Error('Invalid rate response format');
@@ -184,7 +249,7 @@ const fetchLiveExchangeRate = async (showNotification = false) => {
     } catch (error) {
         console.warn('Unable to retrieve live rates. Falling back to cached rate.', error);
         
-        if (statusText) statusText.textContent = "Cloud Offline Mode (Cached Rate)";
+        if (statusText) statusText.textContent = "Cloud Offline (Cached Rate)";
         if (statusDot) {
             statusDot.style.backgroundColor = "var(--text-muted)";
             statusDot.style.boxShadow = "none";
@@ -193,7 +258,7 @@ const fetchLiveExchangeRate = async (showNotification = false) => {
         document.getElementById('current-rate-display').textContent = `1 USD = ${state.config.rate.toFixed(2)} LKR`;
         
         if (showNotification) {
-            alert(`Unable to fetch live rates. Using last cached rate: 1 USD = ${state.config.rate.toFixed(2)} LKR`);
+            showToast(`Offline. Loaded cached rate: 1 USD = ${state.config.rate.toFixed(2)} LKR`, 'info');
         }
     }
 };
@@ -208,7 +273,6 @@ const refreshActivePane = () => {
     else if (tabId === 'analytics') renderAnalyticsTab();
 };
 
-// --- CHARTS INSTANCE KEEPERS ---
 let dashboardTrendChart = null;
 let analyticsHistoryChart = null;
 let analyticsCategoryChart = null;
@@ -262,15 +326,12 @@ const initTabRouting = () => {
 };
 
 // --- UI DISPLAY DYNAMICS ---
-
-// 1. DASHBOARD SCREEN
 const renderDashboard = () => {
     const curr = state.config.currency;
     const now = new Date();
     const currentYear = now.getFullYear();
     const currentMonth = now.getMonth();
 
-    // Calculate this month's spending
     const monthlyExpenses = state.expenses.filter(exp => {
         const expDate = new Date(exp.date);
         return expDate.getFullYear() === currentYear && expDate.getMonth() === currentMonth;
@@ -282,7 +343,6 @@ const renderDashboard = () => {
 
     document.getElementById('dash-month-spend').textContent = formatCurrency(totalSpentThisMonth, curr);
 
-    // Calculate spend trends
     const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
     const prevMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear;
     
@@ -310,7 +370,6 @@ const renderDashboard = () => {
         spendTrendEl.className = 'trend-neutral';
     }
 
-    // Calculate Savings total pool
     const totalSavingsSaved = state.savings.reduce((sum, goal) => {
         return sum + convertToDisplayCurrency(goal.saved, goal.currency);
     }, 0);
@@ -318,7 +377,6 @@ const renderDashboard = () => {
     document.getElementById('dash-total-savings').textContent = formatCurrency(totalSavingsSaved, curr);
     document.getElementById('dash-savings-status').textContent = `${state.savings.length} active savings goals`;
 
-    // Calculate Top expense category this month
     const categoryTotals = {};
     monthlyExpenses.forEach(exp => {
         const val = convertToDisplayCurrency(exp.amount, exp.currency);
@@ -347,7 +405,7 @@ const renderDashboard = () => {
         topCategoryAmtEl.textContent = '0% of total spend';
     }
 
-    // --- MONTHLY BUDGET TRACKER STAT CARD ---
+    // Budget Progress Tracker Stat Card
     const budgetInDisplay = convertToDisplayCurrency(state.config.budget, 'USD');
     document.getElementById('dash-budget-value').textContent = formatCurrency(budgetInDisplay, curr);
     
@@ -355,7 +413,6 @@ const renderDashboard = () => {
     const budgetFillEl = document.getElementById('dash-budget-progress-fill');
     const budgetDescEl = document.getElementById('dash-budget-desc');
     const budgetIconWrapper = document.getElementById('budget-icon-wrapper');
-    const budgetCard = document.getElementById('budget-stat-card');
 
     if (budgetFillEl) {
         budgetFillEl.style.width = Math.min(100, budgetProgressPct) + '%';
@@ -363,8 +420,6 @@ const renderDashboard = () => {
 
     if (budgetDescEl) {
         budgetDescEl.textContent = `Spent ${budgetProgressPct.toFixed(0)}% of limit`;
-        
-        // Reset color indicators
         budgetDescEl.className = '';
         if (budgetProgressPct >= 100) {
             budgetDescEl.textContent += ' • Limit Exceeded!';
@@ -384,7 +439,6 @@ const renderDashboard = () => {
         }
     }
 
-    // Populate Recent Transactions
     const recentTbody = document.getElementById('recent-transactions-tbody');
     recentTbody.innerHTML = '';
 
@@ -419,7 +473,6 @@ const renderDashboard = () => {
     renderMiniTrendChart(30);
 };
 
-// 2. EXPENSES LEDGER SCREEN
 const renderExpensesList = () => {
     const tbody = document.getElementById('ledger-tbody');
     tbody.innerHTML = '';
@@ -484,7 +537,6 @@ const renderExpensesList = () => {
     });
 };
 
-// 3. SAVINGS GOALS SCREEN
 const renderSavingsGoals = () => {
     const grid = document.getElementById('savings-grid');
     grid.innerHTML = '';
@@ -559,7 +611,6 @@ const renderSavingsGoals = () => {
     });
 };
 
-// 4. ANALYTICS TABS SCREEN
 const renderAnalyticsTab = () => {
     const activeRangeBtn = document.querySelector('.range-btn.active');
     const range = activeRangeBtn ? activeRangeBtn.getAttribute('data-analytics-range') : '30';
@@ -603,17 +654,14 @@ const renderAnalyticsTab = () => {
     drawAnalyticsCategoryChart(filteredExpenses);
 };
 
-// 5. SETTINGS SCREEN
 const renderSettingsTab = () => {
     document.getElementById('setting-rate').value = state.config.rate.toFixed(2);
     
-    // Display budget limit converted to active currency in settings
     const budgetInDisplay = convertToDisplayCurrency(state.config.budget, 'USD');
     document.getElementById('setting-budget').value = Math.round(budgetInDisplay);
     document.getElementById('setting-budget-currency-suffix').textContent = state.config.currency;
 };
 
-// --- DATA FILTERING BY TIME RANGE ---
 const filterExpensesByRange = (range) => {
     const today = new Date();
     let filterDate = new Date();
@@ -918,7 +966,6 @@ const drawAnalyticsCategoryChart = (filteredExpenses) => {
     });
 };
 
-// --- DATA LOGGING & OPERATIONS ---
 const generateUniqueId = () => {
     return '_' + Math.random().toString(36).substr(2, 9);
 };
@@ -947,19 +994,21 @@ const formatShortDate = (dateStr) => {
 };
 
 const deleteExpense = (id) => {
-    if (confirm('Are you sure you want to delete this expense record?')) {
+    showConfirm('Delete Expense Record', 'Are you sure you want to delete this expense record permanently?', () => {
         state.expenses = state.expenses.filter(exp => exp.id !== id);
         saveState();
         renderExpensesList();
-    }
+        showToast('Expense record deleted successfully.', 'success');
+    });
 };
 
 const deleteSavingsGoal = (id) => {
-    if (confirm('Are you sure you want to delete this savings goal? All contribution logs will be deleted.')) {
+    showConfirm('Delete Savings Goal', 'Are you sure you want to delete this savings goal? All contribution history will be lost.', () => {
         state.savings = state.savings.filter(goal => goal.id !== id);
         saveState();
         renderSavingsGoals();
-    }
+        showToast('Savings goal deleted successfully.', 'success');
+    });
 };
 
 const toggleModal = (modalId, isOpen) => {
@@ -1022,7 +1071,6 @@ window.openDepositModal = (goalId) => {
 
 // --- ACTION EVENT HANDLERS ---
 const initActionListeners = () => {
-    // Top Theme toggler
     document.getElementById('theme-toggle-btn').addEventListener('click', () => {
         toggleTheme();
     });
@@ -1070,7 +1118,7 @@ const initActionListeners = () => {
 
     document.getElementById('btn-quick-log-funds').addEventListener('click', () => {
         if (state.savings.length === 0) {
-            alert('Please create a savings goal first.');
+            showToast('Please create a savings goal first.', 'info');
             return;
         }
         openDepositModal(state.savings[0].id);
@@ -1102,6 +1150,7 @@ const initActionListeners = () => {
 
         saveState();
         toggleModal('modal-expense', false);
+        showToast(id ? 'Expense record modified successfully.' : 'New expense record added successfully.', 'success');
         
         const activeTab = document.querySelector('.nav-item.active, .bottom-nav-item.active').getAttribute('data-tab');
         if (activeTab === 'dashboard') renderDashboard();
@@ -1129,6 +1178,7 @@ const initActionListeners = () => {
 
         saveState();
         toggleModal('modal-savings-goal', false);
+        showToast(id ? 'Savings goal updated successfully.' : 'New savings goal established successfully.', 'success');
 
         const activeTab = document.querySelector('.nav-item.active, .bottom-nav-item.active').getAttribute('data-tab');
         if (activeTab === 'dashboard') renderDashboard();
@@ -1151,6 +1201,7 @@ const initActionListeners = () => {
             saveState();
             toggleModal('modal-savings-funds', false);
             document.getElementById('savings-funds-form').reset();
+            showToast('Deposit logged successfully.', 'success');
 
             const activeTab = document.querySelector('.nav-item.active, .bottom-nav-item.active').getAttribute('data-tab');
             if (activeTab === 'dashboard') renderDashboard();
@@ -1192,9 +1243,9 @@ const initActionListeners = () => {
             state.config.rate = value;
             saveState();
             document.getElementById('current-rate-display').textContent = `1 USD = ${value.toFixed(2)} LKR`;
-            alert(`Exchange rate set to 1 USD = ${value.toFixed(2)} LKR successfully.`);
+            showToast(`Exchange rate manually set to 1 USD = ${value.toFixed(2)} LKR.`, 'success');
         } else {
-            alert('Please input a valid conversion rate.');
+            showToast('Please enter a valid conversion rate.', 'error');
         }
     });
 
@@ -1203,15 +1254,13 @@ const initActionListeners = () => {
         const budgetInput = document.getElementById('setting-budget');
         const value = parseFloat(budgetInput.value);
         if (value > 0) {
-            // Treat input value as current display currency; convert to base currency (USD) for storage
             const budgetInUsd = convertAmount(value, state.config.currency, 'USD');
             state.config.budget = budgetInUsd;
             saveState();
-            
-            alert(`Monthly spending limit set to ${formatCurrency(value, state.config.currency)} successfully.`);
+            showToast(`Monthly spending limit set to ${formatCurrency(value, state.config.currency)} successfully.`, 'success');
             refreshActivePane();
         } else {
-            alert('Please input a valid budget ceiling.');
+            showToast('Please enter a valid budget limit.', 'error');
         }
     });
 
@@ -1229,6 +1278,7 @@ const initActionListeners = () => {
         document.body.appendChild(downloadAnchor);
         downloadAnchor.click();
         downloadAnchor.remove();
+        showToast('Ledger backup file exported successfully.', 'success');
     });
 
     const importTrigger = document.getElementById('btn-import-trigger');
@@ -1246,23 +1296,25 @@ const initActionListeners = () => {
                 if (importedState.expenses && importedState.savings && importedState.config) {
                     state = importedState;
                     saveState();
-                    alert('Vela data import successful!');
-                    window.location.reload();
+                    showToast('Vela ledger backup imported successfully!', 'success');
+                    setTimeout(() => {
+                        window.location.reload();
+                    }, 1000);
                 } else {
-                    alert('Invalid file format. Make sure you use a file generated by Vela.');
+                    showToast('Invalid ledger format file.', 'error');
                 }
             } catch (err) {
-                alert('Failed to parse JSON file.');
+                showToast('Failed to parse ledger JSON data.', 'error');
             }
         };
         reader.readAsText(file);
     });
 
     document.getElementById('btn-wipe-data').addEventListener('click', () => {
-        if (confirm('CAUTION: This will permanently delete your entire local Vela database. This action cannot be undone. Proceed?')) {
+        showConfirm('Wipe Local Ledger Database', 'CAUTION: This will permanently delete your entire local Vela database. This action is irreversible. Proceed?', () => {
             localStorage.removeItem('VELA_STATE');
             window.location.reload();
-        }
+        });
     });
 
     document.getElementById('expense-search').addEventListener('input', renderExpensesList);
@@ -1288,8 +1340,6 @@ const initActionListeners = () => {
     });
 };
 
-// --- PROGRESSIVE WEB APP (PWA) INSTALL LOGIC ---
-let deferredPrompt = null;
 const initPwaInstallation = () => {
     const installCard = document.getElementById('install-card');
     const installBtn = document.getElementById('btn-install-pwa');
@@ -1325,14 +1375,11 @@ const initPwaInstallation = () => {
 
 // --- INITIALIZE APPLICATION ON LOAD ---
 document.addEventListener('DOMContentLoaded', () => {
-    // 1. Load State
     loadState();
     
-    // 2. Set theme configurations
     const activeTheme = state.config.theme || 'dark';
     document.documentElement.setAttribute('data-theme', activeTheme);
     
-    // 3. Set display rate
     document.getElementById('current-rate-display').textContent = `1 USD = ${state.config.rate.toFixed(2)} LKR`;
     
     const curr = state.config.currency;
@@ -1344,11 +1391,9 @@ document.addEventListener('DOMContentLoaded', () => {
         document.getElementById('currency-lkr').classList.add('active');
     }
 
-    // 4. Init handlers
     initTabRouting();
     initActionListeners();
     initPwaInstallation();
     
-    // 5. Query live currency feed
     fetchLiveExchangeRate(false);
 });
