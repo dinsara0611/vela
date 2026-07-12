@@ -11,6 +11,36 @@ let state = {
         currency: 'USD', // Default display currency: USD
         theme: 'dark',  // Default theme: dark
         budget: 1000.00 // Default monthly spending budget limit (in USD)
+    },
+    auth: {
+        user: null,               // { id, email, full_name, avatar_url }
+        isMock: true,             // Default true until user links Supabase
+        completedOnboarding: false
+    }
+};
+
+// --- SUPABASE CLIENT SETUP ---
+// REPLACE these placeholders with your actual Supabase credentials.
+// When left blank, Vela will automatically operate in offline 'Mock Auth' mode.
+const SUPABASE_URL = "https://kxtpcswywdvtasxanccz.supabase.co";
+const SUPABASE_ANON_KEY = "sb_publishable_TVtBSlap2TpS9mtyZv455Q_0pc-TNYH";
+
+let supabaseClient = null;
+
+const initSupabase = () => {
+    if (SUPABASE_URL && SUPABASE_ANON_KEY && !SUPABASE_URL.includes("your-project-url")) {
+        try {
+            if (window.supabase) {
+                supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+                console.log("Supabase client initialized successfully.");
+            } else {
+                console.warn("Supabase library not loaded. Running in Mock Auth mode.");
+            }
+        } catch (err) {
+            console.error("Failed to initialize Supabase Client:", err);
+        }
+    } else {
+        console.log("Vela is running in local 'Mock Auth' mode. Check c:\\Users\\dinsa\\Documents\\Life expense cal\\supabase_setup_guide.md to link database.");
     }
 };
 
@@ -85,37 +115,35 @@ const showConfirm = (title, message, onConfirm) => {
 
 // --- INITIAL DATA SEEDING (IF EMPTY) ---
 const seedData = () => {
-    if (state.expenses.length === 0 && state.savings.length === 0) {
-        const today = new Date();
-        const createPastDate = (daysAgo) => {
-            const d = new Date();
-            d.setDate(today.getDate() - daysAgo);
-            return d.toISOString().split('T')[0];
-        };
+    const today = new Date();
+    const createPastDate = (daysAgo) => {
+        const d = new Date();
+        d.setDate(today.getDate() - daysAgo);
+        return d.toISOString().split('T')[0];
+    };
 
-        state.expenses = [
-            { id: '1', desc: 'Grocery Store Buy', amount: 45.50, currency: 'USD', category: 'Food', date: createPastDate(2), note: 'Weekly groceries' },
-            { id: '2', desc: 'Electricity Bill', amount: 15000.00, currency: 'LKR', category: 'Utilities', date: createPastDate(5), note: 'Monthly electricity bill' },
-            { id: '3', desc: 'House Rental payment', amount: 400.00, currency: 'USD', category: 'Rent', date: createPastDate(12), note: 'Monthly house lease' },
-            { id: '4', desc: 'Netflix Subscription', amount: 15.49, currency: 'USD', category: 'Entertainment', date: createPastDate(15), note: 'Streaming service' },
-            { id: '5', desc: 'Uber Ride', amount: 2400.00, currency: 'LKR', category: 'Travel', date: createPastDate(18), note: 'Taxi to office' },
-            { id: '6', desc: 'Pharmacy Meds', amount: 35.00, currency: 'USD', category: 'Health', date: createPastDate(25), note: 'Prescriptions' },
-            { id: '7', desc: 'Office Chair Upgrade', amount: 120.00, currency: 'USD', category: 'Shopping', date: createPastDate(45), note: 'Ergonomic chair' },
-            { id: '8', desc: 'Gas Station Refuel', amount: 8500.00, currency: 'LKR', category: 'Travel', date: createPastDate(60), note: 'Full tank fuel' },
-            { id: '9', desc: 'Internet Broadband', amount: 4800.00, currency: 'LKR', category: 'Utilities', date: createPastDate(75), note: 'Fiber line' },
-            { id: '10', desc: 'Fine Dining Dinner', amount: 95.00, currency: 'USD', category: 'Food', date: createPastDate(110), note: 'Birthday dinner' },
-            { id: '11', desc: 'Software Course Subscription', amount: 200.00, currency: 'USD', category: 'Entertainment', date: createPastDate(200), note: 'E-learning site' },
-            { id: '12', desc: 'Annual Car Insurance', amount: 380.00, currency: 'USD', category: 'Other', date: createPastDate(300), note: 'Full coverage insurance' }
-        ];
+    state.expenses = [
+        { id: '1', desc: 'Grocery Store Buy', amount: 45.50, currency: 'USD', category: 'Food', date: createPastDate(2), note: 'Weekly groceries' },
+        { id: '2', desc: 'Electricity Bill', amount: 15000.00, currency: 'LKR', category: 'Utilities', date: createPastDate(5), note: 'Monthly electricity bill' },
+        { id: '3', desc: 'House Rental payment', amount: 400.00, currency: 'USD', category: 'Rent', date: createPastDate(12), note: 'Monthly house lease' },
+        { id: '4', desc: 'Netflix Subscription', amount: 15.49, currency: 'USD', category: 'Entertainment', date: createPastDate(15), note: 'Streaming service' },
+        { id: '5', desc: 'Uber Ride', amount: 2400.00, currency: 'LKR', category: 'Travel', date: createPastDate(18), note: 'Taxi to office' },
+        { id: '6', desc: 'Pharmacy Meds', amount: 35.00, currency: 'USD', category: 'Health', date: createPastDate(25), note: 'Prescriptions' },
+        { id: '7', desc: 'Office Chair Upgrade', amount: 120.00, currency: 'USD', category: 'Shopping', date: createPastDate(45), note: 'Ergonomic chair' },
+        { id: '8', desc: 'Gas Station Refuel', amount: 8500.00, currency: 'LKR', category: 'Travel', date: createPastDate(60), note: 'Full tank fuel' },
+        { id: '9', desc: 'Internet Broadband', amount: 4800.00, currency: 'LKR', category: 'Utilities', date: createPastDate(75), note: 'Fiber line' },
+        { id: '10', desc: 'Fine Dining Dinner', amount: 95.00, currency: 'USD', category: 'Food', date: createPastDate(110), note: 'Birthday dinner' },
+        { id: '11', desc: 'Software Course Subscription', amount: 200.00, currency: 'USD', category: 'Entertainment', date: createPastDate(200), note: 'E-learning site' },
+        { id: '12', desc: 'Annual Car Insurance', amount: 380.00, currency: 'USD', category: 'Other', date: createPastDate(300), note: 'Full coverage insurance' }
+    ];
 
-        state.savings = [
-            { id: 's1', name: 'Emergency Contingency Fund', target: 5000.00, currency: 'USD', saved: 2400.00 },
-            { id: 's2', name: 'Next-Gen Macbook Pro M4', target: 2500.00, currency: 'USD', saved: 750.00 },
-            { id: 's3', name: 'Local Travel Fund', target: 150000.00, currency: 'LKR', saved: 45000.00 }
-        ];
-        
-        saveState();
-    }
+    state.savings = [
+        { id: 's1', name: 'Emergency Contingency Fund', target: 5000.00, currency: 'USD', saved: 2400.00 },
+        { id: 's2', name: 'Next-Gen Macbook Pro M4', target: 2500.00, currency: 'USD', saved: 750.00 },
+        { id: 's3', name: 'Local Travel Fund', target: 150000.00, currency: 'LKR', saved: 45000.00 }
+    ];
+    
+    saveState();
 };
 
 // --- DATA PERSISTENCE ---
@@ -133,25 +161,28 @@ const loadState = () => {
             if (state.config.currency === undefined) state.config.currency = 'USD';
             if (state.config.theme === undefined) state.config.theme = 'dark';
             if (state.config.budget === undefined) state.config.budget = 1000.00;
+            
+            // Check auth segment fallback
+            if (!state.auth) {
+                state.auth = {
+                    user: null,
+                    isMock: true,
+                    completedOnboarding: false
+                };
+            }
         } catch (e) {
             console.error('Error loading stored Vela state:', e);
         }
     } else {
-        const oldData = localStorage.getItem('NIXLEDGER_STATE');
-        if (oldData) {
-            try {
-                state = JSON.parse(oldData);
-                if (!state.config) state.config = {};
-                if (state.config.theme === undefined) state.config.theme = 'dark';
-                if (state.config.budget === undefined) state.config.budget = 1000.00;
-                saveState();
-                console.log('Migrated NixLedger storage key to Vela key.');
-            } catch (e) {
-                seedData();
-            }
-        } else {
-            seedData();
-        }
+        // First Time User: Initialize with empty logs and set up onboarding structure
+        state.expenses = [];
+        state.savings = [];
+        state.auth = {
+            user: null,
+            isMock: true,
+            completedOnboarding: false
+        };
+        saveState();
     }
 };
 
@@ -1045,6 +1076,7 @@ const deleteExpense = (id) => {
     showConfirm('Delete Expense Record', 'Are you sure you want to delete this expense record permanently?', () => {
         state.expenses = state.expenses.filter(exp => exp.id !== id);
         saveState();
+        syncDeleteExpense(id);
         renderExpensesList();
         showToast('Expense record deleted successfully.', 'success');
     });
@@ -1054,11 +1086,11 @@ const deleteSavingsGoal = (id) => {
     showConfirm('Delete Savings Goal', 'Are you sure you want to delete this savings goal? All contribution history will be lost.', () => {
         state.savings = state.savings.filter(goal => goal.id !== id);
         saveState();
+        syncDeleteSaving(id);
         renderSavingsGoals();
         showToast('Savings goal deleted successfully.', 'success');
     });
 };
-
 const toggleModal = (modalId, isOpen) => {
     const modal = document.getElementById(modalId);
     if (isOpen) {
@@ -1186,17 +1218,23 @@ const initActionListeners = () => {
         const date = document.getElementById('expense-date').value;
         const note = document.getElementById('expense-note').value;
 
+        let record = null;
         if (id) {
             const index = state.expenses.findIndex(exp => exp.id === id);
             if (index !== -1) {
-                state.expenses[index] = { id, desc, amount, currency, category, date, note };
+                record = { id, desc, amount, currency, category, date, note };
+                state.expenses[index] = record;
             }
         } else {
             const newId = generateUniqueId();
-            state.expenses.push({ id: newId, desc, amount, currency, category, date, note });
+            record = { id: newId, desc, amount, currency, category, date, note };
+            state.expenses.push(record);
         }
 
         saveState();
+        if (record) {
+            syncAddOrUpdateExpense(record); // Supabase sync
+        }
         toggleModal('modal-expense', false);
         showToast(id ? 'Expense record modified successfully.' : 'New expense record added successfully.', 'success');
         
@@ -1214,17 +1252,23 @@ const initActionListeners = () => {
         const currency = document.getElementById('savings-goal-currency').value;
         const saved = parseFloat(document.getElementById('savings-goal-initial').value) || 0;
 
+        let record = null;
         if (id) {
             const index = state.savings.findIndex(g => g.id === id);
             if (index !== -1) {
-                state.savings[index] = { id, name, target, currency, saved };
+                record = { id, name, target, currency, saved };
+                state.savings[index] = record;
             }
         } else {
             const newId = generateUniqueId();
-            state.savings.push({ id: newId, name, target, currency, saved });
+            record = { id: newId, name, target, currency, saved };
+            state.savings.push(record);
         }
 
         saveState();
+        if (record) {
+            syncAddOrUpdateSaving(record); // Supabase sync
+        }
         toggleModal('modal-savings-goal', false);
         showToast(id ? 'Savings goal updated successfully.' : 'New savings goal established successfully.', 'success');
 
@@ -1247,6 +1291,7 @@ const initActionListeners = () => {
             state.savings[goalIndex].saved += convertedContribution;
             
             saveState();
+            syncAddOrUpdateSaving(state.savings[goalIndex]); // Supabase sync
             toggleModal('modal-savings-funds', false);
             document.getElementById('savings-funds-form').reset();
             showToast('Deposit logged successfully.', 'success');
@@ -1388,6 +1433,721 @@ const initActionListeners = () => {
     });
 };
 
+// --- DATA SYNC WITH SUPABASE ---
+const syncAddOrUpdateExpense = async (expense) => {
+    if (!supabaseClient || state.auth.isMock) return;
+    try {
+        const { error } = await supabaseClient
+            .from('expenses')
+            .upsert({
+                id: expense.id,
+                user_id: state.auth.user.id,
+                description: expense.desc,
+                amount: expense.amount,
+                currency: expense.currency,
+                category: expense.category,
+                date: expense.date,
+                note: expense.note
+            });
+        if (error) throw error;
+        console.log("Expense synced to Supabase:", expense.id);
+    } catch (err) {
+        console.error("Failed to sync expense to Supabase:", err);
+    }
+};
+
+const syncDeleteExpense = async (id) => {
+    if (!supabaseClient || state.auth.isMock) return;
+    try {
+        const { error } = await supabaseClient
+            .from('expenses')
+            .delete()
+            .eq('id', id);
+        if (error) throw error;
+        console.log("Expense deleted from Supabase:", id);
+    } catch (err) {
+        console.error("Failed to delete expense from Supabase:", err);
+    }
+};
+
+const syncAddOrUpdateSaving = async (saving) => {
+    if (!supabaseClient || state.auth.isMock) return;
+    try {
+        const { error } = await supabaseClient
+            .from('savings')
+            .upsert({
+                id: saving.id,
+                user_id: state.auth.user.id,
+                name: saving.name,
+                target: saving.target,
+                currency: saving.currency,
+                saved: saving.saved
+            });
+        if (error) throw error;
+        console.log("Savings goal synced to Supabase:", saving.id);
+    } catch (err) {
+        console.error("Failed to sync savings goal to Supabase:", err);
+    }
+};
+
+const syncDeleteSaving = async (id) => {
+    if (!supabaseClient || state.auth.isMock) return;
+    try {
+        const { error } = await supabaseClient
+            .from('savings')
+            .delete()
+            .eq('id', id);
+        if (error) throw error;
+        console.log("Savings goal deleted from Supabase:", id);
+    } catch (err) {
+        console.error("Failed to delete savings goal from Supabase:", err);
+    }
+};
+
+// Sync whole ledger from Supabase (pull)
+const pullLedgerFromSupabase = async () => {
+    if (!supabaseClient || state.auth.isMock) return;
+    try {
+        console.log("Fetching ledger data from Supabase...");
+        const [expensesResult, savingsResult] = await Promise.all([
+            supabaseClient.from('expenses').select('*'),
+            supabaseClient.from('savings').select('*')
+        ]);
+
+        if (expensesResult.error) throw expensesResult.error;
+        if (savingsResult.error) throw savingsResult.error;
+
+        state.expenses = (expensesResult.data || []).map(row => ({
+            id: row.id,
+            desc: row.description,
+            amount: parseFloat(row.amount),
+            currency: row.currency,
+            category: row.category,
+            date: row.date,
+            note: row.note
+        }));
+
+        state.savings = (savingsResult.data || []).map(row => ({
+            id: row.id,
+            name: row.name,
+            target: parseFloat(row.target),
+            currency: row.currency,
+            saved: parseFloat(row.saved)
+        }));
+
+        saveState();
+        console.log("Supabase ledger successfully loaded.");
+    } catch (err) {
+        console.error("Failed to pull ledger data from Supabase:", err);
+        showToast("Database pull failed. Using local cached records.", "error");
+    }
+};
+
+// Push whole local ledger to Supabase (bulk upload)
+const pushLocalLedgerToSupabase = async () => {
+    if (!supabaseClient || state.auth.isMock || !state.auth.user) return;
+    try {
+        console.log("Uploading local ledger to Supabase...");
+        
+        if (state.expenses.length > 0) {
+            const expensesRows = state.expenses.map(exp => ({
+                id: exp.id,
+                user_id: state.auth.user.id,
+                description: exp.desc,
+                amount: exp.amount,
+                currency: exp.currency,
+                category: exp.category,
+                date: exp.date,
+                note: exp.note
+            }));
+            const { error } = await supabaseClient.from('expenses').upsert(expensesRows);
+            if (error) throw error;
+        }
+
+        if (state.savings.length > 0) {
+            const savingsRows = state.savings.map(goal => ({
+                id: goal.id,
+                user_id: state.auth.user.id,
+                name: goal.name,
+                target: goal.target,
+                currency: goal.currency,
+                saved: goal.saved
+            }));
+            const { error } = await supabaseClient.from('savings').upsert(savingsRows);
+            if (error) throw error;
+        }
+
+        console.log("Local ledger uploaded successfully to Supabase.");
+    } catch (err) {
+        console.error("Failed to upload local ledger to Supabase:", err);
+    }
+};
+
+// --- USER PROFILE PROFILE ACTIONS ---
+const handleAvatarUpload = async (file) => {
+    if (!file) return;
+    
+    const maxSize = 2 * 1024 * 1024; // 2MB
+    if (file.size > maxSize) {
+        showToast("File size too large. Limit is 2MB.", "error");
+        return;
+    }
+
+    showToast("Uploading profile picture...", "info");
+    
+    if (supabaseClient && !state.auth.isMock && state.auth.user) {
+        try {
+            const fileExt = file.name.split('.').pop();
+            const fileName = `${state.auth.user.id}/${Date.now()}.${fileExt}`;
+            
+            // Upload to Storage
+            const { data, error } = await supabaseClient.storage
+                .from('avatars')
+                .upload(fileName, file, { cacheControl: '3600', upsert: true });
+                
+            if (error) throw error;
+            
+            // Get Public URL
+            const { data: { publicUrl } } = supabaseClient.storage
+                .from('avatars')
+                .getPublicUrl(fileName);
+                
+            // Update Profile in DB
+            const { error: profileError } = await supabaseClient
+                .from('profiles')
+                .upsert({
+                    id: state.auth.user.id,
+                    avatar_url: publicUrl,
+                    updated_at: new Date().toISOString()
+                });
+                
+            if (profileError) throw profileError;
+            
+            state.auth.user.avatar_url = publicUrl;
+            saveState();
+            updateUserProfileUI();
+            showToast("Profile image updated!", "success");
+        } catch (err) {
+            console.error("Upload failed:", err);
+            showToast("Failed to upload image to Supabase storage.", "error");
+        }
+    } else {
+        // Mock mode: Convert to base64 Data URL and save locally
+        const reader = new FileReader();
+        reader.onload = () => {
+            if (!state.auth.user) {
+                state.auth.user = { id: 'mock-user-1', email: 'guest@vela.io', full_name: 'Vela User' };
+            }
+            state.auth.user.avatar_url = reader.result;
+            saveState();
+            updateUserProfileUI();
+            showToast("Profile image updated locally!", "success");
+        };
+        reader.onerror = () => showToast("Failed to read image file.", "error");
+        reader.readAsDataURL(file);
+    }
+};
+
+const saveProfileChanges = async () => {
+    const usernameInput = document.getElementById('profile-username');
+    const newName = usernameInput.value.trim();
+    if (!newName) {
+        showToast("Please enter a valid display name.", "error");
+        return;
+    }
+
+    if (!state.auth.user) {
+        state.auth.user = { id: 'mock-user-1', email: 'guest@vela.io', full_name: 'Vela User' };
+    }
+    
+    state.auth.user.full_name = newName;
+    saveState();
+
+    if (supabaseClient && !state.auth.isMock && state.auth.user) {
+        try {
+            const { error } = await supabaseClient
+                .from('profiles')
+                .upsert({
+                    id: state.auth.user.id,
+                    full_name: newName,
+                    username: newName,
+                    updated_at: new Date().toISOString()
+                });
+            if (error) throw error;
+            showToast("Username updated on cloud!", "success");
+        } catch (err) {
+            console.error("Profile db update failed:", err);
+            showToast("Failed to update name on cloud. Saved locally.", "warning");
+        }
+    } else {
+        showToast("Profile name updated locally!", "success");
+    }
+
+    updateUserProfileUI();
+};
+
+const updateUserProfileUI = () => {
+    const avatarImg = document.getElementById('sidebar-user-avatar');
+    const nameEl = document.getElementById('sidebar-user-name');
+    const roleEl = document.getElementById('sidebar-user-role');
+    const profilePreviewImg = document.getElementById('profile-avatar-preview');
+    const profileUsernameInput = document.getElementById('profile-username');
+    const profileEmailInput = document.getElementById('profile-email-readonly');
+
+    const defaultAvatar = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=256";
+    
+    if (state.auth.user) {
+        const user = state.auth.user;
+        const avatarSrc = user.avatar_url || defaultAvatar;
+        
+        if (avatarImg) avatarImg.src = avatarSrc;
+        if (profilePreviewImg) profilePreviewImg.src = avatarSrc;
+        
+        const displayName = user.full_name || "Vela User";
+        if (nameEl) nameEl.textContent = displayName;
+        if (profileUsernameInput) profileUsernameInput.value = displayName;
+        
+        if (profileEmailInput) profileEmailInput.value = user.email || "guest@vela.io";
+        if (roleEl) {
+            roleEl.textContent = state.auth.isMock ? "Guest Account" : "Sync Account";
+        }
+    } else {
+        if (avatarImg) avatarImg.src = defaultAvatar;
+        if (profilePreviewImg) profilePreviewImg.src = defaultAvatar;
+        if (nameEl) nameEl.textContent = "Guest User";
+        if (roleEl) roleEl.textContent = "Local Only";
+        if (profileUsernameInput) profileUsernameInput.value = "Guest User";
+        if (profileEmailInput) profileEmailInput.value = "guest@vela.io";
+    }
+};
+
+// --- AUTHENTICATION ACTIONS & ONBOARDING CONTROLLERS ---
+let onboardingPreference = 'demo'; // Default
+
+const navigateToOnboardingStep = (stepNumber) => {
+    const steps = document.querySelectorAll('.auth-step');
+    steps.forEach(step => step.classList.remove('active'));
+
+    const targetStep = document.getElementById(`auth-step-${stepNumber}`);
+    if (targetStep) targetStep.classList.add('active');
+
+    // Show step dots only for onboarding steps 2, 3, 4. Hide for step 1 (login screen)
+    const indicators = document.getElementById('auth-step-indicators');
+    if (indicators) {
+        if (stepNumber === 1) {
+            indicators.style.display = 'none';
+        } else {
+            indicators.style.display = 'flex';
+        }
+    }
+
+    const dots = document.querySelectorAll('.step-indicators .dot');
+    dots.forEach(dot => {
+        const dotStep = parseInt(dot.getAttribute('data-step'));
+        if (dotStep === stepNumber) {
+            dot.classList.add('active');
+        } else {
+            dot.classList.remove('active');
+        }
+    });
+};
+
+const handleSignUp = async (email, password, fullName) => {
+    showToast("Creating account...", "info");
+    if (supabaseClient) {
+        try {
+            const { data, error } = await supabaseClient.auth.signUp({
+                email,
+                password,
+                options: {
+                    data: {
+                        full_name: fullName,
+                        username: fullName
+                    }
+                }
+            });
+            if (error) throw error;
+            
+            if (data.user) {
+                state.auth.user = {
+                    id: data.user.id,
+                    email: data.user.email,
+                    full_name: fullName,
+                    avatar_url: null
+                };
+                state.auth.isMock = false;
+                
+                saveState();
+                updateUserProfileUI();
+                
+                if (state.auth.completedOnboarding) {
+                    document.getElementById('auth-overlay-container').classList.remove('active');
+                    showToast("Account created! Logged in successfully.", "success");
+                    refreshActivePane();
+                } else {
+                    showToast("Account created! Welcome to Vela.", "success");
+                    navigateToOnboardingStep(2);
+                }
+            }
+        } catch (err) {
+            console.error("Sign up failed:", err);
+            showToast(err.message || "Sign up failed.", "error");
+        }
+    } else {
+        // Mock Sign Up
+        state.auth.user = {
+            id: 'mock-user-' + Math.random().toString(36).substr(2, 9),
+            email,
+            full_name: fullName,
+            avatar_url: null
+        };
+        state.auth.isMock = true;
+        
+        saveState();
+        updateUserProfileUI();
+        
+        if (state.auth.completedOnboarding) {
+            document.getElementById('auth-overlay-container').classList.remove('active');
+            showToast("Mock Account Created! (Supabase offline)", "success");
+            refreshActivePane();
+        } else {
+            showToast("Mock Account Created! (Supabase offline)", "success");
+            navigateToOnboardingStep(2);
+        }
+    }
+};
+
+const handleSignIn = async (email, password) => {
+    showToast("Logging in...", "info");
+    if (supabaseClient) {
+        try {
+            const { data, error } = await supabaseClient.auth.signInWithPassword({
+                email,
+                password
+            });
+            if (error) throw error;
+            
+            if (data.user) {
+                let fullName = "Vela User";
+                let avatarUrl = null;
+                try {
+                    const { data: profile } = await supabaseClient
+                        .from('profiles')
+                        .select('*')
+                        .eq('id', data.user.id)
+                        .maybeSingle();
+                        
+                    if (profile) {
+                        fullName = profile.full_name || profile.username || fullName;
+                        avatarUrl = profile.avatar_url || avatarUrl;
+                    }
+                } catch (pErr) {
+                    console.warn("Could not query user profile details:", pErr);
+                }
+                
+                state.auth.user = {
+                    id: data.user.id,
+                    email: data.user.email,
+                    full_name: fullName,
+                    avatar_url: avatarUrl
+                };
+                state.auth.isMock = false;
+                
+                if (state.auth.completedOnboarding) {
+                    await pullLedgerFromSupabase();
+                }
+                
+                saveState();
+                updateUserProfileUI();
+                
+                if (state.auth.completedOnboarding) {
+                    document.getElementById('auth-overlay-container').classList.remove('active');
+                    showToast("Welcome back! Logged in successfully.", "success");
+                    refreshActivePane();
+                } else {
+                    showToast("Logged in successfully! Setting up your space...", "success");
+                    navigateToOnboardingStep(2);
+                }
+            }
+        } catch (err) {
+            console.error("Sign in failed:", err);
+            showToast(err.message || "Sign in failed.", "error");
+        }
+    } else {
+        // Mock Sign In
+        state.auth.user = {
+            id: 'mock-user-1',
+            email,
+            full_name: "Mock Master Planner",
+            avatar_url: null
+        };
+        state.auth.isMock = true;
+        
+        saveState();
+        updateUserProfileUI();
+        
+        if (state.auth.completedOnboarding) {
+            document.getElementById('auth-overlay-container').classList.remove('active');
+            showToast("Mock Login Successful! (Supabase offline)", "success");
+            refreshActivePane();
+        } else {
+            showToast("Mock Login Successful! (Supabase offline)", "success");
+            navigateToOnboardingStep(2);
+        }
+    }
+};
+
+const handleGoogleSignIn = async () => {
+    showToast("Redirecting to Google...", "info");
+    if (supabaseClient) {
+        try {
+            const { error } = await supabaseClient.auth.signInWithOAuth({
+                provider: 'google',
+                options: {
+                    redirectTo: window.location.origin + window.location.pathname
+                }
+            });
+            if (error) throw error;
+        } catch (err) {
+            console.error("Google Auth failed:", err);
+            showToast("Google sign in redirection failed.", "error");
+        }
+    } else {
+        // Mock Google Login
+        state.auth.user = {
+            id: 'mock-google-user',
+            email: 'google.guest@vela.io',
+            full_name: 'Google Mock Guest',
+            avatar_url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=256'
+        };
+        state.auth.isMock = true;
+        
+        saveState();
+        updateUserProfileUI();
+        
+        if (state.auth.completedOnboarding) {
+            document.getElementById('auth-overlay-container').classList.remove('active');
+            showToast("Mock Google Sign In Success!", "success");
+            refreshActivePane();
+        } else {
+            showToast("Mock Google Sign In Success!", "success");
+            navigateToOnboardingStep(2);
+        }
+    }
+};
+
+const handleGuestSignIn = () => {
+    state.auth.user = { id: 'guest-local-user', email: 'guest@vela.io', full_name: 'Guest Planner', avatar_url: null };
+    state.auth.isMock = true;
+    
+    saveState();
+    updateUserProfileUI();
+    
+    if (state.auth.completedOnboarding) {
+        document.getElementById('auth-overlay-container').classList.remove('active');
+        showToast("Exploring as Guest (Local mode)", "info");
+        refreshActivePane();
+    } else {
+        showToast("Guest access granted! Welcome.", "info");
+        navigateToOnboardingStep(2);
+    }
+};
+
+const handleSignOut = async () => {
+    showConfirm("Sign Out Account", "Are you sure you want to sign out? Your cloud data is safe, and logging back in will restore your profile.", async () => {
+        showToast("Signing out...", "info");
+        if (supabaseClient && !state.auth.isMock) {
+            try {
+                await supabaseClient.auth.signOut();
+            } catch (e) {
+                console.error("Supabase signOut error:", e);
+            }
+        }
+        
+        state.auth.user = null;
+        state.auth.completedOnboarding = false;
+        state.expenses = [];
+        state.savings = [];
+        
+        saveState();
+        updateUserProfileUI();
+        
+        const overlay = document.getElementById('auth-overlay-container');
+        if (overlay) overlay.classList.add('active');
+        
+        navigateToOnboardingStep(1);
+        showToast("Signed out. Welcome screen reset.", "success");
+    });
+};
+
+const initAuthActionListeners = () => {
+    // Next Buttons
+    document.querySelectorAll('.btn-onboard-next').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const nextStep = parseInt(btn.getAttribute('data-next-step'));
+            navigateToOnboardingStep(nextStep);
+        });
+    });
+
+    // Prev Buttons
+    document.querySelectorAll('.btn-onboard-prev').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const prevStep = parseInt(btn.getAttribute('data-prev-step'));
+            navigateToOnboardingStep(prevStep);
+        });
+    });
+
+    // Seeding Preference Options
+    const optDemo = document.getElementById('opt-demo-data');
+    const optFresh = document.getElementById('opt-fresh-start');
+
+    if (optDemo && optFresh) {
+        optDemo.addEventListener('click', () => {
+            optDemo.classList.add('active');
+            optFresh.classList.remove('active');
+            onboardingPreference = 'demo';
+        });
+
+        optFresh.addEventListener('click', () => {
+            optFresh.classList.add('active');
+            optDemo.classList.remove('active');
+            onboardingPreference = 'fresh';
+        });
+    }
+
+    // Toggle forms: Sign In vs Sign Up
+    const btnToggleSignIn = document.getElementById('btn-toggle-signin');
+    const btnToggleSignUp = document.getElementById('btn-toggle-signup');
+    const formSignIn = document.getElementById('form-signin');
+    const formSignUp = document.getElementById('form-signup');
+
+    if (btnToggleSignIn && btnToggleSignUp) {
+        btnToggleSignIn.addEventListener('click', () => {
+            btnToggleSignIn.classList.add('active');
+            btnToggleSignUp.classList.remove('active');
+            formSignIn.classList.remove('hidden');
+            formSignUp.classList.add('hidden');
+        });
+
+        btnToggleSignUp.addEventListener('click', () => {
+            btnToggleSignUp.classList.add('active');
+            btnToggleSignIn.classList.remove('active');
+            formSignUp.classList.remove('hidden');
+            formSignIn.classList.add('hidden');
+        });
+    }
+
+    // Submit Forms
+    if (formSignIn) {
+        formSignIn.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const email = document.getElementById('signin-email').value.trim();
+            const password = document.getElementById('signin-password').value.trim();
+            if (email && password) {
+                handleSignIn(email, password);
+            }
+        });
+    }
+
+    if (formSignUp) {
+        formSignUp.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const name = document.getElementById('signup-name').value.trim();
+            const email = document.getElementById('signup-email').value.trim();
+            const password = document.getElementById('signup-password').value.trim();
+            if (name && email && password) {
+                handleSignUp(email, password, name);
+            }
+        });
+    }
+
+    // Skip / Guest Auth
+    const btnSkipAuth = document.getElementById('btn-skip-auth');
+    if (btnSkipAuth) {
+        btnSkipAuth.addEventListener('click', () => {
+            handleGuestSignIn();
+        });
+    }
+
+    // Google Sign In
+    const btnGoogle = document.getElementById('btn-google-login');
+    if (btnGoogle) {
+        btnGoogle.addEventListener('click', () => {
+            handleGoogleSignIn();
+        });
+    }
+
+    // Onboarding Complete Action Button
+    const btnCompleteOnboarding = document.getElementById('btn-complete-onboarding');
+    if (btnCompleteOnboarding) {
+        btnCompleteOnboarding.addEventListener('click', async () => {
+            state.auth.completedOnboarding = true;
+            if (onboardingPreference === 'demo') {
+                seedData();
+            } else {
+                state.expenses = [];
+                state.savings = [];
+            }
+            saveState();
+            updateUserProfileUI();
+            
+            // Sync to supabase if not mock
+            if (supabaseClient && !state.auth.isMock && state.auth.user) {
+                await pushLocalLedgerToSupabase();
+            }
+            
+            document.getElementById('auth-overlay-container').classList.remove('active');
+            showToast("Setup completed! Enjoy Vela.", "success");
+            refreshActivePane();
+        });
+    }
+
+    // Settings Profile changes
+    const clickZone = document.getElementById('profile-avatar-click-zone');
+    const avatarInput = document.getElementById('profile-avatar-input');
+    if (clickZone && avatarInput) {
+        clickZone.addEventListener('click', () => avatarInput.click());
+        avatarInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                handleAvatarUpload(file);
+            }
+        });
+    }
+
+    const btnSaveProfile = document.getElementById('btn-save-profile');
+    if (btnSaveProfile) {
+        btnSaveProfile.addEventListener('click', () => {
+            saveProfileChanges();
+        });
+    }
+
+    const btnLogout = document.getElementById('btn-auth-logout');
+    if (btnLogout) {
+        btnLogout.addEventListener('click', () => {
+            handleSignOut();
+        });
+    }
+
+    // Sidebar footer shortcuts
+    const sidebarAvatar = document.getElementById('sidebar-avatar-btn');
+    const sidebarMeta = document.getElementById('sidebar-user-meta-btn');
+    
+    const jumpToSettings = () => {
+        const settingsTabBtn = document.querySelector('[data-tab="settings"]');
+        if (settingsTabBtn) {
+            settingsTabBtn.click();
+            const profileCard = document.getElementById('settings-profile-card');
+            if (profileCard) {
+                profileCard.scrollIntoView({ behavior: 'smooth' });
+            }
+        }
+    };
+
+    if (sidebarAvatar) sidebarAvatar.addEventListener('click', jumpToSettings);
+    if (sidebarMeta) sidebarMeta.addEventListener('click', jumpToSettings);
+};
+
 const initPwaInstallation = () => {
     const installCard = document.getElementById('install-card');
     const installBtn = document.getElementById('btn-install-pwa');
@@ -1424,6 +2184,8 @@ const initPwaInstallation = () => {
 // --- INITIALIZE APPLICATION ON LOAD ---
 document.addEventListener('DOMContentLoaded', () => {
     loadState();
+    initSupabase();
+    initAuthActionListeners();
     
     const activeTheme = state.config.theme || 'dark';
     document.documentElement.setAttribute('data-theme', activeTheme);
@@ -1442,6 +2204,89 @@ document.addEventListener('DOMContentLoaded', () => {
     initTabRouting();
     initActionListeners();
     initPwaInstallation();
+    
+    // Auth initialization and state checks
+    if (supabaseClient) {
+        supabaseClient.auth.onAuthStateChange(async (event, session) => {
+            if (session && session.user) {
+                let fullName = session.user.user_metadata.full_name || session.user.email.split('@')[0];
+                let avatarUrl = session.user.user_metadata.avatar_url || null;
+                
+                try {
+                    const { data: profile } = await supabaseClient
+                        .from('profiles')
+                        .select('*')
+                        .eq('id', session.user.id)
+                        .maybeSingle();
+                    if (profile) {
+                        fullName = profile.full_name || profile.username || fullName;
+                        avatarUrl = profile.avatar_url || avatarUrl;
+                    }
+                } catch (pe) {
+                    console.log("Error querying profile table:", pe);
+                }
+                
+                state.auth.user = {
+                    id: session.user.id,
+                    email: session.user.email,
+                    full_name: fullName,
+                    avatar_url: avatarUrl
+                };
+                state.auth.isMock = false;
+
+                // Check if user has remote records to auto-bypass onboarding for returning users
+                let hasRemoteData = false;
+                try {
+                    const { data: remoteExpenses } = await supabaseClient.from('expenses').select('id').limit(1);
+                    const { data: remoteSavings } = await supabaseClient.from('savings').select('id').limit(1);
+                    if ((remoteExpenses && remoteExpenses.length > 0) || (remoteSavings && remoteSavings.length > 0)) {
+                        hasRemoteData = true;
+                    }
+                } catch (err) {
+                    console.warn("Could not check remote data status:", err);
+                }
+                
+                if (hasRemoteData || state.auth.completedOnboarding) {
+                    state.auth.completedOnboarding = true;
+                    await pullLedgerFromSupabase();
+                    saveState();
+                    updateUserProfileUI();
+                    
+                    const authOverlay = document.getElementById('auth-overlay-container');
+                    if (authOverlay) authOverlay.classList.remove('active');
+                    refreshActivePane();
+                } else {
+                    saveState();
+                    updateUserProfileUI();
+                    
+                    const authOverlay = document.getElementById('auth-overlay-container');
+                    if (authOverlay) authOverlay.classList.add('active');
+                    navigateToOnboardingStep(2);
+                }
+            } else {
+                if (!state.auth.completedOnboarding) {
+                    const authOverlay = document.getElementById('auth-overlay-container');
+                    if (authOverlay) authOverlay.classList.add('active');
+                    navigateToOnboardingStep(1);
+                } else {
+                    updateUserProfileUI();
+                    const authOverlay = document.getElementById('auth-overlay-container');
+                    if (authOverlay) authOverlay.classList.remove('active');
+                }
+            }
+        });
+    } else {
+        // Mock / Offline Auth check
+        if (!state.auth.completedOnboarding) {
+            const authOverlay = document.getElementById('auth-overlay-container');
+            if (authOverlay) authOverlay.classList.add('active');
+            navigateToOnboardingStep(1);
+        } else {
+            updateUserProfileUI();
+            const authOverlay = document.getElementById('auth-overlay-container');
+            if (authOverlay) authOverlay.classList.remove('active');
+        }
+    }
     
     fetchLiveExchangeRate(false);
 });

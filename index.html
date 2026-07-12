@@ -22,7 +22,7 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     
     <!-- Style Sheet -->
-    <link rel="stylesheet" href="style.css?v=1.5">
+    <link rel="stylesheet" href="style.css?v=1.7">
 </head>
 <body>
     <div class="app-container">
@@ -85,13 +85,13 @@
             </nav>
             
             <div class="sidebar-footer">
-                <div class="avatar-container">
-                    <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=256" alt="Profile" class="avatar">
+                <div class="avatar-container" id="sidebar-avatar-btn" style="cursor: pointer;">
+                    <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=256" alt="Profile" class="avatar" id="sidebar-user-avatar">
                     <span class="status-indicator"></span>
                 </div>
-                <div class="user-meta">
-                    <div class="user-name">User Account</div>
-                    <div class="user-role">Master Planner</div>
+                <div class="user-meta" id="sidebar-user-meta-btn" style="cursor: pointer;">
+                    <div class="user-name" id="sidebar-user-name">User Account</div>
+                    <div class="user-role" id="sidebar-user-role">Master Planner</div>
                 </div>
             </div>
         </aside>
@@ -462,7 +462,7 @@
                         </div>
                         <div class="glass-card metric-pill">
                             <span class="metric-title">Total Registered Items</span>
-                            <span class="metric-num text-glow" id="metric-total-items">0</span>
+                                    <span class="metric-num text-glow" id="metric-total-items">0</span>
                         </div>
                     </div>
                 </div>
@@ -470,6 +470,45 @@
                 <!-- 5. SETTINGS TAB -->
                 <div class="tab-pane" id="tab-settings">
                     <div class="settings-grid">
+                        <!-- User Profile Settings -->
+                        <div class="glass-card settings-card" id="settings-profile-card">
+                            <div class="card-header">
+                                <h3 class="card-title">User Profile</h3>
+                            </div>
+                            <div class="settings-card-body">
+                                <div class="profile-settings-wrapper">
+                                    <div class="profile-avatar-upload-zone">
+                                        <div class="profile-avatar-preview-container" id="profile-avatar-click-zone">
+                                            <img src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=256" alt="Profile Picture" class="profile-avatar-preview" id="profile-avatar-preview">
+                                            <div class="avatar-upload-overlay">
+                                                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width: 24px; height: 24px; color: #fff;">
+                                                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                                                    <circle cx="12" cy="13" r="4"/>
+                                                </svg>
+                                            </div>
+                                        </div>
+                                        <input type="file" id="profile-avatar-input" style="display: none;" accept="image/*">
+                                        <span class="avatar-upload-note">Click to upload avatar</span>
+                                    </div>
+                                    
+                                    <div class="profile-info-form">
+                                        <div class="form-group">
+                                            <label class="form-label" for="profile-username">Display Name</label>
+                                            <input type="text" id="profile-username" class="input-field" placeholder="Your Name" value="User Account">
+                                        </div>
+                                        <div class="form-group">
+                                            <label class="form-label" for="profile-email-readonly">Email Address</label>
+                                            <input type="email" id="profile-email-readonly" class="input-field" value="guest@vela.io" readonly disabled style="opacity: 0.6; cursor: not-allowed;">
+                                        </div>
+                                        <div class="profile-action-buttons">
+                                            <button class="btn-primary" id="btn-save-profile">Save Changes</button>
+                                            <button class="btn-danger" id="btn-auth-logout">Sign Out</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
                         <!-- Exchange Rate config -->
                         <div class="glass-card settings-card">
                             <div class="card-header">
@@ -791,6 +830,192 @@
             });
         }
     </script>
-    <script src="app.js?v=1.5"></script>
+
+    <!-- AUTH & ONBOARDING OVERLAY -->
+    <div class="auth-overlay-container active" id="auth-overlay-container">
+        <div class="auth-box glass-card scale-up">
+            <!-- STEP 1: Login / Register (Supabase) -->
+            <div class="auth-step active" id="auth-step-1">
+                <div class="auth-brand-logo" style="margin-bottom: 0.25rem;">
+                    <svg viewBox="0 0 24 24" class="logo-icon-large" style="width: 56px; height: 56px;" fill="none">
+                        <!-- Left foresail (purple) -->
+                        <path d="M8.5 6 L8.5 18 L4 17 Z" fill="rgba(155, 81, 224, 0.3)" stroke="#9b51e0" stroke-width="1.5"/>
+                        <!-- Mast (gray) -->
+                        <line x1="9.5" y1="4" x2="9.5" y2="20" stroke="#8e8e9f" stroke-width="1.8" stroke-linecap="round"/>
+                        <!-- Right mainsail (pinkish red) -->
+                        <path d="M10.5 5 Q17 11, 19 16 L10.5 19 Z" fill="#ff2a5f" stroke="#ff2a5f" stroke-width="1.5" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+                <h2 class="auth-title" style="font-size: 2.2rem; text-align: center; margin-bottom: 0.25rem;">Vela</h2>
+                <p class="auth-step-desc" style="margin-bottom: 1rem; text-align: center; color: var(--text-secondary);">Sign in to sync your ledger or proceed locally.</p>
+
+                <!-- Toggle selector -->
+                <div class="auth-toggle-wrapper">
+                    <button class="auth-toggle-btn active" id="btn-toggle-signin">Sign In</button>
+                    <button class="auth-toggle-btn" id="btn-toggle-signup">Create Account</button>
+                </div>
+
+                <div class="auth-forms-container">
+                    <!-- Google Sign In Option -->
+                    <button class="btn-google-login" id="btn-google-login">
+                        <svg class="google-icon" viewBox="0 0 24 24" style="width: 18px; height: 18px;">
+                            <path fill="#EA4335" d="M12 5.04c1.67 0 3.2.58 4.38 1.69l3.27-3.27C17.67 1.6 15.02 1 12 1 7.35 1 3.39 3.67 1.41 7.57l3.89 3.02C6.22 7.7 8.87 5.04 12 5.04z"/>
+                            <path fill="#4285F4" d="M23.49 12.27c0-.81-.07-1.59-.2-2.35H12v4.51h6.48c-.29 1.48-1.14 2.73-2.42 3.58l3.77 2.91c2.2-2.03 3.66-5.02 3.66-8.65z"/>
+                            <path fill="#FBBC05" d="M5.3 14.59c-.24-.71-.38-1.47-.38-2.26s.14-1.55.38-2.26L1.41 7.05C.51 8.84 0 10.86 0 13s.51 4.16 1.41 5.95l3.89-3.36z"/>
+                            <path fill="#34A853" d="M12 23c3.24 0 5.97-1.07 7.96-2.91l-3.77-2.91c-1.05.7-2.39 1.12-4.19 1.12-3.13 0-5.78-2.66-6.72-5.55L1.41 16.1C3.39 20.01 7.35 23 12 23z"/>
+                        </svg>
+                        Continue with Google
+                    </button>
+
+                    <div class="auth-separator">
+                        <span>or use email</span>
+                    </div>
+
+                    <!-- Sign In Form -->
+                    <form id="form-signin" class="auth-form-body">
+                        <div class="form-group">
+                            <label class="form-label" for="signin-email">Email Address</label>
+                            <input type="email" id="signin-email" class="input-field" placeholder="you@example.com" required autocomplete="email">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="signin-password">Password</label>
+                            <input type="password" id="signin-password" class="input-field" placeholder="••••••••" required autocomplete="current-password">
+                        </div>
+                        <button type="submit" class="btn-primary" style="width: 100%; justify-content: center;" id="btn-submit-signin">Sign In</button>
+                    </form>
+
+                    <!-- Sign Up Form -->
+                    <form id="form-signup" class="auth-form-body hidden">
+                        <div class="form-group">
+                            <label class="form-label" for="signup-name">Full Name</label>
+                            <input type="text" id="signup-name" class="input-field" placeholder="John Doe" required autocomplete="name">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="signup-email">Email Address</label>
+                            <input type="email" id="signup-email" class="input-field" placeholder="you@example.com" required autocomplete="email">
+                        </div>
+                        <div class="form-group">
+                            <label class="form-label" for="signup-password">Password</label>
+                            <input type="password" id="signup-password" class="input-field" placeholder="Min. 6 characters" required minlength="6" autocomplete="new-password">
+                        </div>
+                        <button type="submit" class="btn-primary" style="width: 100%; justify-content: center;" id="btn-submit-signup">Create Account</button>
+                    </form>
+                </div>
+                
+                <div class="auth-navigation" style="margin-top: 1rem; justify-content: center;">
+                    <button type="button" class="link-btn" id="btn-skip-auth" style="font-size: 0.85rem; padding: 0.5rem 0;">Skip for Now (Local Only)</button>
+                </div>
+            </div>
+
+            <!-- STEP 2: Logo welcome intro -->
+            <div class="auth-step" id="auth-step-2">
+                <div class="auth-brand-logo">
+                    <svg viewBox="0 0 24 24" class="logo-icon-large" fill="none">
+                        <!-- Left foresail (purple) -->
+                        <path d="M8.5 6 L8.5 18 L4 17 Z" fill="rgba(155, 81, 224, 0.3)" stroke="#9b51e0" stroke-width="1.5"/>
+                        <!-- Mast (gray) -->
+                        <line x1="9.5" y1="4" x2="9.5" y2="20" stroke="#8e8e9f" stroke-width="1.8" stroke-linecap="round"/>
+                        <!-- Right mainsail (pinkish red) -->
+                        <path d="M10.5 5 Q17 11, 19 16 L10.5 19 Z" fill="#ff2a5f" stroke="#ff2a5f" stroke-width="1.5" stroke-linejoin="round"/>
+                    </svg>
+                </div>
+                <h1 class="auth-title glow-text">Vela</h1>
+                <p class="auth-subtitle">Premium Expense & Savings Tracker</p>
+                <div class="intro-description">
+                    Welcome! Navigate your personal finance journey with elegance. Experience real-time tracking, seamless multi-currency management, and beautiful analytics.
+                </div>
+                <button class="btn-primary btn-onboard-next" style="width: 100%; justify-content: center;" data-next-step="3">Get Started</button>
+            </div>
+
+            <!-- STEP 3: Feature highlights -->
+            <div class="auth-step" id="auth-step-3">
+                <h2 class="auth-step-title">Premium Features</h2>
+                <div class="features-list">
+                    <div class="feature-item">
+                        <div class="feature-icon bg-purple">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="18" y1="20" x2="18" y2="10"/>
+                                <line x1="12" y1="20" x2="12" y2="4"/>
+                                <line x1="6" y1="20" x2="6" y2="14"/>
+                            </svg>
+                        </div>
+                        <div class="feature-text">
+                            <h3>Elegant Analytics</h3>
+                            <p>Beautiful, responsive charts mapping your categories and daily averages.</p>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon bg-pink">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="12" y1="8" x2="12" y2="16"/>
+                                <line x1="8" y1="12" x2="16" y2="12"/>
+                            </svg>
+                        </div>
+                        <div class="feature-text">
+                            <h3>Savings Subsystems</h3>
+                            <p>Establish goals, allocate funds, and track progress interactively.</p>
+                        </div>
+                    </div>
+                    <div class="feature-item">
+                        <div class="feature-icon bg-orange">
+                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="12" y1="1" x2="12" y2="23"/>
+                                <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+                            </svg>
+                        </div>
+                        <div class="feature-text">
+                            <h3>Live Conversions</h3>
+                            <p>Instant conversions between USD and LKR with live exchange feeds.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="auth-navigation">
+                    <button class="btn-glass btn-onboard-prev" data-prev-step="2">Back</button>
+                    <button class="btn-primary btn-onboard-next" data-next-step="4">Continue</button>
+                </div>
+            </div>
+
+            <!-- STEP 4: Seed Preference -->
+            <div class="auth-step" id="auth-step-4">
+                <h2 class="auth-step-title">Choose Your Start</h2>
+                <p class="auth-step-desc">Would you like to pre-load sample details to test drive the app immediately, or start with a clean workspace?</p>
+                
+                <div class="setup-options-grid">
+                    <div class="setup-option-card active" id="opt-demo-data">
+                        <div class="option-icon">🚀</div>
+                        <div class="option-meta">
+                            <h3>Load Demo Data</h3>
+                            <p>Populates your tracker with pre-seeded expenses and savings targets so you can explore all charts immediately.</p>
+                        </div>
+                    </div>
+                    
+                    <div class="setup-option-card" id="opt-fresh-start">
+                        <div class="option-icon">✨</div>
+                        <div class="option-meta">
+                            <h3>Fresh Start</h3>
+                            <p>Begin with a completely clean ledger, ready for your first customized transactions and configurations.</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="auth-navigation">
+                    <button class="btn-glass btn-onboard-prev" data-prev-step="3">Back</button>
+                    <button class="btn-primary" id="btn-complete-onboarding">Set Preference & Launch</button>
+                </div>
+            </div>
+
+            <!-- Wizard Step Indicators (hidden on step 1) -->
+            <div class="step-indicators" id="auth-step-indicators" style="display: none;">
+                <span class="dot active" data-step="2"></span>
+                <span class="dot" data-step="3"></span>
+                <span class="dot" data-step="4"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Supabase CDN Script -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="app.js?v=1.7"></script>
 </body>
 </html>
