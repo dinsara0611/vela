@@ -225,7 +225,50 @@ const toggleTheme = (e) => {
     const currentTheme = state.config.theme || 'dark';
     const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
     
-    // Calculate ripple coordinates from click event or fallback to button center
+    // Check if browser supports modern View Transitions API
+    if (document.startViewTransition) {
+        let x = window.innerWidth / 2;
+        let y = window.innerHeight / 2;
+        if (e && e.clientX !== undefined && e.clientY !== undefined) {
+            x = e.clientX;
+            y = e.clientY;
+        } else {
+            const btn = document.getElementById('theme-toggle-btn');
+            if (btn) {
+                const rect = btn.getBoundingClientRect();
+                x = rect.left + rect.width / 2;
+                y = rect.top + rect.height / 2;
+            }
+        }
+        
+        const endRadius = Math.hypot(
+            Math.max(x, window.innerWidth - x),
+            Math.max(y, window.innerHeight - y)
+        );
+        
+        const transition = document.startViewTransition(() => {
+            applyTheme(newTheme);
+        });
+        
+        transition.ready.then(() => {
+            document.documentElement.animate(
+                {
+                    clipPath: [
+                        `circle(0px at ${x}px ${y}px)`,
+                        `circle(${endRadius}px at ${x}px ${y}px)`
+                    ]
+                },
+                {
+                    duration: 500,
+                    easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+                    pseudoElement: '::view-transition-new(root)'
+                }
+            );
+        });
+        return;
+    }
+    
+    // Fallback: Ripple element animation
     let x, y;
     if (e && e.clientX !== undefined && e.clientY !== undefined) {
         x = e.clientX;
@@ -242,7 +285,6 @@ const toggleTheme = (e) => {
         }
     }
     
-    // Create/retrieve ripple element overlay
     let ripple = document.getElementById('theme-ripple');
     if (!ripple) {
         ripple = document.createElement('div');
@@ -250,23 +292,18 @@ const toggleTheme = (e) => {
         document.body.appendChild(ripple);
     }
     
-    // Match colors and trigger clip-path ripple
     ripple.style.backgroundColor = newTheme === 'light' ? '#f4f5f8' : '#07070b';
     ripple.style.clipPath = `circle(0% at ${x}px ${y}px)`;
     ripple.style.opacity = '1';
     
-    // Force layout reflow
-    ripple.offsetHeight;
+    ripple.offsetHeight; // Force reflow
     
-    // Expand circle ripple
     ripple.style.clipPath = `circle(150% at ${x}px ${y}px)`;
     
-    // Apply theme changes underneath midway
     setTimeout(() => {
         applyTheme(newTheme);
     }, 350);
     
-    // Fade out ripple overlay
     setTimeout(() => {
         ripple.style.opacity = '0';
         setTimeout(() => {

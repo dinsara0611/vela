@@ -2172,3 +2172,12 @@ button {
     }
 }
 
+/* 13. NATIVE VIEW TRANSITION OVERRIDES FOR PREMIUM THEME SWITCH RIPPLE */
+::view-transition-old(root) {
+    animation: none;
+    mix-blend-mode: normal;
+}
+::view-transition-new(root) {
+    animation: none;
+    mix-blend-mode: normal;
+}
