@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+
+    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">@color/vela_bg</item>
+        <item name="colorPrimaryDark">@color/vela_bg</item>
+        <item name="colorAccent">@color/vela_violet</item>
+        <item name="android:statusBarColor">@color/vela_bg</item>
+        <item name="android:navigationBarColor">@color/vela_bg</item>
+        <item name="android:windowBackground">@color/vela_bg</item>
+    </style>
+
+    <style name="AppTheme.NoActionBar" parent="AppTheme">
+        <item name="windowActionBar">false</item>
+        <item name="windowNoTitle">true</item>
+        <item name="android:background">@null</item>
+    </style>
+
+    <!-- Launch screen: Android 12+ shows the adaptive icon on the brand ground; older versions show the splash image. -->
+    <style name="AppTheme.NoActionBarLaunch" parent="Theme.SplashScreen">
+        <item name="android:background">@drawable/splash</item>
+        <item name="windowSplashScreenBackground">@color/vela_bg</item>
+        <item name="postSplashScreenTheme">@style/AppTheme.NoActionBar</item>
+        <item name="android:statusBarColor">@color/vela_bg</item>
+        <item name="android:navigationBarColor">@color/vela_bg</item>
+    </style>
+</resources>

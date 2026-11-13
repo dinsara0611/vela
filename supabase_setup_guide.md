@@ -19,108 +19,66 @@ This guide explains how to set up your Supabase project step-by-step to enable a
 
 ## Step 2: Set Up Database Tables
 
-Once your project is ready, navigate to the **SQL Editor** in the left sidebar (the terminal icon `>_`) and click **New Query**. Paste the following SQL script and click **Run**:
+Once your project is ready, open the **SQL Editor** (the `>_` icon), click **New Query**, paste this script and click **Run**.
+
+Vela 3 stores every kind of entry (expenses, income, bills, savings goals, debts, your own categories) in one table, `vela_records`, as JSON. Budgets and display currency live in `vela_settings`. This keeps the database simple while the app grows.
 
 ```sql
--- 1. Create a Profiles table to store additional user details
-create table public.profiles (
+-- 1. Profiles (name and photo)
+create table if not exists public.profiles (
   id uuid references auth.users on delete cascade primary key,
   updated_at timestamp with time zone,
   username text,
   full_name text,
   avatar_url text
 );
-
--- Enable RLS on Profiles
 alter table public.profiles enable row level security;
 
--- 2. Create Expenses table
-create table public.expenses (
-  id text primary key, -- Vela uses client-generated unique string IDs
+-- 2. Every Vela entry, one row each
+create table if not exists public.vela_records (
+  id text primary key,                       -- client-generated id
   user_id uuid references auth.users on delete cascade not null,
-  description text not null,
-  amount numeric not null,
-  currency text not null,
-  category text not null,
-  date date not null,
-  note text,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+  kind text not null check (kind in ('transaction','goal','recurring','debt','category')),
+  data jsonb not null,
+  updated_at timestamp with time zone default now() not null
 );
+create index if not exists vela_records_user_idx on public.vela_records (user_id);
+alter table public.vela_records enable row level security;
 
--- Enable RLS on Expenses
-alter table public.expenses enable row level security;
-
--- 3. Create Savings Goals table
-create table public.savings (
-  id text primary key, -- Vela uses client-generated unique string IDs
-  user_id uuid references auth.users on delete cascade not null,
-  name text not null,
-  target numeric not null,
-  currency text not null,
-  saved numeric not null default 0,
-  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+-- 3. One settings row per user (budgets, currency)
+create table if not exists public.vela_settings (
+  user_id uuid references auth.users on delete cascade primary key,
+  data jsonb not null default '{}'::jsonb,
+  updated_at timestamp with time zone default now() not null
 );
-
--- Enable RLS on Savings
-alter table public.savings enable row level security;
+alter table public.vela_settings enable row level security;
 ```
 
 ---
 
 ## Step 3: Configure Row Level Security (RLS) Policies
 
-Run this script in a **New Query** window to set up security rules. These policies ensure users can only view, insert, update, or delete their own data.
+Run this in a **New Query**. These rules make sure each person can only read and change their own data.
 
 ```sql
--- --- PROFILES POLICIES ---
-create policy "Allow public read access to profiles" 
-  on public.profiles for select 
-  using (true);
+-- Profiles
+create policy "Profiles are readable" on public.profiles for select using (true);
+create policy "Users insert own profile" on public.profiles for insert with check (auth.uid() = id);
+create policy "Users update own profile" on public.profiles for update using (auth.uid() = id);
 
-create policy "Allow users to update their own profile" 
-  on public.profiles for update 
-  using (auth.uid() = id);
+-- Records
+create policy "Users read own records"   on public.vela_records for select using (auth.uid() = user_id);
+create policy "Users insert own records" on public.vela_records for insert with check (auth.uid() = user_id);
+create policy "Users update own records" on public.vela_records for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "Users delete own records" on public.vela_records for delete using (auth.uid() = user_id);
 
-create policy "Allow users to insert their own profile" 
-  on public.profiles for insert 
-  with check (auth.uid() = id);
-
-
--- --- EXPENSES POLICIES ---
-create policy "Users can view their own expenses" 
-  on public.expenses for select 
-  using (auth.uid() = user_id);
-
-create policy "Users can insert their own expenses" 
-  on public.expenses for insert 
-  with check (auth.uid() = user_id);
-
-create policy "Users can update their own expenses" 
-  on public.expenses for update 
-  using (auth.uid() = user_id);
-
-create policy "Users can delete their own expenses" 
-  on public.expenses for delete 
-  using (auth.uid() = user_id);
-
-
--- --- SAVINGS POLICIES ---
-create policy "Users can view their own savings" 
-  on public.savings for select 
-  using (auth.uid() = user_id);
-
-create policy "Users can insert their own savings" 
-  on public.savings for insert 
-  with check (auth.uid() = user_id);
-
-create policy "Users can update their own savings" 
-  on public.savings for update 
-  using (auth.uid() = user_id);
-
-create policy "Users can delete their own savings" 
-  on public.savings for delete 
-  using (auth.uid() = user_id);
+-- Settings
+create policy "Users read own settings"   on public.vela_settings for select using (auth.uid() = user_id);
+create policy "Users insert own settings" on public.vela_settings for insert with check (auth.uid() = user_id);
+create policy "Users update own settings" on public.vela_settings for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
 ```
+
+> Upgrading from Vela 2? The old `expenses` and `savings` tables are no longer used. Data on each phone is kept and uploaded to the new tables the first time you sign in.
 
 ---
 
@@ -199,17 +157,23 @@ To enable Google sign-in:
 6. In Google Console, add this URL to **Authorized redirect URIs**.
 7. Copy the generated **Client ID** and **Client Secret**.
 8. Go back to Supabase -> **Authentication** -> **Providers** -> **Google**, toggle it **ON**, paste the client ID and secret, and click **Save**.
+9. In Supabase, go to **Authentication** -> **URL Configuration**:
+   - **Site URL:** `https://dinsara0611.github.io/vela/`
+   - **Redirect URLs:** add all three:
+     - `https://dinsara0611.github.io/vela/` (website)
+     - `io.github.dinsara0611.vela://auth-callback` (Android app — without it, Google sign-in in the app returns to the website instead of the app)
+     - `http://localhost:5510/` (local testing)
 
 ---
 
 ## Step 7: Connect Vela to your Supabase Project
 
 1. In Supabase, go to **Project Settings** (Gear icon at the bottom of the sidebar) -> **API**.
-2. Find your **Project URL** and **API Key (anon/public)**.
+2. Find your **Project URL** and the **publishable key** (or the legacy **anon / public** key).
 3. Open `app.js` and locate the Supabase config variables.
 4. Replace the placeholders with your URL and key:
    ```javascript
    const SUPABASE_URL = "https://your-project-url.supabase.co";
    const SUPABASE_ANON_KEY = "your-anon-public-key";
    ```
-5. You're done! The system will automatically detect the key and switch from mock-local mode to live database sync.
+5. Commit and push to `main` so the website updates, and rebuild the Android app (`cd mobile && npm run apk`) so the APK uses the new project too.

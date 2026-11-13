@@ -4,9 +4,13 @@ A phone-first expense and savings tracker that works in USD and LKR. It is a sta
 
 **https://dinsara0611.github.io/vela/**
 
-- Log expenses by category, see the month against your budget.
-- Create savings goals and deposit into them.
-- Insights: running total, daily average, spending by category.
+- **Income & balance:** log expenses and income, see what's left this month.
+- **Activity:** every entry by month, with search and category filters.
+- **Plan:** budgets per category, bills and subscriptions that log themselves (with reminders on Android), savings goals with target dates, and money you lent or borrowed.
+- **Insights:** income vs spending, savings rate, daily average, where money went and came from.
+- **Reports:** monthly PDF report and CSV export of every entry; JSON backup and restore.
+- **Your own categories** with icons and colours.
+- **App lock:** 4-digit PIN, plus fingerprint on Android.
 - Live USD → LKR rate (open.er-api.com), or set your own.
 - Works offline and installs to the home screen.
 - Optional sign-in and cloud sync with Supabase (see `supabase_setup_guide.md`).
@@ -42,8 +46,25 @@ When you change `style.css` or `app.js`, bump the `?v=` number in `index.html` a
 - **iPhone (Safari):** Share → *Add to Home Screen*.
 - **Android (Chrome):** ⋮ menu → *Install app*.
 
+## Android app (APK)
+
+`mobile/` wraps the same web app in a native Android shell with [Capacitor 6](https://capacitorjs.com). Fonts, Chart.js and supabase-js are bundled, so the app works offline. Native extras: splash screen, adaptive icon, status bar that follows the theme, haptics, share-sheet backups, and Google sign-in through a Chrome tab with a deep link back to the app (`io.github.dinsara0611.vela://auth-callback`).
+
+Requirements: Node 18+, JDK 17, Android SDK (platform 34). Then:
+
+```bash
+cd mobile
+npm install
+npm run apk
+```
+
+The signed APK is written to `mobile/android/app/build/outputs/apk/release/app-release.apk`.
+
+- `npm run sync` copies the latest `index.html`, `style.css` and `app.js` into the app (run it after every web change).
+- `npm run icons` regenerates the launcher icon and splash from `scripts/make-icons.mjs`.
+- Signing: release builds use `mobile/signing/vela-release.jks` with passwords in `mobile/signing/keystore.properties`. Both are git-ignored. **Back them up somewhere safe**: Android only installs updates signed with the same key.
+- Before each new release, raise `versionCode` in `mobile/android/app/build.gradle`.
+
 ## Publishing to Google Play
 
-1. Open https://www.pwabuilder.com and enter the GitHub Pages URL.
-2. Choose **Package for stores → Android** and download the `.aab`.
-3. Upload it in the Google Play Console.
+Build an app bundle with `cd mobile/android && gradlew.bat bundleRelease` and upload `app/build/outputs/bundle/release/app-release.aab` in the Google Play Console. Google Play currently requires a newer target SDK than this Capacitor 6 build uses (34), so upgrade to Capacitor 7+ (needs JDK 21) before publishing there.

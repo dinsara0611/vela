@@ -1,0 +1,30 @@
+{
+  "appId": "io.github.dinsara0611.vela",
+  "appName": "Vela",
+  "webDir": "www",
+  "android": {
+    "backgroundColor": "#07070b",
+    "allowMixedContent": false
+  },
+  "plugins": {
+    "SplashScreen": {
+      "launchShowDuration": 3000,
+      "launchAutoHide": true,
+      "launchFadeOutDuration": 250,
+      "backgroundColor": "#07070b",
+      "androidScaleType": "CENTER_CROP",
+      "showSpinner": false,
+      "splashFullScreen": false,
+      "splashImmersive": false
+    },
+    "StatusBar": {
+      "style": "DARK",
+      "backgroundColor": "#07070b",
+      "overlaysWebView": false
+    },
+    "LocalNotifications": {
+      "smallIcon": "ic_stat_vela",
+      "iconColor": "#9B51E0"
+    }
+  }
+}

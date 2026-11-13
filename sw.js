@@ -1,13 +1,13 @@
 /* Vela service worker — offline support for the app shell. */
-const VERSION = '2.0.0';
+const VERSION = '3.0.0';
 const SHELL_CACHE = `vela-shell-${VERSION}`;
 const CDN_CACHE = 'vela-cdn-v1';
 
 const SHELL = [
   './',
   './index.html',
-  './style.css?v=2.0.0',
-  './app.js?v=2.0.0',
+  './style.css?v=3.0.0',
+  './app.js?v=3.0.0',
   './manifest.json',
   './icon-192.png',
   './icon-512.png'
@@ -16,7 +16,8 @@ const SHELL = [
 // Versioned third-party files: safe to serve from cache forever.
 const CDN = [
   'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js',
-  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js'
+  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js',
+  'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js'
 ];
 const CACHE_FIRST_HOSTS = ['cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
