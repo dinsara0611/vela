@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.3.0';
+const APP_VERSION = '4.4.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2207,16 +2207,16 @@ const botUser = (text) => {
 };
 const money = (v) => escapeHtml(formatCurrency(v, dcur()));
 
+let aiOfferShown = false;
 const openBot = () => {
-    const uid = state.auth.user ? state.auth.user.id : null;
-    if (uid !== aiUserId) { aiUserId = uid; aiHistory = []; botStarted = false; $('bot-log').innerHTML = ''; }
     setBotMode();
     if (!botStarted) {
         botStarted = true;
         const name = state.auth.user && state.auth.user.full_name ? `, ${escapeHtml(state.auth.user.full_name.split(' ')[0])}` : '';
-        botSay(aiAvailable()
-            ? `Hi${name}! I'm <strong>Vela bot</strong>, your AI money helper. Tell me what you spent, like <em>“kottu 1200 and bus 100”</em>, and I'll set it up for you to add. Or ask me anything: <em>“why did I spend more this month?”</em>, <em>“how can I save 20,000 by December?”</em>`
-            : `Hi${name}! I'm <strong>Vela bot</strong>. Tell me what you spent, like <em>“kottu 1200”</em> or <em>“bus 100 yesterday”</em>, and I'll add it. Ask me things like <em>“how much on food this month?”</em> or tap a button below.${canSync() ? '' : ' <strong>Sign in</strong> to chat with the full AI.'}`);
+        botSay(`Hi${name}! I'm <strong>Vela bot</strong>. Tell me what you spent, like <em>“kottu 1200”</em> or <em>“bus 100 yesterday”</em>, and I'll add it. Ask me things like <em>“how much on food this month?”</em> or tap a button below.`);
+        aiAutoStart().then((started) => {
+            if (!started && ai.gpu && ai.status === 'idle' && !aiOfferShown) { aiOfferShown = true; aiOffer(); }
+        });
     }
     openOrSwap('modal-bot');
     botScroll();
@@ -2461,28 +2461,40 @@ const botHandle = (raw) => {
     const text = String(raw || '').trim().slice(0, 1000);
     if (!text || aiBusy) return;
     botUser(text);
-    if (aiAvailable()) aiAsk(text);
+    const t = text.toLowerCase();
+    if (aiReady() && !exactIntent(t) && !looksLikeEntry(t)) aiAnswer(text);
     else botHandleOffline(text);
 };
 
 // Answers worked out on the phone, used when the AI isn't available.
-const botHandleOffline = (text) => {
-    const t = text.toLowerCase();
+// Questions with exact answers worked out from your data. These never go to the AI,
+// so totals are always right.
+const exactIntent = (t) => {
     const isQuestion = /\?|\b(how|what|where|when|which|show|tell|can i|could i|do i|am i)\b/.test(t);
     const hasNumber = /\d/.test(t);
+    if (/^(hi|hii+|hello|hey|ayubowan|good (morning|evening|afternoon))\b/.test(t)) return () => botSay('Hello! What did you spend today? Or ask me anything about your money.');
+    if (/^(thanks|thank you|thx|ok|okay|great|nice)\b/.test(t)) return () => botSay('Any time!');
+    if (/\bhelp\b|what can you do/.test(t)) return answerHelp;
+    if (/afford/.test(t)) return () => answerBudget(t);
+    if (/suggest|what (should|to) (i )?(add|log|buy)|usual/.test(t)) return answerSuggest;
+    if (/saving tips|^tips?$|tips? (to|for) sav/.test(t)) return answerTips;
+    if (/budget|left|remaining/.test(t)) return () => answerBudget(t);
+    if (/\btop\b|most|biggest|where.*(money|go)/.test(t)) return () => answerTop(t);
+    if (/bills?|due|subscriptions?/.test(t)) return answerBills;
+    if (/balance|net worth|accounts?|how much (do )?i have/.test(t)) return answerBalance;
+    if (isQuestion && /income|earn|salary/.test(t)) return () => answerIncome(t);
+    if (/how much|spent|spend|spending|expenses?/.test(t) && !/\b(why|should|could|can i|reduce|less)\b/.test(t) && !hasNumber) return () => answerSpent(t);
+    return null;
+};
+
+const botHandleOffline = (text) => {
+    const t = text.toLowerCase();
+    const hasNumber = /\d/.test(t);
     setTimeout(() => {
-        if (/^(hi|hii+|hello|hey|ayubowan|good (morning|evening|afternoon))\b/.test(t)) return botSay('Hello! What did you spend today? Or ask me anything about your money.');
-        if (/^(thanks|thank you|thx|ok|okay|great|nice)\b/.test(t)) return botSay('Any time!');
-        if (/\bhelp\b|what can you do/.test(t)) return answerHelp();
-        if (/afford/.test(t)) return answerBudget(t);
-        if (/suggest|what (should|to) (i )?(add|log|buy)|usual/.test(t)) return answerSuggest();
+        const exact = exactIntent(t);
+        if (exact) return exact();
         if (/sav(e|ing)|tips?|advice|reduce|cut (down|back)/.test(t)) return answerTips();
-        if (/budget|left|remaining/.test(t)) return answerBudget(t);
-        if (/\btop\b|most|biggest|where.*(money|go)/.test(t)) return answerTop(t);
-        if (/bills?|due|subscriptions?/.test(t)) return answerBills();
-        if (/balance|net worth|accounts?|how much (do )?i have/.test(t)) return answerBalance();
-        if (isQuestion && /income|earn|salary/.test(t)) return answerIncome(t);
-        if ((isQuestion && !hasNumber) || /^(spent|spending|expenses?)\b.*(today|yesterday|week|month|year|on)\b|this month$/.test(t) && !hasNumber) return answerSpent(t);
+        if (/\?|\b(how|what|where|when|which|show|tell)\b/.test(t) && !hasNumber) return answerSpent(t);
         const d = parseEntry(text);
         if (d.amount > 0) return botSay(`Got it. Add this ${d.type}?${draftCard(d)}`, ['Suggest an expense', 'Budget left', 'Help']);
         if (d.desc && !hasNumber) return botSay(`How much was <strong>${escapeHtml(d.desc)}</strong>? Type it like <em>“${escapeHtml(d.desc.toLowerCase())} 500”</em>.`);
@@ -2490,59 +2502,186 @@ const botHandleOffline = (text) => {
     }, 250);
 };
 
-/* ---- Real AI: Claude, through the vela-ai Supabase Edge Function ---- */
-let aiHistory = [];     // the conversation in API format; only ever appended to
-let aiUserId = null;
+/* ---- Free on-phone AI: an open model (Qwen 2.5) running in the browser with WebLLM ----
+   No API key and no server. The model downloads once, is kept by the browser, and then
+   answers on the phone itself, even offline. Needs WebGPU (recent Chrome / Edge / Android). */
+const WEBLLM_URL = 'https://cdn.jsdelivr.net/npm/@mlc-ai/web-llm@0.2.88/+esm';
+const AI_MODELS = {
+    best: { label: 'Best', size: 'about 1 GB', f16: 'Qwen2.5-1.5B-Instruct-q4f16_1-MLC', f32: 'Qwen2.5-1.5B-Instruct-q4f32_1-MLC' },
+    small: { label: 'Small', size: 'about 300 MB', f16: 'Qwen2.5-0.5B-Instruct-q4f16_1-MLC', f32: 'Qwen2.5-0.5B-Instruct-q4f32_1-MLC' }
+};
+const AI_PREF_KEY = 'VELA_AI_MODEL';
+const ai = { lib: null, engine: null, modelId: null, status: 'idle', gpu: null, f16: false, history: [] };
 let aiBusy = false;
-let aiDown = false;     // the function isn't set up: use offline answers for this session
-const aiAvailable = () => canSync() && !aiDown && navigator.onLine !== false && !!(supabaseClient && supabaseClient.functions);
 
-// A compact picture of the user's money for the AI, in their display currency.
-const aiSnapshot = () => {
-    const cur = dcur();
-    const now = new Date();
-    const r2 = (v) => Math.round(v * 100) / 100;
-    const cats = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, r2(v)]));
-    const s = monthStats();
-    const months = [];
-    for (let i = 5; i >= 0; i--) {
-        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-        const m = monthStats(d.getFullYear(), d.getMonth());
-        months.push({ month: monthName(d.getFullYear(), d.getMonth()), income: r2(m.income), spent: r2(m.spent), byCategory: cats(m.byCat) });
-    }
-    return {
-        today: todayISO(),
-        weekday: now.toLocaleDateString('en-US', { weekday: 'long' }),
-        time: `${pad2(now.getHours())}:${pad2(now.getMinutes())}`,
-        name: state.auth.user && state.auth.user.full_name ? state.auth.user.full_name : null,
-        displayCurrency: cur,
-        homeCurrency: homeCurrency(),
-        categories: state.categories.map((c) => ({ id: c.id, name: c.name, type: c.type })),
-        thisMonth: { income: r2(s.income), spent: r2(s.spent), budget: r2(s.budget), spentSameDaysLastMonth: r2(s.prevSpent), daysLeft: daysLeftInMonth(), byCategory: cats(s.byCat) },
-        categoryBudgets: Object.fromEntries(Object.entries(state.config.categoryBudgets).map(([k, v]) => [k, r2(convertAmount(v, 'USD', cur))])),
-        lastSixMonths: months,
-        accounts: state.accounts.map((a) => ({ name: a.name, kind: a.kind, currency: a.currency, balance: r2(accountBalance(a)) })),
-        netWorth: r2(netWorth()),
-        savingsGoals: state.savings.map((g) => ({ name: g.name, target: g.target, saved: g.saved, currency: g.currency, deadline: g.deadline || null })),
-        bills: state.recurring.map((b) => ({ name: b.name, type: b.type, amount: b.amount, currency: b.currency, frequency: b.frequency, next: b.nextDate })),
-        debts: state.debts.map((d) => ({ direction: d.direction, person: d.person, amount: d.amount, repaid: d.repaid, currency: d.currency, due: d.dueDate || null })),
-        usualAndLocalPrices: smartPicks(homeCurrency(), 40).map((p) => ({ name: p.name, price: p.price, currency: homeCurrency(), category: p.category, usual: p.kind === 'usual' })),
-        recentEntriesFormat: 'date, type, description, amount, currency, categoryId (newest first)',
-        recentEntries: sortByNewest(state.transactions).filter((t) => t.type !== 'transfer').slice(0, 150).map((t) => [t.date, t.type, t.desc, t.amount, t.currency, t.category])
-    };
+const aiPref = () => { try { return localStorage.getItem(AI_PREF_KEY); } catch (e) { return null; } };
+const setAiPref = (v) => { try { if (v) localStorage.setItem(AI_PREF_KEY, v); else localStorage.removeItem(AI_PREF_KEY); } catch (e) { /* private mode */ } };
+
+// Can this phone run it? (WebGPU, and whether it can use the smaller 16-bit build)
+const aiCheckGpu = async () => {
+    if (ai.gpu !== null) return ai.gpu;
+    try {
+        const adapter = navigator.gpu ? await navigator.gpu.requestAdapter() : null;
+        ai.gpu = !!adapter;
+        ai.f16 = !!(adapter && adapter.features && adapter.features.has('shader-f16'));
+    } catch (e) { ai.gpu = false; }
+    return ai.gpu;
+};
+const aiModelId = (key) => (ai.f16 ? AI_MODELS[key].f16 : AI_MODELS[key].f32);
+const aiLib = async () => (ai.lib || (ai.lib = await import(WEBLLM_URL)));
+const aiReady = () => ai.status === 'ready' && !!ai.engine;
+
+const setBotMode = () => {
+    const el = $('bot-status');
+    el.textContent = aiReady() ? 'Free AI on your phone · private, works offline'
+        : ai.status === 'loading' ? 'Starting the AI…'
+        : 'Quick answers · tap ✦ for free AI';
+    $('bot-new').hidden = !aiReady();
+    $('bot-ai').hidden = aiReady() || ai.status === 'loading';
 };
 
-// What the AI suggests adding, checked before it becomes a card.
-const draftFromAi = (x) => {
-    if (!x || typeof x !== 'object') return null;
-    const type = x.type === 'income' ? 'income' : 'expense';
-    const amount = toNumber(x.amount, NaN);
-    if (!(amount > 0) || amount > 1e12) return null;
-    const currency = isCurrency(x.currency) ? x.currency : homeCurrency();
-    const category = state.categories.some((c) => c.id === x.category && c.type === type) ? x.category : FALLBACK_CATEGORY[type];
-    const date = isISODate(x.date) && x.date <= toISODate(addDays(new Date(), 1)) ? x.date : todayISO();
-    const desc = String(x.description || '').trim().slice(0, 80) || catById(category, type).name;
-    return { type, desc, amount, currency, category, date };
+// Load the model: downloads the first time, then starts from the phone's storage.
+const aiStart = async (key) => {
+    if (ai.status === 'loading' || aiReady()) return;
+    if (!(await aiCheckGpu())) {
+        botSay("This phone or browser can't run the on-phone AI yet (it needs WebGPU, in Chrome or Edge 121 or newer). I'll keep giving quick answers, which work everywhere.");
+        return;
+    }
+    const modelId = aiModelId(key);
+    ai.status = 'loading';
+    setBotMode();
+    const card = botSay(`<div class="ai-load"><strong>Getting the AI ready…</strong><span class="ai-load-text">Starting</span><span class="meter"><span class="meter-fill ai-load-fill" style="width:0%"></span></span><span class="ai-load-note">You can keep using Vela. Keep this screen open until it finishes.</span></div>`, []);
+    const text = card.querySelector('.ai-load-text');
+    const fill = card.querySelector('.ai-load-fill');
+    try {
+        const lib = await aiLib();
+        ai.engine = await lib.CreateMLCEngine(modelId, {
+            initProgressCallback: (r) => {
+                const pct = Math.round((r.progress || 0) * 100);
+                fill.style.width = `${pct}%`;
+                text.textContent = /fetch|download/i.test(r.text) ? `Downloading ${pct}%` : pct >= 100 ? 'Almost ready' : `Loading ${pct}%`;
+            }
+        });
+        ai.modelId = modelId;
+        ai.status = 'ready';
+        ai.history = [];
+        setAiPref(key);
+        card.querySelector('.ai-load').innerHTML = `<strong>${icon('i-check', 'ic ic-sm')} Free AI is ready</strong><span class="ai-load-note">It runs on your phone, so your money data never leaves it. Ask me anything.</span>`;
+        $('bot-chips').innerHTML = BOT_CHIPS.map((c) => `<button type="button" class="chip" data-bot-chip="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('');
+    } catch (err) {
+        ai.status = 'error';
+        ai.engine = null;
+        const msg = String(err && err.message || err);
+        card.querySelector('.ai-load').innerHTML = `<strong>The AI couldn't start</strong><span class="ai-load-note">${escapeHtml(/quota|storage|space/i.test(msg) ? 'There isn’t enough free storage on this phone. Free some space, or try the Small version.'
+            : /memory|device lost|out of/i.test(msg) ? 'This phone ran out of memory. Try the Small version.'
+            : /fetch|network|Failed to/i.test(msg) ? 'The download stopped. Check your internet and try again; it continues from where it stopped.'
+            : 'Something went wrong. Try again, or try the Small version.')}</span>`;
+        botSay('Quick answers still work. Tap ✦ to try the AI again.');
+    } finally {
+        setBotMode();
+    }
+};
+
+// On opening the bot: if a model was downloaded before, start it quietly.
+const aiAutoStart = async () => {
+    const key = aiPref();
+    if (!(await aiCheckGpu()) || !key || !AI_MODELS[key] || ai.status !== 'idle') return false;
+    try {
+        const lib = await aiLib();
+        if (await lib.hasModelInCache(aiModelId(key))) { aiStart(key); return true; }
+    } catch (e) { /* offline before the library was cached: quick answers */ }
+    return false;
+};
+
+const aiOffer = () => botSay(`<div class="ai-offer">
+        <strong>Turn on the free AI</strong>
+        <span>A small AI model downloads once and then runs on your phone: free, private, and it works offline. Wi-Fi recommended.</span>
+        <div class="ai-offer-actions">
+            <button type="button" class="btn btn-primary btn-sm" data-ai-start="best">Best · ${AI_MODELS.best.size}</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-ai-start="small">Small · ${AI_MODELS.small.size}</button>
+        </div>
+        <span class="ai-offer-note">Small is faster on older phones; Best gives better answers.</span>
+    </div>`, ['Help']);
+
+// Facts the app works out exactly, so the small model never has to do sums.
+const aiFacts = () => {
+    const cur = dcur();
+    const m = (v) => formatCurrency(v, cur);
+    const now = new Date();
+    const s = monthStats();
+    const pm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const p = monthStats(pm.getFullYear(), pm.getMonth());
+    const left = s.budget - s.spent;
+    const catLine = (by) => Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 6).map(([id, v]) => `${catById(id).name} ${m(v)}`).join(', ') || 'nothing';
+    const lines = [
+        `Today: ${now.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}, ${SLOT_NAMES[daySlot()]} time.`,
+        `Currency: ${cur}.`,
+        `This month: spent ${m(s.spent)}, income ${m(s.income)}, budget ${m(s.budget)}, ${left >= 0 ? `${m(left)} left (${m(left / daysLeftInMonth())} a day for ${daysLeftInMonth()} days)` : `${m(-left)} over budget`}.`,
+        `Same days last month: spent ${m(s.prevSpent)}.`,
+        `This month by category: ${catLine(s.byCat)}.`,
+        `Last month: spent ${m(p.spent)}, income ${m(p.income)}; by category: ${catLine(p.byCat)}.`
+    ];
+    const caps = Object.entries(state.config.categoryBudgets).map(([id, usd]) => {
+        const lim = convertAmount(usd, 'USD', cur);
+        return `${catById(id).name} ${m(s.byCat[id] || 0)} of ${m(lim)}`;
+    });
+    if (caps.length) lines.push(`Category budgets: ${caps.join(', ')}.`);
+    const cutoff = toISODate(addDays(now, -30));
+    const groups = {};
+    state.transactions.filter((t) => t.type === 'expense' && t.date >= cutoff).forEach((t) => {
+        const k = normDesc(t.desc);
+        groups[k] = groups[k] || { name: t.desc, n: 0, sum: 0 };
+        groups[k].n += 1;
+        groups[k].sum += toDisplay(t.amount, t.currency);
+    });
+    const habits = Object.values(groups).filter((g) => g.n >= 3).sort((a, b) => b.sum - a.sum).slice(0, 4);
+    if (habits.length) lines.push(`Frequent buys (30 days): ${habits.map((g) => `${g.name} ${g.n} times = ${m(g.sum)}`).join('; ')}.`);
+    lines.push(`Accounts: ${state.accounts.map((a) => `${a.name} ${formatCurrency(accountBalance(a), a.currency)}`).join(', ')}; total ${m(netWorth())}.`);
+    if (state.savings.length) lines.push(`Savings goals: ${state.savings.map((g) => `${g.name} ${formatCurrency(g.saved, g.currency)} of ${formatCurrency(g.target, g.currency)}${g.deadline ? ` by ${g.deadline}` : ''}`).join('; ')}.`);
+    const bills = state.recurring.filter((b) => b.type === 'expense').sort((a, b) => (a.nextDate > b.nextDate ? 1 : -1)).slice(0, 4);
+    if (bills.length) lines.push(`Upcoming bills: ${bills.map((b) => `${b.name} ${formatCurrency(b.amount, b.currency)} ${dueLabel(b.nextDate).text.toLowerCase()}`).join('; ')}.`);
+    const { owedToYou, youOwe } = debtTotals();
+    if (owedToYou || youOwe) lines.push(`Debts: others owe you ${m(owedToYou)}, you owe ${m(youOwe)}.`);
+    const recent = sortByNewest(state.transactions).filter((t) => t.type !== 'transfer').slice(0, 12);
+    if (recent.length) lines.push(`Latest entries: ${recent.map((t) => `${t.date} ${t.type === 'income' ? '+' : '-'}${formatCurrency(t.amount, t.currency)} ${t.desc} (${catById(t.category, t.type).name})`).join('; ')}.`);
+    return lines.join('\n');
+};
+
+const AI_RULES = `You are Vela bot, a friendly money helper inside the Vela expense tracker app on the user's phone.
+Use ONLY the facts below about the user's money. The numbers are exact; copy them, do not recalculate or invent numbers.
+If the facts don't answer the question, say so briefly.
+Give short, practical answers: 1 to 4 sentences, or up to 3 short "- " points for tips. Plain text; you may use **bold** for key numbers.
+Reply in English unless the user clearly writes in another language; if they write Sinhala in English letters, reply in simple English. For investing or loans, give general tips only and say you are not a financial adviser.
+To log spending, the user can type it like "kottu 1200" and the app adds it.`;
+
+const aiAnswer = async (text) => {
+    aiBusy = true;
+    $('bot-send').disabled = true;
+    const li = botTyping();
+    const bubble = li.querySelector('.bot-bubble');
+    let out = '';
+    try {
+        const messages = [{ role: 'system', content: `${AI_RULES}\n\nFacts:\n${aiFacts()}` }, ...ai.history.slice(-6), { role: 'user', content: text }];
+        const stream = await ai.engine.chat.completions.create({ messages, stream: true, temperature: 0.4, max_tokens: 320 });
+        for await (const chunk of stream) {
+            const delta = chunk.choices && chunk.choices[0] && chunk.choices[0].delta ? chunk.choices[0].delta.content || '' : '';
+            if (!delta) continue;
+            out += delta;
+            bubble.classList.remove('bot-typing');
+            bubble.innerHTML = aiText(out);
+            botScroll();
+        }
+        out = out.trim();
+        if (!out) throw new Error('empty');
+        ai.history.push({ role: 'user', content: text }, { role: 'assistant', content: out });
+        $('bot-chips').innerHTML = BOT_CHIPS.map((c) => `<button type="button" class="chip" data-bot-chip="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('');
+    } catch (err) {
+        li.remove();
+        botHandleOffline(text);
+    } finally {
+        aiBusy = false;
+        $('bot-send').disabled = false;
+    }
 };
 
 const aiText = (t) => escapeHtml(t)
@@ -2558,59 +2697,15 @@ const botTyping = () => {
     return li;
 };
 
-const setBotMode = () => {
-    const ai = aiAvailable();
-    $('bot-status').textContent = ai ? 'AI by Claude · sees a summary of your Vela data' : (canSync() ? 'Offline answers · AI needs internet' : 'Offline answers · sign in to use AI');
-    $('bot-new').hidden = !ai;
-};
-
-const aiAsk = async (text) => {
-    aiBusy = true;
-    $('bot-send').disabled = true;
-    const typing = botTyping();
-    aiHistory.push({ role: 'user', content: text });
-    try {
-        const { data, error } = await supabaseClient.functions.invoke('vela-ai', { body: { messages: aiHistory, data: aiSnapshot() } });
-        if (error) {
-            let message = '';
-            let status = 0;
-            if (error.context && typeof error.context.json === 'function') {
-                status = error.context.status;
-                try { message = (await error.context.json()).error || ''; } catch (e) { /* not JSON */ }
-            }
-            const err = new Error(message || error.message || 'AI error');
-            err.status = status;
-            err.notSetUp = status === 404 || error.name === 'FunctionsRelayError' || error.name === 'FunctionsFetchError';
-            throw err;
-        }
-        aiHistory.push(...(Array.isArray(data.added) ? data.added : []));
-        const drafts = (Array.isArray(data.drafts) ? data.drafts : []).map(draftFromAi).filter(Boolean);
-        typing.remove();
-        const html = (data.text ? aiText(data.text) : (drafts.length ? 'Here you go. Tap Add to save.' : 'Sorry, I have no answer for that.'))
-            + drafts.map((d) => draftCard(d)).join('');
-        botSay(html, drafts.length ? ['Budget left', 'Saving tips'] : BOT_CHIPS);
-    } catch (err) {
-        typing.remove();
-        aiHistory.pop(); // the server never answered this one
-        if (err.notSetUp) {
-            aiDown = true;
-            setBotMode();
-            botSay("The AI isn't switched on for this app yet, so I'll answer offline for now.");
-            botHandleOffline(text);
-        } else {
-            botSay(escapeHtml(err.message || "Couldn't reach the AI. Try again."));
-        }
-    } finally {
-        aiBusy = false;
-        $('bot-send').disabled = false;
-    }
-};
-
 const newAiChat = () => {
-    aiHistory = [];
+    ai.history = [];
     $('bot-log').innerHTML = '';
     botSay('New chat. What would you like to know?');
 };
+
+// Typed spending like "kottu 1200" is handled by the app itself (exact and instant);
+// questions and chat go to the AI when it's on.
+const looksLikeEntry = (t) => /\d/.test(t) && !/\?|\b(how|what|why|where|when|which|should|can i|could i|afford|budget|left|save|saving|tips?)\b/i.test(t);
 
 /* ---- First-run card on Home ---- */
 const starterHtml = () => {
@@ -4320,6 +4415,7 @@ const initEvents = () => {
         if (d.pick) { const p = txPicks[Number(d.pick)]; if (p) applyPick(p); return; }
         if (d.starterPick) { starterPick(d.starterPick); return; }
         if (d.botChip) { botHandle(d.botChip); return; }
+        if (d.aiStart) { aiStart(d.aiStart); return; }
         if (d.botSay) { botHandle(d.botSay); return; }
         if (d.botAdd) { botAdd(d.botAdd, el); return; }
         if (d.botEdit) { botEdit(d.botEdit); return; }
@@ -4364,6 +4460,7 @@ const initEvents = () => {
             case 'add-account': openAccountEditor(); break;
             case 'open-bot': haptic(); openBot(); break;
             case 'bot-new': newAiChat(); break;
+            case 'bot-ai': if (ai.status === 'error') ai.status = 'idle'; aiOffer(); break;
             case 'open-accounts': openAccountManager(); break;
             case 'open-currencies': openCurrencySheet(); break;
             case 'pick-receipt': $('tx-receipt-input').click(); break;

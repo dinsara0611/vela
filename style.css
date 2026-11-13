@@ -3816,6 +3816,13 @@ html.native textarea {
 .bot-send { flex: none; width: 48px; padding: 0; border-radius: 50%; }
 
 .bot-id { flex: 1; }
+#bot-ai { flex: none; }
+.ai-load, .ai-offer { display: flex; flex-direction: column; gap: 8px; min-width: min(260px, 70vw); }
+.ai-load .meter { width: 100%; }
+.ai-load-text { font-size: var(--fs-sm); color: var(--text-2); font-variant-numeric: tabular-nums; }
+.ai-load-note, .ai-offer-note { font-size: var(--fs-xs); color: var(--text-3); }
+.ai-load strong .ic { color: var(--income); vertical-align: -3px; }
+.ai-offer-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .bot-typing { display: inline-flex; gap: 5px; padding: 14px 16px; }
 .bot-typing span { width: 7px; height: 7px; border-radius: 50%; background: var(--text-3); animation: bot-dot 1.2s infinite ease-in-out; }
 .bot-typing span:nth-child(2) { animation-delay: 0.15s; }
