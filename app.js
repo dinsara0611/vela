@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.0.0';
+const APP_VERSION = '4.1.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -82,6 +82,7 @@ const createDefaultState = () => ({
         budget: 1000,              // overall monthly budget, USD
         categoryBudgets: {},       // categoryId -> monthly limit, USD
         lastCategory: { expense: 'Food', income: 'Salary' },
+        priceBook: {},             // currency -> item name -> { price, added?, category? } (your own prices)
         lock: { enabled: false, hash: null, salt: null, biometric: false },
         reminders: false,
         reminderIds: []
@@ -474,6 +475,20 @@ const normalizeState = (raw) => {
         base.config.lock = { enabled: !!cfg.lock.enabled, hash: String(cfg.lock.hash), salt: String(cfg.lock.salt), biometric: !!cfg.lock.biometric };
     }
     base.config.lastAccount = cfg.lastAccount ? String(cfg.lastAccount) : null;
+    if (cfg.priceBook && typeof cfg.priceBook === 'object') {
+        Object.keys(cfg.priceBook).forEach((cur) => {
+            const src = cfg.priceBook[cur];
+            if (!isCurrency(cur) || !src || typeof src !== 'object') return;
+            const out = {};
+            Object.keys(src).slice(0, 200).forEach((name) => {
+                const e = src[name];
+                const price = e && toNumber(e.price, 0);
+                if (!name || !(price > 0)) return;
+                out[String(name).slice(0, 40)] = { price, ...(e.added ? { added: true } : {}), ...(e.category ? { category: String(e.category) } : {}) };
+            });
+            base.config.priceBook[cur] = out;
+        });
+    }
     base.config.reminders = !!cfg.reminders;
     base.config.reminderIds = Array.isArray(cfg.reminderIds) ? cfg.reminderIds.filter(Number.isInteger) : [];
 
@@ -1226,7 +1241,7 @@ const renderDashboard = () => {
     const recent = sortByNewest(state.transactions).slice(0, 6);
     $('recent-list').innerHTML = recent.length
         ? recent.map((t) => txRow(t)).join('')
-        : `<li>${emptyState({ iconId: 'i-wallet', title: 'Nothing logged yet', text: 'Tap + to add your first expense or income.', actionLabel: 'Add expense', action: 'add-expense' })}</li>`;
+        : starterHtml();
 
     renderTrendChart();
 };
@@ -1789,10 +1804,14 @@ const setTxType = (type, keepCategory) => {
     btn.className = `btn ${type === 'income' ? 'btn-income' : 'btn-primary'}`;
     btn.textContent = editing ? 'Save changes' : (type === 'income' ? 'Add income' : 'Add expense');
     buildCategoryPicker(type, keepCategory || state.config.lastCategory[type]);
+    renderTxSuggest();
+    updatePriceHint();
 };
 
 const openAddTx = (type = 'expense') => {
     $('tx-form').reset();
+    txHistory = historyStats();
+    txCatTouched = false;
     $('tx-id').value = '';
     $('btn-delete-tx').hidden = true;
     fillAccountSelect($('tx-account'), activityAccount !== 'all' ? activityAccount : state.config.lastAccount);
@@ -1809,6 +1828,8 @@ const openEditTx = (id) => {
     if (!t) return;
     if (t.type === 'transfer') { openTransfer(t.id); return; }
     $('tx-form').reset();
+    txHistory = historyStats();
+    txCatTouched = true;
     fillAccountSelect($('tx-account'), t.accountId);
     $('tx-account-field').hidden = state.accounts.length < 2;
     setReceiptDraft(t);
@@ -1907,6 +1928,384 @@ const deleteTx = (id) => {
             renderActive();
         }
     });
+};
+
+/* =========================================================================
+   21b. Smart add: local prices, your usual items, price check, meal calculator
+   ========================================================================= */
+// Everyday prices people actually pay. [name, category, price, in the meal calculator]
+const PRICE_BOOK = {
+    LKR: {
+        region: 'Sri Lanka',
+        items: [
+            ['Rice & curry', 'Food', 450, 1], ['Chicken kottu', 'Food', 1100, 1], ['Fried rice', 'Food', 950, 1],
+            ['String hoppers', 'Food', 350, 1], ['Egg hopper', 'Food', 120, 1], ['Short eats', 'Food', 150, 1],
+            ['Lunch packet', 'Food', 500, 1], ['Plain tea', 'Food', 80, 1], ['Milk tea', 'Food', 120, 1],
+            ['Coffee', 'Food', 300, 1], ['Fresh juice', 'Food', 350, 1], ['Water bottle', 'Food', 120, 1],
+            ['Burger', 'Food', 1300, 1], ['Pizza', 'Food', 3200, 1], ['Bread loaf', 'Food', 180, 0], ['Groceries', 'Food', 6000, 0],
+            ['Bus fare', 'Travel', 100, 0], ['Tuk-tuk ride', 'Travel', 450, 0], ['PickMe / Uber', 'Travel', 900, 0],
+            ['Train ticket', 'Travel', 250, 0], ['Petrol (1 L)', 'Travel', 310, 0],
+            ['Mobile reload', 'Utilities', 500, 0], ['Electricity bill', 'Utilities', 4500, 0], ['Water bill', 'Utilities', 1200, 0],
+            ['Internet bill', 'Utilities', 3500, 0], ['Pharmacy', 'Health', 1500, 0], ['Doctor visit', 'Health', 2500, 0],
+            ['Movie ticket', 'Entertainment', 1500, 0]
+        ]
+    },
+    INR: {
+        region: 'India',
+        items: [
+            ['Thali', 'Food', 180, 1], ['Biryani', 'Food', 250, 1], ['Masala dosa', 'Food', 90, 1], ['Idli plate', 'Food', 60, 1],
+            ['Samosa', 'Food', 20, 1], ['Chai', 'Food', 20, 1], ['Coffee', 'Food', 150, 1], ['Lassi', 'Food', 60, 1],
+            ['Water bottle', 'Food', 20, 1], ['Burger', 'Food', 180, 1], ['Pizza', 'Food', 450, 1], ['Groceries', 'Food', 2500, 0],
+            ['Bus fare', 'Travel', 25, 0], ['Auto ride', 'Travel', 80, 0], ['Uber / Ola', 'Travel', 250, 0], ['Metro ticket', 'Travel', 40, 0],
+            ['Petrol (1 L)', 'Travel', 105, 0], ['Mobile recharge', 'Utilities', 300, 0], ['Electricity bill', 'Utilities', 1500, 0],
+            ['Internet bill', 'Utilities', 700, 0], ['Pharmacy', 'Health', 300, 0], ['Doctor visit', 'Health', 500, 0],
+            ['Movie ticket', 'Entertainment', 250, 0]
+        ]
+    },
+    USD: {
+        region: 'the US',
+        items: [
+            ['Lunch', 'Food', 15, 1], ['Dinner out', 'Food', 30, 1], ['Burger meal', 'Food', 12, 1], ['Sandwich', 'Food', 9, 1],
+            ['Pizza', 'Food', 18, 1], ['Salad bowl', 'Food', 13, 1], ['Coffee', 'Food', 5, 1], ['Tea', 'Food', 3.5, 1],
+            ['Soft drink', 'Food', 2.5, 1], ['Water bottle', 'Food', 2, 1], ['Dessert', 'Food', 7, 1], ['Groceries', 'Food', 120, 0],
+            ['Bus fare', 'Travel', 2.75, 0], ['Taxi / Uber', 'Travel', 18, 0], ['Fuel fill-up', 'Travel', 50, 0], ['Parking', 'Travel', 10, 0],
+            ['Phone bill', 'Utilities', 45, 0], ['Electricity bill', 'Utilities', 120, 0], ['Internet bill', 'Utilities', 60, 0],
+            ['Pharmacy', 'Health', 20, 0], ['Doctor visit', 'Health', 150, 0], ['Movie ticket', 'Entertainment', 15, 0],
+            ['Streaming', 'Entertainment', 15, 0]
+        ]
+    }
+};
+// Rough price level against the US, for currencies without their own list.
+const PRICE_LEVEL = { EUR: 0.85, GBP: 0.9, AED: 0.7, SAR: 0.6, QAR: 0.7, KWD: 0.6, OMR: 0.6, AUD: 0.9, CAD: 0.9, SGD: 0.85, MYR: 0.35, JPY: 0.65, CNY: 0.4, MVR: 0.6 };
+const REGION_NAMES = { EUR: 'the euro area', GBP: 'the UK', AED: 'the UAE', SAR: 'Saudi Arabia', QAR: 'Qatar', KWD: 'Kuwait', OMR: 'Oman', AUD: 'Australia', CAD: 'Canada', SGD: 'Singapore', MYR: 'Malaysia', JPY: 'Japan', CNY: 'China', MVR: 'the Maldives' };
+// Words that point to a category, so typing "kottu" or "bus" picks it for you.
+const CATEGORY_HINTS = [
+    ['Food', /\b(food|lunch|dinner|breakfast|meal|rice|kottu|hopper|biryani|thali|dosa|pizza|burger|sandwich|coffee|tea|chai|cafe|restaurant|grocer|groceries|bakery|bread|snack|short eats|juice|water|kfc|mcdonald|domino|keells|cargills|uber eats|dessert|cake)/],
+    ['Travel', /\b(bus|train|taxi|uber|pickme|tuk|auto ride|fuel|petrol|diesel|parking|toll|metro|flight|ticket to|fare)/],
+    ['Utilities', /\b(electric|ceb|leco|water bill|internet|wifi|broadband|phone bill|reload|recharge|dialog|mobitel|airtel|hutch|gas bill|bill)/],
+    ['Rent', /\b(rent|lease|landlord|boarding)/],
+    ['Health', /\b(doctor|pharmacy|medicine|hospital|clinic|dentist|channel|lab test|vitamin)/],
+    ['Shopping', /\b(clothes|shoes|shirt|dress|daraz|amazon|shopping|mall|gift for)/],
+    ['Entertainment', /\b(movie|cinema|netflix|spotify|youtube|game|concert|party|streaming)/]
+];
+
+const normDesc = (s) => String(s || '').trim().toLowerCase().replace(/\s+/g, ' ');
+const nicePrice = (v, cur) => {
+    const step = v >= 5000 ? 100 : v >= 500 ? 10 : v >= 50 ? 5 : v >= 5 ? 0.5 : 0.1;
+    const r = Math.max(step, Math.round(v / step) * step);
+    const d = decimalsFor(cur);
+    return d === 0 ? Math.max(1, Math.round(r)) : Number(r.toFixed(d));
+};
+const median = (arr) => {
+    if (!arr.length) return 0;
+    const s = [...arr].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+};
+const expenseCatExists = (id) => state.categories.some((c) => c.id === id && c.type === 'expense');
+
+// The price list for a currency: its own list, or US prices scaled to the local price level.
+// Prices you change (and items you add) are kept in config.priceBook[currency][name].
+const priceList = (cur) => {
+    const own = PRICE_BOOK[cur];
+    const src = own || PRICE_BOOK.USD;
+    const factor = own ? 1 : convertAmount(1, 'USD', cur) * (PRICE_LEVEL[cur] || 0.7);
+    const mine = state.config.priceBook[cur] || {};
+    const items = src.items.map(([name, category, price, meal]) => ({
+        name,
+        category,
+        meal: !!meal,
+        price: mine[name] && mine[name].price > 0 ? mine[name].price : nicePrice(price * factor, cur)
+    }));
+    Object.keys(mine).forEach((name) => {
+        if (mine[name].added && !items.some((i) => i.name === name)) items.push({ name, category: mine[name].category || 'Food', meal: true, price: mine[name].price, custom: true });
+    });
+    return { region: own ? own.region : (REGION_NAMES[cur] || cur), approx: !own, items };
+};
+
+const rememberPrice = (cur, name, price, extra = {}) => {
+    const book = state.config.priceBook[cur] || (state.config.priceBook[cur] = {});
+    book[name] = { ...(book[name] || {}), ...extra, price };
+    saveState();
+};
+
+// What you've bought in the last 6 months, grouped by description.
+const historyStats = () => {
+    const cutoff = toISODate(addDays(new Date(), -183));
+    const map = new Map();
+    state.transactions.forEach((t) => {
+        if (t.type !== 'expense' || t.date < cutoff || !t.desc) return;
+        const key = normDesc(t.desc);
+        let g = map.get(key);
+        if (!g) { g = { key, count: 0, last: t, usd: [] }; map.set(key, g); }
+        g.count += 1;
+        g.usd.push(convertAmount(t.amount, t.currency, 'USD'));
+        if (t.date > g.last.date || (t.date === g.last.date && (t.createdAt || 0) > (g.last.createdAt || 0))) g.last = t;
+    });
+    return map;
+};
+
+let txHistory = new Map();
+let txCatTouched = false;
+let txPicks = [];
+
+const selectTxCategory = (id) => {
+    const input = document.querySelector(`input[name="tx-category"][value="${CSS.escape(id)}"]`);
+    if (input) input.checked = true;
+};
+
+const renderTxSuggest = () => {
+    const wrap = $('tx-suggest');
+    const show = txType === 'expense' && !$('tx-id').value;
+    wrap.hidden = !show;
+    if (!show) return;
+    const cur = normCur($('tx-currency').value);
+    const q = normDesc($('tx-desc').value);
+    const book = priceList(cur);
+
+    const usual = [...txHistory.values()].filter((g) => g.count >= 2)
+        .sort((a, b) => b.count - a.count || (a.last.date < b.last.date ? 1 : -1))
+        .slice(0, 6)
+        .map((g) => ({
+            kind: 'usual',
+            name: g.last.desc,
+            category: expenseCatExists(g.last.category) ? g.last.category : 'Other',
+            price: g.last.currency === cur ? g.last.amount : nicePrice(convertAmount(g.last.amount, g.last.currency, cur), cur),
+            count: g.count
+        }));
+    const seen = new Set(usual.map((p) => normDesc(p.name)));
+    let picks = usual.concat(book.items.filter((i) => !seen.has(normDesc(i.name))).map((i) => ({ kind: 'book', ...i })));
+    if (q) {
+        const words = q.split(' ');
+        const exact = picks.some((p) => normDesc(p.name) === q);
+        const matches = picks.filter((p) => { const n = normDesc(p.name); return n !== q && words.every((w) => n.includes(w)); });
+        // Once you've picked something, keep showing the others so you can switch.
+        picks = matches.length || !exact ? matches : picks.filter((p) => normDesc(p.name) !== q);
+    }
+    txPicks = picks.slice(0, q ? 8 : 16);
+
+    $('tx-suggest-src').textContent = `${book.approx ? 'Approx. prices' : 'Typical prices'} in ${book.region}`;
+    $('tx-suggest-chips').innerHTML = txPicks.length
+        ? txPicks.map((p, i) => `<button type="button" class="pick-chip" data-pick="${i}" data-kind="${p.kind}" style="--cat:${catColor(catById(p.category))}" aria-label="${escapeHtml(p.name)}, ${escapeHtml(formatCurrency(p.price, cur))}${p.kind === 'usual' ? `, you've added this ${p.count} times` : ''}">
+            ${p.kind === 'usual' ? icon('i-repeat', 'ic ic-sm') : '<span class="chip-dot"></span>'}<span class="pick-name">${escapeHtml(p.name)}</span><span class="pick-price">${escapeHtml(formatCurrency(p.price, cur))}</span>
+        </button>`).join('')
+        : `<span class="field-hint">No quick picks match. Keep typing and save it — Vela will learn it.</span>`;
+};
+
+const applyPick = (p) => {
+    $('tx-desc').value = p.name;
+    $('tx-amount').value = p.price;
+    if (expenseCatExists(p.category)) { selectTxCategory(p.category); txCatTouched = true; }
+    clearFieldErrors($('tx-form'));
+    haptic();
+    renderTxSuggest();
+    updatePriceHint();
+};
+
+const guessCategory = (desc) => {
+    const key = normDesc(desc);
+    if (key.length < 2) return null;
+    const g = txHistory.get(key);
+    if (g && expenseCatExists(g.last.category)) return g.last.category;
+    const item = priceList(normCur($('tx-currency').value)).items.find((i) => normDesc(i.name) === key);
+    if (item) return item.category;
+    const hit = CATEGORY_HINTS.find(([, re]) => re.test(key));
+    return hit && expenseCatExists(hit[0]) ? hit[0] : null;
+};
+
+// A gentle note when the amount is far from what you (or most people) pay.
+const updatePriceHint = () => {
+    const el = $('tx-price-hint');
+    const hide = () => { el.hidden = true; el.textContent = ''; };
+    if (txType !== 'expense') return hide();
+    const amount = toNumber($('tx-amount').value, NaN);
+    const key = normDesc($('tx-desc').value);
+    if (!(amount > 0) || !key) return hide();
+    const cur = normCur($('tx-currency').value);
+    let ref = 0;
+    let who = '';
+    const g = txHistory.get(key);
+    const editingId = $('tx-id').value;
+    const own = g ? state.transactions.filter((t) => t.type === 'expense' && t.id !== editingId && normDesc(t.desc) === key) : [];
+    if (own.length >= 2) {
+        ref = convertAmount(median(own.map((t) => convertAmount(t.amount, t.currency, 'USD'))), 'USD', cur);
+        who = 'what you usually pay';
+    } else {
+        const item = priceList(cur).items.find((i) => normDesc(i.name) === key);
+        if (item) { ref = item.price; who = 'the typical price'; }
+    }
+    if (!(ref > 0)) return hide();
+    const ratio = amount / ref;
+    let text = '';
+    if (ratio >= 2) text = `That's ${ratio >= 10 ? 'over 10' : ratio.toFixed(1)}× ${who} (${formatCurrency(ref, cur)}). Check the amount before saving.`;
+    else if (ratio <= 0.2) text = `That's much less than ${who} (${formatCurrency(ref, cur)}). Missing a zero?`;
+    if (!text) return hide();
+    el.innerHTML = `${icon('i-alert', 'ic ic-sm')}<span>${escapeHtml(text)}</span>`;
+    el.hidden = false;
+};
+
+const onTxDescInput = () => {
+    if (txType === 'expense' && !txCatTouched && !$('tx-id').value) {
+        const cat = guessCategory($('tx-desc').value);
+        if (cat) selectTxCategory(cat);
+    }
+    renderTxSuggest();
+    updatePriceHint();
+};
+
+// The currency you usually spend in: your last-used account's, else the display currency.
+const homeCurrency = () => { const a = accountById(state.config.lastAccount); return normCur(a ? a.currency : dcur()); };
+
+/* ---- Meal calculator ---- */
+const meal = { cur: 'USD', qty: {}, people: 1, service: 0, fromTx: false };
+
+const mealFoods = () => priceList(meal.cur).items.filter((i) => i.meal);
+const mealPrice = (name) => {
+    const input = document.querySelector(`[data-meal-price="${CSS.escape(name)}"]`);
+    const v = input ? toNumber(input.value, 0) : 0;
+    return v > 0 ? v : 0;
+};
+
+const renderMeal = () => {
+    const { region, approx } = priceList(meal.cur);
+    $('meal-sub').textContent = `${approx ? 'Approx. prices' : 'Typical prices'} in ${region} (${meal.cur}). Change any price and Vela remembers it.`;
+    $('meal-list').innerHTML = mealFoods().map((i) => {
+        const q = meal.qty[i.name] || 0;
+        const n = escapeHtml(i.name);
+        return `<li class="meal-row" data-active="${q > 0}">
+            <span class="meal-name">${n}</span>
+            <input type="number" class="input meal-price" inputmode="decimal" min="0" step="any" value="${i.price}" data-meal-price="${n}" aria-label="Price of ${n}">
+            <span class="stepper" role="group" aria-label="How many ${n}">
+                <button type="button" data-meal-step="-1" data-meal-name="${n}" aria-label="One less ${n}" ${q ? '' : 'disabled'}>−</button>
+                <output aria-live="polite">${q}</output>
+                <button type="button" data-meal-step="1" data-meal-name="${n}" aria-label="One more ${n}">+</button>
+            </span>
+        </li>`;
+    }).join('');
+    $('meal-people').textContent = String(meal.people);
+    setPressed('[data-meal-service]', (b) => Number(b.dataset.mealService) === meal.service);
+    updateMealTotals();
+};
+
+const mealSummary = () => {
+    const chosen = mealFoods().filter((i) => (meal.qty[i.name] || 0) > 0).map((i) => ({ name: i.name, qty: meal.qty[i.name], price: mealPrice(i.name) }));
+    const subtotal = chosen.reduce((s, c) => s + c.qty * c.price, 0);
+    const service = subtotal * (meal.service / 100);
+    const total = subtotal + service;
+    return { chosen, subtotal, service, total, each: total / meal.people };
+};
+
+const updateMealTotals = () => {
+    const s = mealSummary();
+    const cur = meal.cur;
+    const items = s.chosen.reduce((n, c) => n + c.qty, 0);
+    $('meal-count').textContent = items ? plural(items, 'item') : 'Nothing picked yet';
+    $('meal-service-amt').textContent = meal.service && s.subtotal > 0 ? `+${formatCurrency(s.service, cur)} service` : '';
+    $('meal-total').textContent = formatCurrency(s.total, cur);
+    $('meal-each').textContent = meal.people > 1 ? `${formatCurrency(s.each, cur)} each for ${meal.people} people` : '';
+    $('btn-meal-use').disabled = !(s.total > 0);
+};
+
+const openMealCalc = (fromTx) => {
+    meal.fromTx = !!fromTx && isSheetOpen('modal-tx');
+    const cur = meal.fromTx ? normCur($('tx-currency').value) : homeCurrency();
+    if (cur !== meal.cur) meal.qty = {};
+    meal.cur = cur;
+    $('meal-new-name').value = '';
+    $('meal-new-price').value = '';
+    renderMeal();
+    openOrSwap('modal-meal');
+};
+
+const stepMeal = (name, delta) => {
+    const q = Math.max(0, Math.min(99, (meal.qty[name] || 0) + delta));
+    meal.qty[name] = q;
+    const btn = document.querySelector(`[data-meal-step="1"][data-meal-name="${CSS.escape(name)}"]`);
+    const row = btn && btn.closest('.meal-row');
+    if (row) {
+        row.dataset.active = String(q > 0);
+        row.querySelector('output').textContent = String(q);
+        row.querySelector('[data-meal-step="-1"]').disabled = !q;
+    }
+    haptic();
+    updateMealTotals();
+};
+
+const addMealItem = () => {
+    const name = $('meal-new-name').value.trim().replace(/\s+/g, ' ').slice(0, 40);
+    const price = toNumber($('meal-new-price').value, NaN);
+    if (!name) return fieldError($('meal-new-name'), 'Name the item, like "Watalappan".');
+    if (!(price > 0)) return fieldError($('meal-new-price'), 'Enter its price.');
+    rememberPrice(meal.cur, name, price, { added: true, category: 'Food' });
+    meal.qty[name] = (meal.qty[name] || 0) + 1;
+    $('meal-new-name').value = '';
+    $('meal-new-price').value = '';
+    renderMeal();
+    showToast(`${name} added to your list`, 'success');
+    return true;
+};
+
+const useMealTotal = () => {
+    const s = mealSummary();
+    if (!(s.total > 0)) return;
+    const cur = meal.cur;
+    const fmt = (v) => formatCurrency(v, cur);
+    const desc = (s.chosen.length === 1
+        ? `${s.chosen[0].qty > 1 ? `${s.chosen[0].qty}× ` : ''}${s.chosen[0].name}`
+        : `Meal: ${s.chosen.slice(0, 2).map((c) => c.name).join(', ')}${s.chosen.length > 2 ? ` +${s.chosen.length - 2} more` : ''}`).slice(0, 80);
+    const lines = s.chosen.map((c) => `${c.qty} × ${c.name} @ ${fmt(c.price)} = ${fmt(c.qty * c.price)}`);
+    if (meal.service) lines.push(`Service ${meal.service}%: ${fmt(s.service)}`);
+    if (meal.people > 1) lines.push(`Split ${meal.people} ways: ${fmt(s.each)} each`);
+    const d = decimalsFor(cur);
+    const total = Number(s.total.toFixed(d));
+
+    if (meal.fromTx) openOrSwap('modal-tx');
+    else { openAddTx('expense'); fillCurrencySelect($('tx-currency'), cur); }
+    $('tx-desc').value = desc;
+    $('tx-amount').value = total;
+    $('tx-note').value = lines.join('\n').slice(0, 240);
+    if (expenseCatExists('Food')) { selectTxCategory('Food'); txCatTouched = true; }
+    clearFieldErrors($('tx-form'));
+    meal.qty = {};
+    meal.people = 1;
+    renderTxSuggest();
+    updatePriceHint();
+};
+
+const mealBack = () => {
+    if (meal.fromTx) openOrSwap('modal-tx');
+    else closeSheet('modal-meal');
+};
+
+/* ---- First-run card on Home ---- */
+const starterHtml = () => {
+    const cur = homeCurrency();
+    const book = priceList(cur);
+    const foods = book.items.filter((i) => i.meal).slice(0, 3);
+    const travel = book.items.find((i) => i.category === 'Travel');
+    const picks = travel ? foods.concat(travel) : foods;
+    return `<li class="starter">
+        <span class="empty-icon">${icon('i-wallet')}</span>
+        <span class="empty-title">Log your first expense</span>
+        <span class="empty-text">Tap something you bought today. Prices are typical for ${escapeHtml(book.region)} and you can change them.</span>
+        <div class="starter-picks">${picks.map((p) => `<button type="button" class="pick-chip" data-starter-pick="${escapeHtml(p.name)}" style="--cat:${catColor(catById(p.category))}"><span class="chip-dot"></span><span class="pick-name">${escapeHtml(p.name)}</span><span class="pick-price">${escapeHtml(formatCurrency(p.price, cur))}</span></button>`).join('')}</div>
+        <div class="starter-actions">
+            <button type="button" class="btn btn-primary btn-sm" data-action="add-expense">${icon('i-plus', 'ic ic-sm')} Add expense</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-action="open-meal-calc">${icon('i-calc', 'ic ic-sm')} Meal calculator</button>
+        </div>
+        <ul class="starter-steps">
+            <li>${icon('i-check', 'ic ic-sm')}<span>Vela learns what you buy often and suggests it next time.</span></li>
+            <li>${icon('i-check', 'ic ic-sm')}<span>Set a monthly budget in <button type="button" class="link-btn" data-goto="plan">Plan</button> to get alerts.</span></li>
+        </ul>
+    </li>`;
+};
+
+const starterPick = (name) => {
+    const cur = homeCurrency();
+    const item = priceList(cur).items.find((i) => i.name === name);
+    openAddTx('expense');
+    fillCurrencySelect($('tx-currency'), cur);
+    if (item) applyPick(item);
 };
 
 /* =========================================================================
@@ -3582,6 +3981,10 @@ const initEvents = () => {
         if (d.catIcon) { catEditIcon = d.catIcon; renderCategoryEditor(); return; }
         if (d.catType) { catEditType = d.catType; if (!$('category-id').value) catEditIcon = catEditType === 'income' ? 'c-OtherIncome' : 'c-Other'; renderCategoryEditor(); return; }
         if (d.txType) { setTxType(d.txType); return; }
+        if (d.pick) { const p = txPicks[Number(d.pick)]; if (p) applyPick(p); return; }
+        if (d.starterPick) { starterPick(d.starterPick); return; }
+        if (d.mealStep) { stepMeal(d.mealName, Number(d.mealStep)); return; }
+        if (d.mealService) { meal.service = Number(d.mealService); setPressed('[data-meal-service]', (b) => Number(b.dataset.mealService) === meal.service); updateMealTotals(); return; }
         if (d.billType) { setBillType(d.billType); return; }
         if (d.debtDir) { setDebtDir(d.debtDir); return; }
         if (d.fundsMode) { setFundsMode(d.fundsMode); return; }
@@ -3620,6 +4023,11 @@ const initEvents = () => {
             case 'add-budget': openBudget(); break;
             case 'add-transfer': openTransfer(); break;
             case 'add-account': openAccountEditor(); break;
+            case 'open-meal-calc': openMealCalc(isSheetOpen('modal-tx')); break;
+            case 'meal-back': mealBack(); break;
+            case 'meal-use': useMealTotal(); break;
+            case 'meal-people-dec': meal.people = Math.max(1, meal.people - 1); $('meal-people').textContent = String(meal.people); updateMealTotals(); break;
+            case 'meal-people-inc': meal.people = Math.min(50, meal.people + 1); $('meal-people').textContent = String(meal.people); updateMealTotals(); break;
             case 'open-accounts': openAccountManager(); break;
             case 'open-currencies': openCurrencySheet(); break;
             case 'pick-receipt': $('tx-receipt-input').click(); break;
@@ -3750,7 +4158,20 @@ const initEvents = () => {
     $('transfer-amount').addEventListener('input', () => updateTransferFields(true));
     $('tx-account').addEventListener('change', () => {
         if (!$('tx-id').value) fillCurrencySelect($('tx-currency'), accountById($('tx-account').value).currency);
+        renderTxSuggest();
+        updatePriceHint();
     });
+    $('tx-currency').addEventListener('change', () => { renderTxSuggest(); updatePriceHint(); });
+    $('tx-desc').addEventListener('input', onTxDescInput);
+    $('tx-amount').addEventListener('input', updatePriceHint);
+    $('tx-category-picker').addEventListener('change', () => { txCatTouched = true; });
+    $('meal-list').addEventListener('input', (e) => { if (e.target.matches('[data-meal-price]')) updateMealTotals(); });
+    $('meal-list').addEventListener('change', (e) => {
+        const name = e.target.dataset && e.target.dataset.mealPrice;
+        const v = toNumber(e.target.value, 0);
+        if (name && v > 0) rememberPrice(meal.cur, name, v);
+    });
+    $('meal-add-form').addEventListener('submit', (e) => { e.preventDefault(); addMealItem(); });
     $('tx-receipt-input').addEventListener('change', (e) => {
         const file = e.target.files && e.target.files[0];
         if (file) pickReceipt(file);

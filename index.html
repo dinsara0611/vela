@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.0.0">
+    <link rel="stylesheet" href="style.css?v=4.1.0">
 </head>
 <body data-view="dashboard">
 
@@ -64,6 +64,7 @@
             <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 21h18"/><rect x="5" y="11" width="3.2" height="7" rx="1"/><rect x="10.4" y="5" width="3.2" height="13" rx="1"/><rect x="15.8" y="14" width="3.2" height="4" rx="1"/></symbol>
             <symbol id="i-pie" viewBox="0 0 24 24"><path d="M21.2 15.9A10 10 0 1 1 8 2.8"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></symbol>
             <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+            <symbol id="i-calc" viewBox="0 0 24 24"><rect x="5" y="3" width="14" height="18" rx="2.5"/><path d="M8.5 7.5h7M8.5 12h.01M12 12h.01M15.5 12h.01M8.5 15.5h.01M12 15.5h.01M15.5 15.5h.01"/></symbol>
             <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
             <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
             <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
@@ -567,6 +568,14 @@
                         <button type="button" data-tx-type="expense" data-type="expense" aria-pressed="true">Expense</button>
                         <button type="button" data-tx-type="income" data-type="income" aria-pressed="false">Income</button>
                     </div>
+                    <div class="field suggest-field" id="tx-suggest" hidden>
+                        <div class="suggest-head">
+                            <span class="field-label">Quick picks</span>
+                            <button type="button" class="btn btn-secondary btn-xs" data-action="open-meal-calc"><svg class="ic ic-sm"><use href="#i-calc"/></svg>Meal calculator</button>
+                        </div>
+                        <div class="chip-scroller suggest-chips" id="tx-suggest-chips"></div>
+                        <span class="field-hint" id="tx-suggest-src"></span>
+                    </div>
                     <div class="field amount-field">
                         <label class="field-label" for="tx-amount">Amount</label>
                         <div class="input-group">
@@ -574,6 +583,7 @@
                             <label class="sr-only" for="tx-currency">Currency</label>
                             <select id="tx-currency" class="addon"></select>
                         </div>
+                        <p class="price-hint" id="tx-price-hint" role="status" hidden></p>
                     </div>
                     <div class="field" id="tx-account-field">
                         <label class="field-label" for="tx-account">Account</label>
@@ -607,6 +617,59 @@
                     <button type="submit" class="btn btn-primary" id="btn-submit-tx">Save</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Meal calculator -->
+    <div class="sheet-overlay" id="modal-meal" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="meal-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <h2 class="sheet-title" id="meal-title">Meal calculator</h2>
+                <button class="icon-btn" type="button" data-action="meal-back" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body">
+                <p class="card-sub" id="meal-sub"></p>
+                <ul class="meal-list" id="meal-list"></ul>
+                <form id="meal-add-form" class="meal-add" novalidate>
+                    <div class="field">
+                        <label class="field-label" for="meal-new-name">Add your own item</label>
+                        <input type="text" id="meal-new-name" class="input" placeholder="e.g. Watalappan" maxlength="40" autocomplete="off">
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="meal-new-price">Price</label>
+                        <input type="number" id="meal-new-price" class="input" min="0" step="any" inputmode="decimal" placeholder="0">
+                    </div>
+                    <button type="submit" class="btn btn-secondary">Add</button>
+                </form>
+                <div class="meal-options">
+                    <div class="meal-option">
+                        <span class="field-label">People sharing</span>
+                        <span class="stepper" role="group" aria-label="People sharing">
+                            <button type="button" data-action="meal-people-dec" aria-label="One person less">−</button>
+                            <output id="meal-people" aria-live="polite">1</output>
+                            <button type="button" data-action="meal-people-inc" aria-label="One person more">+</button>
+                        </span>
+                    </div>
+                    <div class="meal-option">
+                        <span class="field-label">Service charge</span>
+                        <div class="segmented" role="group" aria-label="Service charge">
+                            <button type="button" data-meal-service="0" aria-pressed="true">None</button>
+                            <button type="button" data-meal-service="5" aria-pressed="false">5%</button>
+                            <button type="button" data-meal-service="10" aria-pressed="false">10%</button>
+                            <button type="button" data-meal-service="15" aria-pressed="false">15%</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="sheet-foot meal-foot">
+                <div class="meal-sum">
+                    <span class="meal-sum-top"><span id="meal-count">Nothing picked yet</span> <span id="meal-service-amt"></span></span>
+                    <strong class="amount" id="meal-total">0</strong>
+                    <span class="meal-each" id="meal-each"></span>
+                </div>
+                <button type="button" class="btn btn-primary" id="btn-meal-use" data-action="meal-use" disabled>Use total</button>
+            </div>
         </div>
     </div>
 
@@ -1176,7 +1239,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.0.0"></script>
+    <script src="app.js?v=4.1.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

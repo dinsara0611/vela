@@ -8,6 +8,9 @@ A phone-first expense and savings tracker that works in USD and LKR. It is a sta
 - **Accounts:** cash, bank, card and mobile wallets with live balances, and transfers between them (even across currencies).
 - **Any currency:** 17 currencies with live rates; show everything in the one you choose.
 - **Receipt photos** on any expense, kept on the phone and backed up when signed in.
+- **Quick picks** with typical local prices (Sri Lanka, India, US, and scaled for other currencies), your own usual items learnt from history, and auto-picked categories as you type.
+- **Meal calculator**: pick dishes and drinks, people sharing and service charge, then save the total as one itemised expense. Prices you change are remembered.
+- **Price check**: a gentle warning when an amount is far above or below what you usually pay.
 - **Calendar view** of a month's spending, day by day.
 - **Activity:** every entry by month, with search and category filters.
 - **Plan:** budgets per category, bills and subscriptions that log themselves (with reminders on Android), savings goals with target dates, and money you lent or borrowed.
