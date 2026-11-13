@@ -1,60 +1,93 @@
-const CACHE_NAME = 'vela-cache-v9';
-const ASSETS = [
-  'index.html',
-  'style.css?v=1.8',
-  'app.js?v=1.8',
-  'manifest.json',
-  'icon-192.png',
-  'icon-512.png',
-  'https://cdn.jsdelivr.net/npm/chart.js',
-  'https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700&display=swap'
+/* Vela service worker — offline support for the app shell. */
+const VERSION = '2.0.0';
+const SHELL_CACHE = `vela-shell-${VERSION}`;
+const CDN_CACHE = 'vela-cdn-v1';
+
+const SHELL = [
+  './',
+  './index.html',
+  './style.css?v=2.0.0',
+  './app.js?v=2.0.0',
+  './manifest.json',
+  './icon-192.png',
+  './icon-512.png'
 ];
 
-// Install Service Worker and cache all offline assets
+// Versioned third-party files: safe to serve from cache forever.
+const CDN = [
+  'https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js',
+  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js'
+];
+const CACHE_FIRST_HOSTS = ['cdn.jsdelivr.net', 'fonts.googleapis.com', 'fonts.gstatic.com'];
+
 self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('Vela Offline Assets Cached Successfully');
-        return cache.addAll(ASSETS);
-      })
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil((async () => {
+    const shell = await caches.open(SHELL_CACHE);
+    await shell.addAll(SHELL);
+    // CDN files are best-effort: a failure here must not block installing the app.
+    const cdn = await caches.open(CDN_CACHE);
+    await Promise.all(CDN.map((url) => cdn.add(new Request(url, { mode: 'cors' })).catch(() => null)));
+    await self.skipWaiting();
+  })());
 });
 
-// Activate Service Worker and clear old cache versions
 self.addEventListener('activate', (event) => {
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cache) => {
-          if (cache !== CACHE_NAME) {
-            console.log('Clearing old Vela cache:', cache);
-            return caches.delete(cache);
-          }
-        })
-      );
-    }).then(() => self.clients.claim())
-  );
+  event.waitUntil((async () => {
+    const keep = new Set([SHELL_CACHE, CDN_CACHE]);
+    const names = await caches.keys();
+    await Promise.all(names.filter((n) => !keep.has(n)).map((n) => caches.delete(n)));
+    await self.clients.claim();
+  })());
 });
 
-// Fetch events: Network first, falling back to cache if offline
+const putInCache = async (cacheName, request, response) => {
+  if (!response || (!response.ok && response.type !== 'opaque')) return;
+  const cache = await caches.open(cacheName);
+  await cache.put(request, response);
+};
+
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET' || !event.request.url.startsWith('http')) {
+  const { request } = event;
+  if (request.method !== 'GET') return;
+  const url = new URL(request.url);
+
+  // Page navigations: network first so updates arrive, cached shell when offline.
+  if (request.mode === 'navigate') {
+    event.respondWith((async () => {
+      try {
+        const response = await fetch(request);
+        event.waitUntil(putInCache(SHELL_CACHE, './index.html', response.clone()));
+        return response;
+      } catch (err) {
+        return (await caches.match('./index.html', { ignoreSearch: true })) || (await caches.match('./')) || Response.error();
+      }
+    })());
     return;
   }
-  
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        const responseClone = response.clone();
-        caches.open(CACHE_NAME).then((cache) => {
-          cache.put(event.request, responseClone);
-        });
+
+  // Our own files: network first, cache fallback.
+  if (url.origin === self.location.origin) {
+    event.respondWith((async () => {
+      try {
+        const response = await fetch(request);
+        event.waitUntil(putInCache(SHELL_CACHE, request, response.clone()));
         return response;
-      })
-      .catch(() => {
-        return caches.match(event.request);
-      })
-  );
+      } catch (err) {
+        return (await caches.match(request)) || Response.error();
+      }
+    })());
+    return;
+  }
+
+  // Fonts and pinned libraries: cache first.
+  if (CACHE_FIRST_HOSTS.includes(url.hostname)) {
+    event.respondWith((async () => {
+      const cached = await caches.match(request);
+      if (cached) return cached;
+      const response = await fetch(request);
+      event.waitUntil(putInCache(CDN_CACHE, request, response.clone()));
+      return response;
+    })());
+  }
+  // Everything else (Supabase, exchange-rate API) goes straight to the network and is never cached.
 });

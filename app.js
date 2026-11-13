@@ -1,2329 +1,2236 @@
 /**
- * Vela - Core Application Logic
+ * Vela 2.0 — expense & savings tracker (phone first)
  */
+'use strict';
 
-// --- APPLICATION STATE ---
-let state = {
-    expenses: [],       // Array of { id, desc, amount, currency, category, date, note }
-    savings: [],        // Array of { id, name, target, currency, saved }
+/* =========================================================================
+   1. Constants
+   ========================================================================= */
+const APP_VERSION = '2.0.0';
+const STORAGE_KEY = 'VELA_STATE';
+const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
+
+// Supabase project (the publishable key is safe to ship in client code; access is enforced by RLS).
+const SUPABASE_URL = 'https://kxtpcswywdvtasxanccz.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_TVtBSlap2TpS9mtyZv455Q_0pc-TNYH';
+
+const CATEGORIES = ['Food', 'Utilities', 'Rent', 'Entertainment', 'Travel', 'Health', 'Shopping', 'Other'];
+const TAB_TITLES = {
+    dashboard: 'Home',
+    expenses: 'Expenses',
+    savings: 'Savings',
+    analytics: 'Insights',
+    settings: 'Settings'
+};
+const RANGE_LABELS = { '30': 'Last 30 days', '12m': 'Last 12 months', all: 'All time' };
+
+/* =========================================================================
+   2. State
+   ========================================================================= */
+const prefersLight = () => !!(window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches);
+
+const createDefaultState = () => ({
+    expenses: [],   // { id, desc, amount, currency, category, date (YYYY-MM-DD), note, createdAt }
+    savings: [],    // { id, name, target, currency, saved, createdAt }
     config: {
-        rate: 300.00,   // Default fallback: 1 USD = 300 LKR
-        currency: 'USD', // Default display currency: USD
-        theme: 'dark',  // Default theme: dark
-        budget: 1000.00 // Default monthly spending budget limit (in USD)
+        rate: 300,
+        rateLocked: false,
+        rateUpdatedAt: null,
+        currency: 'USD',
+        theme: prefersLight() ? 'light' : 'dark',
+        budget: 1000,        // stored in USD
+        lastCategory: 'Food'
     },
     auth: {
-        user: null,               // { id, email, full_name, avatar_url }
-        isMock: true,             // Default true until user links Supabase
+        user: null,          // { id, email, full_name, avatar_url }
+        isMock: true,        // true = guest / local only
         completedOnboarding: false
-    }
-};
+    },
+    sync: { expenses: {}, savings: {} } // id -> 'upsert' | 'delete' (pending cloud writes)
+});
 
-// --- SUPABASE CLIENT SETUP ---
-// REPLACE these placeholders with your actual Supabase credentials.
-// When left blank, Vela will automatically operate in offline 'Mock Auth' mode.
-const SUPABASE_URL = "https://kxtpcswywdvtasxanccz.supabase.co";
-const SUPABASE_ANON_KEY = "sb_publishable_TVtBSlap2TpS9mtyZv455Q_0pc-TNYH";
-
+let state = createDefaultState();
 let supabaseClient = null;
+let currentTab = 'dashboard';
+let expenseFilter = 'all';
+let dashboardRange = '30';
+let analyticsRange = '30';
+let onboardingPreference = 'fresh';
+let deferredInstallPrompt = null;
+let handledUserId = null;
+let confirmHandler = null;
+let storageWarningShown = false;
+const openSheets = [];
+const charts = { trend: null, history: null, category: null };
 
-const initSupabase = () => {
-    if (SUPABASE_URL && SUPABASE_ANON_KEY && !SUPABASE_URL.includes("your-project-url")) {
-        try {
-            if (window.supabase) {
-                supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-                console.log("Supabase client initialized successfully.");
-            } else {
-                console.warn("Supabase library not loaded. Running in Mock Auth mode.");
-            }
-        } catch (err) {
-            console.error("Failed to initialize Supabase Client:", err);
-        }
-    } else {
-        console.log("Vela is running in local 'Mock Auth' mode. Check c:\\Users\\dinsa\\Documents\\Life expense cal\\supabase_setup_guide.md to link database.");
-    }
+const $ = (id) => document.getElementById(id);
+
+/* =========================================================================
+   3. Utilities
+   ========================================================================= */
+const storage = {
+    get(key) { try { return localStorage.getItem(key); } catch (e) { return null; } },
+    set(key, value) { try { localStorage.setItem(key, value); return true; } catch (e) { return false; } },
+    remove(key) { try { localStorage.removeItem(key); } catch (e) { /* ignore */ } }
 };
 
-// --- CUSTOM TOASTS & DIALOG SYSTEM ---
-const showToast = (message, type = 'success') => {
-    let container = document.getElementById('toast-container');
-    if (!container) {
-        container = document.createElement('div');
-        container.id = 'toast-container';
-        document.body.appendChild(container);
-    }
-    
-    const toast = document.createElement('div');
-    toast.className = `toast-message toast-${type}`;
-    
-    let iconSvg = '';
-    if (type === 'success') {
-        iconSvg = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="20 6 9 17 4 12"></polyline></svg>`;
-    } else if (type === 'error') {
-        iconSvg = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>`;
-    } else {
-        iconSvg = `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>`;
-    }
-    
-    toast.innerHTML = `
-        <div class="toast-icon">${iconSvg}</div>
-        <div class="toast-text">${message}</div>
-    `;
-    
-    container.appendChild(toast);
-    
-    setTimeout(() => {
-        toast.classList.add('visible');
-    }, 10);
-    
-    setTimeout(() => {
-        toast.classList.remove('visible');
-        toast.classList.add('fade-out');
-        setTimeout(() => {
-            toast.remove();
-        }, 300);
-    }, 3500);
+const toNumber = (value, fallback = 0) => {
+    const n = typeof value === 'number' ? value : parseFloat(value);
+    return Number.isFinite(n) ? n : fallback;
 };
 
-const showConfirm = (title, message, onConfirm) => {
-    const modal = document.getElementById('modal-confirm');
-    if (!modal) return;
-    
-    document.getElementById('confirm-title').textContent = title;
-    document.getElementById('confirm-message').textContent = message;
-    
-    modal.classList.add('active');
-    
-    const btnOk = document.getElementById('btn-confirm-ok');
-    const btnCancel = document.getElementById('btn-confirm-cancel');
-    
-    const newBtnOk = btnOk.cloneNode(true);
-    const newBtnCancel = btnCancel.cloneNode(true);
-    
-    btnOk.parentNode.replaceChild(newBtnOk, btnOk);
-    btnCancel.parentNode.replaceChild(newBtnCancel, btnCancel);
-    
-    newBtnOk.addEventListener('click', () => {
-        modal.classList.remove('active');
-        onConfirm();
-    });
-    
-    newBtnCancel.addEventListener('click', () => {
-        modal.classList.remove('active');
-    });
+const generateId = () => {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') return window.crypto.randomUUID();
+    return 'v' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 };
 
-// --- INITIAL DATA SEEDING (IF EMPTY) ---
-const seedData = () => {
-    const today = new Date();
-    const createPastDate = (daysAgo) => {
-        const d = new Date();
-        d.setDate(today.getDate() - daysAgo);
-        return d.toISOString().split('T')[0];
+const escapeHtml = (value) => String(value == null ? '' : value).replace(/[&<>"']/g, (c) => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;'
+}[c]));
+
+const icon = (id, cls = 'ic') => `<svg class="${cls}" aria-hidden="true"><use href="#${id}"/></svg>`;
+const catVar = (cat) => `var(--cat-${String(cat).toLowerCase()})`;
+const catBadge = (cat) => `<span class="cat-badge" style="--cat:${catVar(cat)}">${icon('c-' + cat)}</span>`;
+const plural = (n, word, many = word + 's') => `${n} ${n === 1 ? word : many}`;
+
+/* ---- Dates (always local time; "YYYY-MM-DD" strings are calendar days) ---- */
+const pad2 = (n) => String(n).padStart(2, '0');
+const toISODate = (d = new Date()) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+const isISODate = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+const parseDate = (s) => {
+    if (!isISODate(s)) return new Date(NaN);
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(y, m - 1, d);
+};
+const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
+const daysBetween = (a, b) => Math.round((startOfDay(b) - startOfDay(a)) / 86400000);
+const monthKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
+
+const relativeDayLabel = (dateStr) => {
+    const d = parseDate(dateStr);
+    if (isNaN(d)) return '';
+    const diff = daysBetween(d, new Date());
+    if (diff === 0) return 'Today';
+    if (diff === 1) return 'Yesterday';
+    if (diff === -1) return 'Tomorrow';
+    const sameYear = d.getFullYear() === new Date().getFullYear();
+    return d.toLocaleDateString('en-US', sameYear
+        ? { weekday: 'short', month: 'short', day: 'numeric' }
+        : { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
+const shortDayLabel = (d) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+/* ---- Money ---- */
+const money2 = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const moneyCompact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+const symbolFor = (cur) => (cur === 'USD' ? '$' : 'Rs. ');
+
+const convertAmount = (amount, from, to) => {
+    if (from === to) return amount;
+    const rate = state.config.rate;
+    if (from === 'USD' && to === 'LKR') return amount * rate;
+    if (from === 'LKR' && to === 'USD') return amount / rate;
+    return amount;
+};
+const toDisplay = (amount, cur) => convertAmount(amount, cur, state.config.currency);
+const formatCurrency = (amount, cur) => {
+    const sign = amount < 0 ? '-' : '';
+    return `${sign}${symbolFor(cur)}${money2.format(Math.abs(amount))}`;
+};
+const formatCompact = (amount, cur) => `${symbolFor(cur).trim()}${cur === 'LKR' ? ' ' : ''}${moneyCompact.format(amount)}`;
+const formatDisplay = (amount, cur) => formatCurrency(toDisplay(amount, cur), state.config.currency);
+
+/* =========================================================================
+   4. Persistence
+   ========================================================================= */
+const normalizeExpense = (e) => {
+    if (!e || typeof e !== 'object') return null;
+    const amount = toNumber(e.amount, NaN);
+    if (!(amount > 0)) return null;
+    const desc = String(e.desc != null ? e.desc : (e.description != null ? e.description : '')).trim().slice(0, 120);
+    return {
+        id: String(e.id || generateId()),
+        desc: desc || 'Expense',
+        amount,
+        currency: e.currency === 'LKR' ? 'LKR' : 'USD',
+        category: CATEGORIES.includes(e.category) ? e.category : 'Other',
+        date: isISODate(e.date) ? e.date : (typeof e.date === 'string' && isISODate(e.date.slice(0, 10)) ? e.date.slice(0, 10) : toISODate()),
+        note: e.note ? String(e.note).slice(0, 500) : '',
+        createdAt: toNumber(e.createdAt, 0) || (e.created_at ? Date.parse(e.created_at) || 0 : 0)
     };
-
-    state.expenses = [
-        { id: '1', desc: 'Grocery Store Buy', amount: 45.50, currency: 'USD', category: 'Food', date: createPastDate(2), note: 'Weekly groceries' },
-        { id: '2', desc: 'Electricity Bill', amount: 15000.00, currency: 'LKR', category: 'Utilities', date: createPastDate(5), note: 'Monthly electricity bill' },
-        { id: '3', desc: 'House Rental payment', amount: 400.00, currency: 'USD', category: 'Rent', date: createPastDate(12), note: 'Monthly house lease' },
-        { id: '4', desc: 'Netflix Subscription', amount: 15.49, currency: 'USD', category: 'Entertainment', date: createPastDate(15), note: 'Streaming service' },
-        { id: '5', desc: 'Uber Ride', amount: 2400.00, currency: 'LKR', category: 'Travel', date: createPastDate(18), note: 'Taxi to office' },
-        { id: '6', desc: 'Pharmacy Meds', amount: 35.00, currency: 'USD', category: 'Health', date: createPastDate(25), note: 'Prescriptions' },
-        { id: '7', desc: 'Office Chair Upgrade', amount: 120.00, currency: 'USD', category: 'Shopping', date: createPastDate(45), note: 'Ergonomic chair' },
-        { id: '8', desc: 'Gas Station Refuel', amount: 8500.00, currency: 'LKR', category: 'Travel', date: createPastDate(60), note: 'Full tank fuel' },
-        { id: '9', desc: 'Internet Broadband', amount: 4800.00, currency: 'LKR', category: 'Utilities', date: createPastDate(75), note: 'Fiber line' },
-        { id: '10', desc: 'Fine Dining Dinner', amount: 95.00, currency: 'USD', category: 'Food', date: createPastDate(110), note: 'Birthday dinner' },
-        { id: '11', desc: 'Software Course Subscription', amount: 200.00, currency: 'USD', category: 'Entertainment', date: createPastDate(200), note: 'E-learning site' },
-        { id: '12', desc: 'Annual Car Insurance', amount: 380.00, currency: 'USD', category: 'Other', date: createPastDate(300), note: 'Full coverage insurance' }
-    ];
-
-    state.savings = [
-        { id: 's1', name: 'Emergency Contingency Fund', target: 5000.00, currency: 'USD', saved: 2400.00 },
-        { id: 's2', name: 'Next-Gen Macbook Pro M4', target: 2500.00, currency: 'USD', saved: 750.00 },
-        { id: 's3', name: 'Local Travel Fund', target: 150000.00, currency: 'LKR', saved: 45000.00 }
-    ];
-    
-    saveState();
 };
 
-// --- DATA PERSISTENCE ---
+const normalizeGoal = (g) => {
+    if (!g || typeof g !== 'object') return null;
+    const target = toNumber(g.target, NaN);
+    if (!(target > 0)) return null;
+    return {
+        id: String(g.id || generateId()),
+        name: String(g.name || 'Savings goal').trim().slice(0, 80) || 'Savings goal',
+        target,
+        currency: g.currency === 'LKR' ? 'LKR' : 'USD',
+        saved: Math.max(0, toNumber(g.saved, 0)),
+        createdAt: toNumber(g.createdAt, 0) || (g.created_at ? Date.parse(g.created_at) || 0 : 0)
+    };
+};
+
+const normalizeState = (raw) => {
+    const base = createDefaultState();
+    if (!raw || typeof raw !== 'object') return base;
+
+    const cfg = raw.config && typeof raw.config === 'object' ? raw.config : {};
+    const rate = toNumber(cfg.rate, 300);
+    base.config.rate = rate > 0 ? rate : 300;
+    base.config.rateLocked = !!cfg.rateLocked;
+    base.config.rateUpdatedAt = cfg.rateUpdatedAt || null;
+    base.config.currency = cfg.currency === 'LKR' ? 'LKR' : 'USD';
+    if (cfg.theme === 'light' || cfg.theme === 'dark') base.config.theme = cfg.theme;
+    const budget = toNumber(cfg.budget, 1000);
+    base.config.budget = budget > 0 ? budget : 1000;
+    base.config.lastCategory = CATEGORIES.includes(cfg.lastCategory) ? cfg.lastCategory : 'Food';
+
+    base.expenses = Array.isArray(raw.expenses) ? raw.expenses.map(normalizeExpense).filter(Boolean) : [];
+    base.savings = Array.isArray(raw.savings) ? raw.savings.map(normalizeGoal).filter(Boolean) : [];
+
+    if (raw.auth && typeof raw.auth === 'object') {
+        const u = raw.auth.user;
+        base.auth.user = u && typeof u === 'object' ? {
+            id: u.id ? String(u.id) : 'local',
+            email: u.email ? String(u.email) : null,
+            full_name: u.full_name ? String(u.full_name) : null,
+            avatar_url: u.avatar_url ? String(u.avatar_url) : null
+        } : null;
+        base.auth.isMock = raw.auth.isMock !== false;
+        base.auth.completedOnboarding = !!raw.auth.completedOnboarding;
+        // v1 stored fake "mock-user" accounts; they were local only.
+        if (base.auth.user && /^(mock-|guest-local)/.test(base.auth.user.id)) base.auth.isMock = true;
+    }
+
+    if (raw.sync && typeof raw.sync === 'object') {
+        ['expenses', 'savings'].forEach((k) => {
+            const q = raw.sync[k];
+            if (q && typeof q === 'object') {
+                Object.keys(q).forEach((id) => {
+                    if (q[id] === 'upsert' || q[id] === 'delete') base.sync[k][id] = q[id];
+                });
+            }
+        });
+    }
+    return base;
+};
+
 const saveState = () => {
-    localStorage.setItem('VELA_STATE', JSON.stringify(state));
+    const ok = storage.set(STORAGE_KEY, JSON.stringify(state));
+    if (!ok && !storageWarningShown) {
+        storageWarningShown = true;
+        showToast("This device isn't letting Vela save. Check that storage is allowed and not full.", 'error');
+    }
 };
 
 const loadState = () => {
-    const data = localStorage.getItem('VELA_STATE');
-    if (data) {
-        try {
-            state = JSON.parse(data);
-            if (!state.config) state.config = {};
-            if (state.config.rate === undefined) state.config.rate = 300.00;
-            if (state.config.currency === undefined) state.config.currency = 'USD';
-            if (state.config.theme === undefined) state.config.theme = 'dark';
-            if (state.config.budget === undefined) state.config.budget = 1000.00;
-            
-            // Check auth segment fallback
-            if (!state.auth) {
-                state.auth = {
-                    user: null,
-                    isMock: true,
-                    completedOnboarding: false
-                };
-            }
-        } catch (e) {
-            console.error('Error loading stored Vela state:', e);
-        }
+    const raw = storage.get(STORAGE_KEY);
+    if (!raw) { state = createDefaultState(); return; }
+    try {
+        state = normalizeState(JSON.parse(raw));
+    } catch (e) {
+        console.error('Stored Vela data was unreadable; starting fresh.', e);
+        state = createDefaultState();
+    }
+};
+
+/* =========================================================================
+   5. Feedback: toasts & confirm dialog
+   ========================================================================= */
+const TOAST_ICONS = { success: 'i-check', error: 'i-x', warning: 'i-alert', info: 'i-info' };
+
+const showToast = (message, type = 'success') => {
+    const container = $('toast-container');
+    if (!container) return;
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${TOAST_ICONS[type] ? type : 'info'}`;
+    toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+    toast.innerHTML = `<span class="toast-icon">${icon(TOAST_ICONS[type] || 'i-info')}</span><span class="toast-text"></span>`;
+    toast.querySelector('.toast-text').textContent = message;
+    container.appendChild(toast);
+    while (container.children.length > 3) container.firstElementChild.remove();
+
+    requestAnimationFrame(() => requestAnimationFrame(() => toast.classList.add('visible')));
+    const dismiss = () => {
+        toast.classList.remove('visible');
+        setTimeout(() => toast.remove(), 300);
+    };
+    toast.addEventListener('click', dismiss);
+    setTimeout(dismiss, type === 'error' || type === 'warning' ? 5000 : 3200);
+};
+
+const showConfirm = ({ title, message, confirmLabel = 'Delete', danger = true, onConfirm }) => {
+    const overlay = $('modal-confirm');
+    $('confirm-title').textContent = title;
+    $('confirm-message').textContent = message;
+    const ok = $('btn-confirm-ok');
+    ok.textContent = confirmLabel;
+    ok.className = danger ? 'btn btn-danger-solid' : 'btn btn-primary';
+    confirmHandler = onConfirm;
+    overlay.classList.add('active');
+    overlay.setAttribute('aria-hidden', 'false');
+    setTimeout(() => $('btn-confirm-cancel').focus({ preventScroll: true }), 50);
+};
+
+const closeConfirm = () => {
+    const overlay = $('modal-confirm');
+    overlay.classList.remove('active');
+    overlay.setAttribute('aria-hidden', 'true');
+    confirmHandler = null;
+};
+
+const isConfirmOpen = () => $('modal-confirm').classList.contains('active');
+
+const withBusy = async (btn, task) => {
+    if (!btn) return task();
+    btn.setAttribute('aria-busy', 'true');
+    btn.disabled = true;
+    try {
+        return await task();
+    } finally {
+        btn.removeAttribute('aria-busy');
+        btn.disabled = false;
+    }
+};
+
+/* =========================================================================
+   6. Sheets (bottom sheets on phones, dialogs on desktop) + Back button
+   ========================================================================= */
+const isSheetOpen = (id) => openSheets.includes(id);
+const finePointer = () => !!(window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches);
+
+const showSheetElement = (id) => {
+    const overlay = $(id);
+    overlay.classList.add('active');
+    overlay.setAttribute('aria-hidden', 'false');
+    openSheets.push(id);
+    document.body.classList.add('sheet-open');
+    if (finePointer()) {
+        const first = overlay.querySelector('input:not([type=hidden]):not([hidden]), select, textarea, .action-item');
+        if (first) setTimeout(() => first.focus({ preventScroll: true }), 80);
+    }
+};
+
+const hideSheet = (id) => {
+    const overlay = $(id);
+    if (!overlay) return;
+    overlay.classList.remove('active');
+    overlay.setAttribute('aria-hidden', 'true');
+    const sheet = overlay.querySelector('.sheet');
+    if (sheet) requestAnimationFrame(() => { sheet.style.transform = ''; });
+    const idx = openSheets.indexOf(id);
+    if (idx !== -1) openSheets.splice(idx, 1);
+    if (!openSheets.length) document.body.classList.remove('sheet-open');
+};
+
+const openSheet = (id) => {
+    if (isSheetOpen(id)) return;
+    // Opening a sheet adds a history entry so the phone's Back button closes it.
+    history.pushState({ vela: 'sheet', id, tab: currentTab }, '');
+    showSheetElement(id);
+};
+
+// Replace one open sheet with another without touching history (avoids Back-button races).
+const swapSheet = (fromId, toId) => {
+    if (!isSheetOpen(fromId)) { openSheet(toId); return; }
+    hideSheet(fromId);
+    history.replaceState({ vela: 'sheet', id: toId, tab: currentTab }, '');
+    showSheetElement(toId);
+};
+
+const closeSheet = (id) => {
+    if (!isSheetOpen(id)) return;
+    const st = history.state;
+    if (st && st.vela === 'sheet' && st.id === id) {
+        history.back(); // popstate hides it
     } else {
-        // First Time User: Initialize with empty logs and set up onboarding structure
-        state.expenses = [];
-        state.savings = [];
-        state.auth = {
-            user: null,
-            isMock: true,
-            completedOnboarding: false
+        hideSheet(id);
+    }
+};
+
+const openOrSwap = (id) => {
+    const top = openSheets[openSheets.length - 1];
+    if (top && top !== id) swapSheet(top, id);
+    else openSheet(id);
+};
+
+const initSheetDrag = () => {
+    document.querySelectorAll('.sheet-overlay').forEach((overlay) => {
+        const sheet = overlay.querySelector('.sheet');
+        const handles = sheet.querySelectorAll('.sheet-grabber, .sheet-head');
+        let startY = 0;
+        let dy = 0;
+        let startT = 0;
+        let dragging = false;
+
+        const onDown = (e) => {
+            if (window.innerWidth >= 640 || e.target.closest('button')) return;
+            dragging = true;
+            startY = e.clientY;
+            dy = 0;
+            startT = performance.now();
+            sheet.classList.add('dragging');
+            try { e.currentTarget.setPointerCapture(e.pointerId); } catch (err) { /* ignore */ }
         };
-        saveState();
-    }
-};
-
-// --- CURRENCY CONVERTER HELPERS ---
-const convertAmount = (amount, fromCurrency, toCurrency) => {
-    if (fromCurrency === toCurrency) return amount;
-    
-    const usdToLkrRate = state.config.rate;
-    if (fromCurrency === 'USD' && toCurrency === 'LKR') {
-        return amount * usdToLkrRate;
-    } else if (fromCurrency === 'LKR' && toCurrency === 'USD') {
-        return amount / usdToLkrRate;
-    }
-    return amount;
-};
-
-const formatCurrency = (amount, currencyCode) => {
-    const symbol = currencyCode === 'USD' ? '$' : 'Rs. ';
-    return `${symbol}${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
-
-const convertToDisplayCurrency = (amount, originalCurrency) => {
-    return convertAmount(amount, originalCurrency, state.config.currency);
-};
-
-const formatToDisplayCurrency = (amount, originalCurrency) => {
-    const converted = convertToDisplayCurrency(amount, originalCurrency);
-    return formatCurrency(converted, state.config.currency);
-};
-
-// --- THEME MANAGEMENT ---
-const applyTheme = (theme) => {
-    document.documentElement.setAttribute('data-theme', theme);
-    state.config.theme = theme;
-    saveState();
-    refreshActivePane();
-};
-
-const toggleTheme = (e) => {
-    const currentTheme = state.config.theme || 'dark';
-    const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
-    
-    // Check if browser supports modern View Transitions API
-    if (document.startViewTransition) {
-        let x = window.innerWidth / 2;
-        let y = window.innerHeight / 2;
-        if (e && e.clientX !== undefined && e.clientY !== undefined) {
-            x = e.clientX;
-            y = e.clientY;
-        } else {
-            const btn = document.getElementById('theme-toggle-btn');
-            if (btn) {
-                const rect = btn.getBoundingClientRect();
-                x = rect.left + rect.width / 2;
-                y = rect.top + rect.height / 2;
+        const onMove = (e) => {
+            if (!dragging) return;
+            dy = Math.max(0, e.clientY - startY);
+            sheet.style.transform = `translateY(${dy}px)`;
+        };
+        const onUp = () => {
+            if (!dragging) return;
+            dragging = false;
+            sheet.classList.remove('dragging');
+            const velocity = dy / Math.max(1, performance.now() - startT);
+            if (dy > 110 || (dy > 30 && velocity > 0.6)) {
+                closeSheet(overlay.id);
+            } else {
+                sheet.style.transform = '';
             }
-        }
-        
-        const endRadius = Math.hypot(
-            Math.max(x, window.innerWidth - x),
-            Math.max(y, window.innerHeight - y)
-        );
-        
-        const transition = document.startViewTransition(() => {
-            applyTheme(newTheme);
+        };
+        handles.forEach((h) => {
+            h.addEventListener('pointerdown', onDown);
+            h.addEventListener('pointermove', onMove);
+            h.addEventListener('pointerup', onUp);
+            h.addEventListener('pointercancel', onUp);
         });
-        
-        transition.ready.then(() => {
-            document.documentElement.animate(
-                {
-                    clipPath: [
-                        `circle(0px at ${x}px ${y}px)`,
-                        `circle(${endRadius}px at ${x}px ${y}px)`
-                    ]
-                },
-                {
-                    duration: 500,
-                    easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
-                    pseudoElement: '::view-transition-new(root)'
-                }
-            );
-        });
+    });
+};
+
+/* =========================================================================
+   7. Theme
+   ========================================================================= */
+const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+const updateThemeChrome = () => {
+    const meta = $('meta-theme-color');
+    if (meta) meta.setAttribute('content', cssVar('--bg') || '#0b0c14');
+    document.querySelectorAll('[data-theme-choice]').forEach((b) => {
+        b.setAttribute('aria-pressed', String(b.dataset.themeChoice === state.config.theme));
+    });
+};
+
+const applyTheme = (theme) => {
+    state.config.theme = theme === 'light' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', state.config.theme);
+    saveState();
+    updateThemeChrome();
+    renderActive();
+};
+
+const setTheme = (theme, originEvent) => {
+    if (theme === state.config.theme) return;
+    const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (!document.startViewTransition || reduce) {
+        applyTheme(theme);
         return;
     }
-    
-    // Fallback: Ripple element animation
-    let x, y;
-    if (e && e.clientX !== undefined && e.clientY !== undefined) {
-        x = e.clientX;
-        y = e.clientY;
-    } else {
-        const btn = document.getElementById('theme-toggle-btn');
-        if (btn) {
-            const rect = btn.getBoundingClientRect();
-            x = rect.left + rect.width / 2;
-            y = rect.top + rect.height / 2;
-        } else {
-            x = window.innerWidth / 2;
-            y = window.innerHeight / 2;
-        }
+    let x = window.innerWidth / 2;
+    let y = window.innerHeight / 2;
+    const target = originEvent && originEvent.currentTarget;
+    if (originEvent && originEvent.clientX) {
+        x = originEvent.clientX;
+        y = originEvent.clientY;
+    } else if (target && target.getBoundingClientRect) {
+        const r = target.getBoundingClientRect();
+        x = r.left + r.width / 2;
+        y = r.top + r.height / 2;
     }
-    
-    let ripple = document.getElementById('theme-ripple');
-    if (!ripple) {
-        ripple = document.createElement('div');
-        ripple.id = 'theme-ripple';
-        document.body.appendChild(ripple);
-    }
-    
-    ripple.style.backgroundColor = newTheme === 'light' ? '#f4f5f8' : '#07070b';
-    ripple.style.clipPath = `circle(0% at ${x}px ${y}px)`;
-    ripple.style.opacity = '1';
-    
-    ripple.offsetHeight; // Force reflow
-    
-    ripple.style.clipPath = `circle(150% at ${x}px ${y}px)`;
-    
-    setTimeout(() => {
-        applyTheme(newTheme);
-    }, 350);
-    
-    setTimeout(() => {
-        ripple.style.opacity = '0';
-        setTimeout(() => {
-            ripple.style.clipPath = 'circle(0% at 50% 50%)';
-        }, 300);
-    }, 700);
+    const endRadius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
+    const transition = document.startViewTransition(() => applyTheme(theme));
+    transition.ready.then(() => {
+        document.documentElement.animate(
+            { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${endRadius}px at ${x}px ${y}px)`] },
+            { duration: 480, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', pseudoElement: '::view-transition-new(root)' }
+        );
+    }).catch(() => { /* transition skipped */ });
 };
 
-const getChartThemeColors = () => {
-    const isLight = state.config.theme === 'light';
-    return {
-        grid: isLight ? 'rgba(0, 0, 0, 0.07)' : 'rgba(255, 255, 255, 0.04)',
-        text: isLight ? '#2a2b36' : '#8e8e9f',
-        tooltipBg: isLight ? '#ffffff' : '#161622',
-        tooltipBorder: isLight ? 'rgba(0, 0, 0, 0.08)' : 'rgba(255, 255, 255, 0.1)',
-        tooltipText: isLight ? '#191921' : '#fff'
+/* =========================================================================
+   8. Exchange rate
+   ========================================================================= */
+let rateStatus = 'offline';
+
+const setRateStatus = (status) => {
+    rateStatus = status;
+    const dot = $('connection-indicator');
+    const text = $('current-rate-display');
+    const chip = $('rate-chip');
+    const rateText = `1 USD = ${state.config.rate.toFixed(2)} LKR`;
+    if (text) text.textContent = status === 'syncing' ? 'Updating rate…' : rateText;
+    if (dot) dot.dataset.status = status;
+    const titles = {
+        live: 'Live exchange rate',
+        syncing: 'Updating exchange rate',
+        manual: 'Your manual exchange rate',
+        offline: 'Saved exchange rate (offline)'
     };
+    if (chip) chip.title = `${titles[status] || ''}. Tap to change.`;
+    renderRateSetting();
 };
 
-// --- LIVE EXCHANGE RATE FEED INTEGRATION ---
-const fetchLiveExchangeRate = async (showNotification = false) => {
-    const statusText = document.getElementById('connection-status');
-    const statusDot = document.getElementById('connection-indicator');
-    
-    if (statusText) statusText.textContent = "Syncing Exchange Rates...";
-    if (statusDot) {
-        statusDot.style.backgroundColor = "var(--accent-orange)";
-        statusDot.style.boxShadow = "0 0 8px var(--accent-orange-glow)";
+const fetchLiveExchangeRate = async ({ manual = false } = {}) => {
+    if (state.config.rateLocked && !manual) {
+        setRateStatus('manual');
+        return;
     }
-
+    setRateStatus('syncing');
+    const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const timer = ctrl ? setTimeout(() => ctrl.abort(), 9000) : null;
     try {
-        const response = await fetch('https://open.er-api.com/v6/latest/USD');
-        if (!response.ok) throw new Error('API request failed');
-        const data = await response.json();
-        
-        if (data && data.rates && data.rates.LKR) {
-            const rawRate = data.rates.LKR;
-            state.config.rate = parseFloat(rawRate);
-            saveState();
-            
-            document.getElementById('current-rate-display').textContent = `1 USD = ${state.config.rate.toFixed(2)} LKR`;
-            const rateInput = document.getElementById('setting-rate');
-            if (rateInput) rateInput.value = state.config.rate.toFixed(2);
-            
-            if (statusText) statusText.textContent = "Live Exchange Rates Synced";
-            if (statusDot) {
-                statusDot.style.backgroundColor = "var(--accent-green)";
-                statusDot.style.boxShadow = "0 0 8px var(--accent-green)";
-            }
-
-            refreshActivePane();
-            
-            if (showNotification) {
-                showToast(`Successfully synced live exchange rate: 1 USD = ${state.config.rate.toFixed(2)} LKR`, 'success');
-            }
-        } else {
-            throw new Error('Invalid rate response format');
-        }
-    } catch (error) {
-        console.warn('Unable to retrieve live rates. Falling back to cached rate.', error);
-        
-        if (statusText) statusText.textContent = "Cloud Offline (Cached Rate)";
-        if (statusDot) {
-            statusDot.style.backgroundColor = "var(--text-muted)";
-            statusDot.style.boxShadow = "none";
-        }
-        
-        document.getElementById('current-rate-display').textContent = `1 USD = ${state.config.rate.toFixed(2)} LKR`;
-        
-        if (showNotification) {
-            showToast(`Offline. Loaded cached rate: 1 USD = ${state.config.rate.toFixed(2)} LKR`, 'info');
-        }
+        const res = await fetch(RATE_URL, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const rate = Number(data && data.rates && data.rates.LKR);
+        if (!(rate > 0)) throw new Error('No LKR rate in response');
+        state.config.rate = rate;
+        state.config.rateLocked = false;
+        state.config.rateUpdatedAt = Date.now();
+        saveState();
+        setRateStatus('live');
+        renderActive();
+        if (manual) showToast(`Live rate updated: 1 USD = ${rate.toFixed(2)} LKR`, 'success');
+    } catch (err) {
+        console.warn('Live exchange rate unavailable:', err);
+        setRateStatus(state.config.rateLocked ? 'manual' : 'offline');
+        if (manual) showToast(`Couldn't reach the rate service. Still using 1 USD = ${state.config.rate.toFixed(2)} LKR.`, 'warning');
+    } finally {
+        if (timer) clearTimeout(timer);
     }
 };
 
-const refreshActivePane = () => {
-    const activeItem = document.querySelector('.nav-item.active, .bottom-nav-item.active');
-    if (!activeItem) return;
-    const tabId = activeItem.getAttribute('data-tab');
-    if (tabId === 'dashboard') renderDashboard();
-    else if (tabId === 'expenses') renderExpensesList();
-    else if (tabId === 'savings') renderSavingsGoals();
-    else if (tabId === 'analytics') renderAnalyticsTab();
-};
+/* =========================================================================
+   9. Navigation
+   ========================================================================= */
+const switchTab = (tab, { fromHistory = false } = {}) => {
+    if (!TAB_TITLES[tab]) tab = 'dashboard';
 
-let dashboardTrendChart = null;
-let analyticsHistoryChart = null;
-let analyticsCategoryChart = null;
-
-// --- TAB ROUTING ---
-const initTabRouting = () => {
-    const navItems = document.querySelectorAll('.nav-item, .bottom-nav-item');
-    const tabPanes = document.querySelectorAll('.tab-pane');
-
-    const switchTab = (tabId) => {
-        navItems.forEach(item => {
-            if (item.getAttribute('data-tab') === tabId) {
-                item.classList.add('active');
-            } else {
-                item.classList.remove('active');
-            }
-        });
-
-        tabPanes.forEach(pane => {
-            if (pane.id === `tab-${tabId}`) {
-                pane.classList.add('active');
-            } else {
-                pane.classList.remove('active');
-            }
-        });
-
-        const headerTitle = document.getElementById('page-title');
-        headerTitle.textContent = tabId.charAt(0).toUpperCase() + tabId.slice(1);
-
-        if (tabId === 'dashboard') {
-            renderDashboard();
-        } else if (tabId === 'expenses') {
-            renderExpensesList();
-        } else if (tabId === 'savings') {
-            renderSavingsGoals();
-        } else if (tabId === 'analytics') {
-            renderAnalyticsTab();
-        } else if (tabId === 'settings') {
-            renderSettingsTab();
+    if (!fromHistory) {
+        const st = history.state || {};
+        if (tab === currentTab) {
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+            return;
         }
-    };
+        if (currentTab === 'dashboard') {
+            history.pushState({ vela: 'tab', tab, fromHome: true }, '');
+        } else if (tab === 'dashboard' && st.fromHome) {
+            history.back(); // popstate brings us home, so Back from Home leaves the app
+            return;
+        } else {
+            history.replaceState({ vela: 'tab', tab, fromHome: !!st.fromHome }, '');
+        }
+    }
 
-    navItems.forEach(item => {
-        item.addEventListener('click', () => {
-            const tabId = item.getAttribute('data-tab');
-            switchTab(tabId);
-        });
+    currentTab = tab;
+    document.body.dataset.view = tab;
+    document.querySelectorAll('[data-tab]').forEach((el) => {
+        const active = el.dataset.tab === tab && !el.classList.contains('sidebar-profile');
+        el.classList.toggle('active', active);
+        if (el.classList.contains('tab') || el.classList.contains('side-link')) {
+            if (active) el.setAttribute('aria-current', 'page');
+            else el.removeAttribute('aria-current');
+        }
     });
-
-    switchTab('dashboard');
+    document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === `tab-${tab}`));
+    $('page-title').textContent = TAB_TITLES[tab];
+    document.title = tab === 'dashboard' ? 'Vela · Expenses & Savings' : `${TAB_TITLES[tab]} · Vela`;
+    window.scrollTo(0, 0);
+    renderActive();
 };
 
-// --- UI DISPLAY DYNAMICS ---
+const renderActive = () => {
+    if (currentTab === 'dashboard') renderDashboard();
+    else if (currentTab === 'expenses') renderExpensesList();
+    else if (currentTab === 'savings') renderSavingsGoals();
+    else if (currentTab === 'analytics') renderAnalyticsTab();
+    else if (currentTab === 'settings') renderSettingsTab();
+};
+
+/* =========================================================================
+   10. Calculations
+   ========================================================================= */
+const sortByNewest = (list) => [...list].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
+const sumDisplay = (list) => list.reduce((s, e) => s + toDisplay(e.amount, e.currency), 0);
+
+const monthStats = (ref = new Date()) => {
+    const y = ref.getFullYear();
+    const m = ref.getMonth();
+    const thisMonth = state.expenses.filter((e) => { const d = parseDate(e.date); return d.getFullYear() === y && d.getMonth() === m; });
+    const total = sumDisplay(thisMonth);
+
+    // Compare with the same days of last month (1st → today's date), not the whole month.
+    const prevStart = new Date(y, m - 1, 1);
+    const prevDays = new Date(y, m, 0).getDate();
+    const prevEnd = new Date(y, m - 1, Math.min(ref.getDate(), prevDays));
+    const prevSame = state.expenses.filter((e) => { const d = parseDate(e.date); return d >= prevStart && d <= prevEnd; });
+    const prevTotal = sumDisplay(prevSame);
+
+    const budget = convertAmount(state.config.budget, 'USD', state.config.currency);
+    const budgetPct = budget > 0 ? (total / budget) * 100 : 0;
+    return { thisMonth, total, prevTotal, budget, budgetPct };
+};
+
+const rangeBounds = (range) => {
+    const today = startOfDay(new Date());
+    let start;
+    if (range === '30') start = addDays(today, -29);
+    else if (range === '12m') start = new Date(today.getFullYear(), today.getMonth() - 11, 1);
+    else {
+        const dates = state.expenses.map((e) => parseDate(e.date)).filter((d) => !isNaN(d) && d <= today);
+        start = dates.length ? new Date(Math.min(...dates)) : today;
+    }
+    return { start, end: today };
+};
+
+const expensesInRange = (range) => {
+    const { start, end } = rangeBounds(range);
+    return state.expenses.filter((e) => { const d = parseDate(e.date); return d >= start && d <= end; });
+};
+
+/* =========================================================================
+   11. Rendering — shared pieces
+   ========================================================================= */
+const txRow = (exp, { showDate = true } = {}) => {
+    const sub = showDate ? `${exp.category} · ${relativeDayLabel(exp.date)}` : (exp.note || exp.category);
+    const orig = exp.currency !== state.config.currency
+        ? `<span class="tx-orig">${escapeHtml(formatCurrency(exp.amount, exp.currency))}</span>` : '';
+    return `<li><button type="button" class="tx" data-edit-expense="${escapeHtml(exp.id)}">
+        ${catBadge(exp.category)}
+        <span class="tx-main"><span class="tx-title">${escapeHtml(exp.desc)}</span><span class="tx-sub">${escapeHtml(sub)}</span></span>
+        <span class="tx-amt"><span class="amount">${escapeHtml(formatDisplay(exp.amount, exp.currency))}</span>${orig}</span>
+    </button></li>`;
+};
+
+const emptyState = ({ iconId, title, text, actionLabel, action }) => `
+    <div class="empty">
+        <span class="empty-icon">${icon(iconId)}</span>
+        <span class="empty-title">${escapeHtml(title)}</span>
+        <span class="empty-text">${escapeHtml(text)}</span>
+        ${actionLabel ? `<button type="button" class="btn btn-primary btn-sm" data-action="${action}">${escapeHtml(actionLabel)}</button>` : ''}
+    </div>`;
+
+const setMeter = (fill, pct, stateName) => {
+    if (!fill) return;
+    fill.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+    if (stateName) fill.dataset.state = stateName;
+    else delete fill.dataset.state;
+};
+
+/* =========================================================================
+   12. Rendering — Home
+   ========================================================================= */
 const renderDashboard = () => {
-    const curr = state.config.currency;
+    const cur = state.config.currency;
     const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth();
+    const { thisMonth, total, prevTotal, budget, budgetPct } = monthStats(now);
 
-    const monthlyExpenses = state.expenses.filter(exp => {
-        const expDate = new Date(exp.date);
-        return expDate.getFullYear() === currentYear && expDate.getMonth() === currentMonth;
-    });
+    $('dash-month-label').textContent = `Spent in ${now.toLocaleDateString('en-US', { month: 'long' })}`;
+    $('dash-month-spend').textContent = formatCurrency(total, cur);
 
-    const totalSpentThisMonth = monthlyExpenses.reduce((sum, exp) => {
-        return sum + convertToDisplayCurrency(exp.amount, exp.currency);
-    }, 0);
-
-    document.getElementById('dash-month-spend').textContent = formatCurrency(totalSpentThisMonth, curr);
-
-    const prevMonth = currentMonth === 0 ? 11 : currentMonth - 1;
-    const prevMonthYear = currentMonth === 0 ? currentYear - 1 : currentYear;
-    
-    const prevMonthlyExpenses = state.expenses.filter(exp => {
-        const expDate = new Date(exp.date);
-        return expDate.getFullYear() === prevMonthYear && expDate.getMonth() === prevMonth;
-    });
-
-    const totalSpentPrevMonth = prevMonthlyExpenses.reduce((sum, exp) => {
-        return sum + convertToDisplayCurrency(exp.amount, exp.currency);
-    }, 0);
-
-    const spendTrendEl = document.getElementById('dash-spend-trend');
-    if (totalSpentPrevMonth > 0) {
-        const percentageDiff = ((totalSpentThisMonth - totalSpentPrevMonth) / totalSpentPrevMonth) * 100;
-        if (percentageDiff > 0) {
-            spendTrendEl.textContent = `+${percentageDiff.toFixed(1)}% vs last month`;
-            spendTrendEl.className = 'trend-down';
-        } else {
-            spendTrendEl.textContent = `${percentageDiff.toFixed(1)}% vs last month`;
-            spendTrendEl.className = 'trend-up';
-        }
+    const pill = $('dash-spend-trend');
+    const pillText = $('dash-spend-trend-text');
+    if (prevTotal > 0) {
+        const diff = ((total - prevTotal) / prevTotal) * 100;
+        const rounded = Math.round(Math.abs(diff));
+        pill.dataset.trend = rounded === 0 ? 'flat' : (diff > 0 ? 'up' : 'down');
+        pillText.textContent = rounded === 0 ? 'Same as last month' : `${rounded}% vs last month`;
+        pill.title = rounded === 0 ? '' : `${rounded}% ${diff > 0 ? 'more' : 'less'} than the same days last month`;
     } else {
-        spendTrendEl.textContent = 'No records for last month';
-        spendTrendEl.className = 'trend-neutral';
+        pill.dataset.trend = 'flat';
+        pillText.textContent = total > 0 ? 'Nothing to compare yet' : 'No spending yet';
     }
 
-    const totalSavingsSaved = state.savings.reduce((sum, goal) => {
-        return sum + convertToDisplayCurrency(goal.saved, goal.currency);
-    }, 0);
+    const fill = $('dash-budget-progress-fill');
+    const meterState = budgetPct >= 100 ? 'over' : budgetPct >= 80 ? 'warn' : null;
+    setMeter(fill, budgetPct, meterState);
+    $('dash-budget-meter').setAttribute('aria-valuenow', String(Math.round(Math.min(100, budgetPct))));
+    $('dash-budget-desc').textContent = `${Math.round(budgetPct)}% of ${formatCurrency(budget, cur)} budget`;
+    const left = budget - total;
+    $('dash-budget-left').innerHTML = left >= 0
+        ? `<strong>${escapeHtml(formatCurrency(left, cur))}</strong> left`
+        : `<strong>${escapeHtml(formatCurrency(-left, cur))}</strong> over`;
 
-    document.getElementById('dash-total-savings').textContent = formatCurrency(totalSavingsSaved, curr);
-    document.getElementById('dash-savings-status').textContent = `${state.savings.length} active savings goals`;
+    const savedTotal = state.savings.reduce((s, g) => s + toDisplay(g.saved, g.currency), 0);
+    $('dash-total-savings').textContent = formatCurrency(savedTotal, cur);
+    $('dash-savings-status').textContent = state.savings.length ? `across ${plural(state.savings.length, 'goal')}` : 'No goals yet';
 
-    const categoryTotals = {};
-    monthlyExpenses.forEach(exp => {
-        const val = convertToDisplayCurrency(exp.amount, exp.currency);
-        categoryTotals[exp.category] = (categoryTotals[exp.category] || 0) + val;
-    });
-
-    let topCategory = 'None';
-    let topCategoryVal = 0;
-    for (const cat in categoryTotals) {
-        if (categoryTotals[cat] > topCategoryVal) {
-            topCategoryVal = categoryTotals[cat];
-            topCategory = cat;
-        }
-    }
-
-    const topCategoryEl = document.getElementById('dash-top-category');
-    const topCategoryAmtEl = document.getElementById('dash-top-category-amount');
-
-    if (topCategory !== 'None') {
-        topCategoryEl.textContent = topCategory;
-        const totalMonthVal = monthlyExpenses.reduce((sum, exp) => sum + convertToDisplayCurrency(exp.amount, exp.currency), 0);
-        const percent = totalMonthVal > 0 ? ((topCategoryVal / totalMonthVal) * 100).toFixed(0) : 0;
-        topCategoryAmtEl.textContent = `${percent}% of total spend (${formatCurrency(topCategoryVal, curr)})`;
+    const byCat = {};
+    thisMonth.forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + toDisplay(e.amount, e.currency); });
+    const top = Object.entries(byCat).sort((a, b) => b[1] - a[1])[0];
+    if (top) {
+        $('dash-top-category').textContent = top[0];
+        $('dash-top-category-amount').textContent = `${Math.round((top[1] / total) * 100)}% · ${formatCurrency(top[1], cur)}`;
     } else {
-        topCategoryEl.textContent = 'None';
-        topCategoryAmtEl.textContent = '0% of total spend';
+        $('dash-top-category').textContent = '—';
+        $('dash-top-category-amount').textContent = 'Nothing spent this month';
     }
 
-    // Budget Progress Tracker Stat Card
-    const budgetInDisplay = convertToDisplayCurrency(state.config.budget, 'USD');
-    document.getElementById('dash-budget-value').textContent = formatCurrency(budgetInDisplay, curr);
-    
-    const budgetProgressPct = budgetInDisplay > 0 ? (totalSpentThisMonth / budgetInDisplay) * 100 : 0;
-    const budgetFillEl = document.getElementById('dash-budget-progress-fill');
-    const budgetDescEl = document.getElementById('dash-budget-desc');
-    const budgetIconWrapper = document.getElementById('budget-icon-wrapper');
+    const recent = sortByNewest(state.expenses).slice(0, 5);
+    $('recent-list').innerHTML = recent.length
+        ? recent.map((e) => txRow(e)).join('')
+        : `<li>${emptyState({ iconId: 'i-receipt', title: 'No expenses yet', text: 'Tap + to log your first expense.', actionLabel: 'Add expense', action: 'add-expense' })}</li>`;
 
-    if (budgetFillEl) {
-        budgetFillEl.style.width = Math.min(100, budgetProgressPct) + '%';
-    }
+    renderTrendChart();
+};
 
-    if (budgetDescEl) {
-        budgetDescEl.textContent = `Spent ${budgetProgressPct.toFixed(0)}% of limit`;
-        budgetDescEl.className = '';
-        if (budgetProgressPct >= 100) {
-            budgetDescEl.textContent += ' • Limit Exceeded!';
-            budgetDescEl.classList.add('trend-down');
-            if (budgetFillEl) budgetFillEl.style.background = 'var(--accent-pink)';
-            if (budgetIconWrapper) budgetIconWrapper.style.backgroundColor = 'var(--accent-pink)';
-        } else if (budgetProgressPct >= 80) {
-            budgetDescEl.textContent += ' • Warning limit';
-            budgetDescEl.classList.add('trend-neutral');
-            if (budgetFillEl) budgetFillEl.style.background = 'var(--accent-orange)';
-            if (budgetIconWrapper) budgetIconWrapper.style.backgroundColor = 'var(--accent-orange)';
-        } else {
-            budgetDescEl.textContent += ' • Safe Range';
-            budgetDescEl.classList.add('trend-up');
-            if (budgetFillEl) budgetFillEl.style.background = 'var(--accent-purple)';
-            if (budgetIconWrapper) budgetIconWrapper.style.backgroundColor = '#6366f1';
-        }
-    }
+/* =========================================================================
+   13. Rendering — Expenses
+   ========================================================================= */
+const buildFilterChips = () => {
+    const wrap = $('expense-filter-chips');
+    wrap.innerHTML = [`<button type="button" class="chip" data-filter-category="all" aria-pressed="true">All</button>`]
+        .concat(CATEGORIES.map((c) => `<button type="button" class="chip" data-filter-category="${c}" aria-pressed="false" style="--cat:${catVar(c)}"><span class="chip-dot"></span>${c}</button>`))
+        .join('');
+};
 
-    const recentTbody = document.getElementById('recent-transactions-tbody');
-    recentTbody.innerHTML = '';
-
-    const sortedExpenses = [...state.expenses].sort((a, b) => new Date(b.date) - new Date(a.date));
-    const last5 = sortedExpenses.slice(0, 5);
-
-    if (last5.length === 0) {
-        recentTbody.innerHTML = `
-            <tr class="empty-state">
-                <td colspan="4" class="text-center">No transactions logged yet. Click "Add Expense" below!</td>
-            </tr>
-        `;
-    } else {
-        last5.forEach(exp => {
-            const tr = document.createElement('tr');
-            tr.innerHTML = `
-                <td>
-                    <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(exp.desc)}</div>
-                    <div style="font-size: 0.75rem; color: var(--text-muted);">${exp.note ? escapeHtml(exp.note) : ''}</div>
-                </td>
-                <td><span class="category-tag tag-${exp.category}">${exp.category}</span></td>
-                <td style="color: var(--text-secondary); font-size: 0.85rem;">${formatDisplayDate(exp.date)}</td>
-                <td class="text-right">
-                    <div class="amount-usd">${formatToDisplayCurrency(exp.amount, exp.currency)}</div>
-                    <div class="amount-lkr" style="font-size:0.75rem;">${exp.amount.toFixed(2)} ${exp.currency}</div>
-                </td>
-            `;
-            recentTbody.appendChild(tr);
-        });
-    }
-
-    renderMiniTrendChart(30);
+const buildCategoryPicker = () => {
+    $('expense-category-picker').innerHTML = CATEGORIES.map((c) => `
+        <label class="cat-option" style="--cat:${catVar(c)}">
+            <input type="radio" name="expense-category" value="${c}">
+            <span class="cat-option-box">${catBadge(c)}<span>${c === 'Entertainment' ? 'Fun' : c}</span></span>
+        </label>`).join('');
 };
 
 const renderExpensesList = () => {
-    const tbody = document.getElementById('ledger-tbody');
-    tbody.innerHTML = '';
+    const query = $('expense-search').value.trim().toLowerCase();
+    document.querySelectorAll('[data-filter-category]').forEach((chip) => {
+        chip.setAttribute('aria-pressed', String(chip.dataset.filterCategory === expenseFilter));
+    });
 
-    const searchQuery = document.getElementById('expense-search').value.toLowerCase();
-    const filterCategory = document.getElementById('expense-filter-category').value;
-
-    let filtered = [...state.expenses];
-
-    if (searchQuery) {
-        filtered = filtered.filter(exp => 
-            exp.desc.toLowerCase().includes(searchQuery) || 
-            (exp.note && exp.note.toLowerCase().includes(searchQuery))
-        );
+    let list = state.expenses;
+    if (expenseFilter !== 'all') list = list.filter((e) => e.category === expenseFilter);
+    if (query) {
+        list = list.filter((e) => e.desc.toLowerCase().includes(query)
+            || (e.note && e.note.toLowerCase().includes(query))
+            || e.category.toLowerCase().includes(query));
     }
-    if (filterCategory !== 'all') {
-        filtered = filtered.filter(exp => exp.category === filterCategory);
+    list = sortByNewest(list);
+
+    const summary = $('expense-summary');
+    const container = $('ledger-list');
+
+    if (!state.expenses.length) {
+        summary.innerHTML = '';
+        container.innerHTML = `<div class="card">${emptyState({ iconId: 'i-receipt', title: 'No expenses yet', text: 'Everything you log shows up here, grouped by day.', actionLabel: 'Add expense', action: 'add-expense' })}</div>`;
+        return;
     }
-
-    filtered.sort((a, b) => new Date(b.date) - new Date(a.date));
-
-    if (filtered.length === 0) {
-        tbody.innerHTML = `
-            <tr class="empty-state">
-                <td colspan="6" class="text-center">No matching expenses found.</td>
-            </tr>
-        `;
+    if (!list.length) {
+        summary.innerHTML = '';
+        container.innerHTML = `<div class="card"><div class="empty"><span class="empty-icon">${icon('i-search')}</span><span class="empty-title">No matches</span><span class="empty-text">Try another search or category.</span><button type="button" class="btn btn-secondary btn-sm" data-clear-filters>Clear filters</button></div></div>`;
         return;
     }
 
-    filtered.forEach(exp => {
-        const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td style="white-space: nowrap; font-size: 0.85rem; color: var(--text-secondary);">${formatDisplayDate(exp.date)}</td>
-            <td>
-                <div style="font-weight:600;">${escapeHtml(exp.desc)}</div>
-                <div style="font-size:0.75rem; color: var(--text-muted);">${exp.note ? escapeHtml(exp.note) : ''}</div>
-            </td>
-            <td><span class="category-tag tag-${exp.category}">${exp.category}</span></td>
-            <td style="font-size:0.85rem; color:var(--text-secondary);">${exp.amount.toFixed(2)} <span style="font-weight:600; color:var(--text-primary);">${exp.currency}</span></td>
-            <td class="text-right amount-usd">${formatToDisplayCurrency(exp.amount, exp.currency)}</td>
-            <td class="text-center">
-                <div class="row-actions">
-                    <button class="icon-btn edit" onclick="openEditExpenseModal('${exp.id}')" title="Edit">
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                            <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                        </svg>
-                    </button>
-                    <button class="icon-btn delete" onclick="deleteExpense('${exp.id}')" title="Delete">
-                        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="3 6 5 6 21 6"/>
-                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                            <line x1="10" y1="11" x2="10" y2="17"/>
-                            <line x1="14" y1="11" x2="14" y2="17"/>
-                        </svg>
-                    </button>
-                </div>
-            </td>
-        `;
-        tbody.appendChild(tr);
+    const total = sumDisplay(list);
+    summary.innerHTML = `<span>${plural(list.length, 'expense')}</span><span>Total <strong class="amount">${escapeHtml(formatCurrency(total, state.config.currency))}</strong></span>`;
+
+    const groups = [];
+    list.forEach((e) => {
+        const last = groups[groups.length - 1];
+        if (last && last.date === e.date) last.items.push(e);
+        else groups.push({ date: e.date, items: [e] });
     });
+
+    container.innerHTML = groups.map((g) => `
+        <div class="day-group">
+            <div class="day-head"><span>${escapeHtml(relativeDayLabel(g.date))}</span><span class="amount">${escapeHtml(formatCurrency(sumDisplay(g.items), state.config.currency))}</span></div>
+            <div class="card card-list"><ul class="tx-list">${g.items.map((e) => txRow(e, { showDate: false })).join('')}</ul></div>
+        </div>`).join('');
 };
 
+/* =========================================================================
+   14. Rendering — Savings
+   ========================================================================= */
 const renderSavingsGoals = () => {
-    const grid = document.getElementById('savings-grid');
-    grid.innerHTML = '';
+    const cur = state.config.currency;
+    const grid = $('savings-grid');
+    const summary = $('savings-summary');
 
-    if (state.savings.length === 0) {
-        grid.innerHTML = `
-            <div class="glass-card text-center" style="grid-column: 1 / -1; padding: 3rem;">
-                <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="var(--text-secondary)" stroke-width="1.5" style="margin-bottom:1rem; opacity:0.6;">
-                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-                    <polyline points="17 21 17 13 7 13 7 21"/>
-                    <polyline points="7 3 7 8 15 8"/>
-                </svg>
-                <h3 style="font-family:var(--font-heading); margin-bottom:0.5rem;">No savings goals established</h3>
-                <p style="color:var(--text-secondary); font-size:0.85rem; margin-bottom:1.5rem;">Plan for the future by creating custom savings targets.</p>
-                <button class="btn-primary" onclick="openAddSavingsGoalModal()">Establish First Goal</button>
-            </div>
-        `;
+    if (!state.savings.length) {
+        summary.hidden = true;
+        grid.innerHTML = `<div class="card">${emptyState({ iconId: 'i-target', title: 'No savings goals yet', text: 'Pick something to save for and track every deposit toward it.', actionLabel: 'Create a goal', action: 'add-goal' })}</div>`;
         return;
     }
 
-    state.savings.forEach(goal => {
-        const percent = Math.min(100, Math.max(0, (goal.saved / goal.target) * 100));
-        
-        const card = document.createElement('div');
-        card.className = 'glass-card savings-card';
-        card.innerHTML = `
-            <div class="savings-card-header">
-                <div>
-                    <h4 class="savings-goal-title">${escapeHtml(goal.name)}</h4>
-                    <span class="savings-goal-meta">Target currency: ${goal.target.toFixed(2)} ${goal.currency}</span>
+    summary.hidden = false;
+    const saved = state.savings.reduce((s, g) => s + toDisplay(g.saved, g.currency), 0);
+    const target = state.savings.reduce((s, g) => s + toDisplay(g.target, g.currency), 0);
+    const pct = target > 0 ? (saved / target) * 100 : 0;
+    $('savings-total').textContent = formatCurrency(saved, cur);
+    setMeter($('savings-total-fill'), pct, pct >= 100 ? 'done' : null);
+    $('savings-total-pct').textContent = `${Math.round(pct)}% of all targets`;
+    $('savings-total-target').textContent = `Target ${formatCurrency(target, cur)}`;
+
+    grid.innerHTML = state.savings.map((g) => {
+        const p = g.target > 0 ? (g.saved / g.target) * 100 : 0;
+        const done = p >= 100;
+        const remaining = Math.max(0, g.target - g.saved);
+        const sameCur = g.currency === cur;
+        return `
+        <article class="card goal">
+            <div class="goal-head">
+                <div class="goal-title-wrap">
+                    <h3 class="goal-title">${escapeHtml(g.name)}</h3>
+                    <div class="goal-meta">${done ? 'Goal reached' : `${escapeHtml(formatDisplay(remaining, g.currency))} to go`}</div>
                 </div>
-                <div class="row-actions">
-                    <button class="icon-btn edit" onclick="openEditSavingsGoalModal('${goal.id}')" title="Edit Goal">
-                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
-                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
-                            <path d="M18.5 2.5a2.121 2.121 0 1 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
-                        </svg>
-                    </button>
-                    <button class="icon-btn delete" onclick="deleteSavingsGoal('${goal.id}')" title="Delete Goal">
-                        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2">
-                            <polyline points="3 6 5 6 21 6"/>
-                            <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
-                        </svg>
-                    </button>
-                </div>
+                <span class="goal-pct" data-done="${done}">${Math.floor(Math.min(p, 999))}%</span>
             </div>
-            
-            <div class="savings-card-body">
-                <div class="progress-info">
-                    <span class="saved-label">Current Saved</span>
-                    <span class="saved-amount">${formatToDisplayCurrency(goal.saved, goal.currency)}</span>
-                </div>
-                <div class="progress-bar-bg">
-                    <div class="progress-bar-fill" style="width: ${percent}%;"></div>
-                </div>
-                <div class="target-details">
-                    <span>${percent.toFixed(1)}% Complete</span>
-                    <span>Target: ${formatToDisplayCurrency(goal.target, goal.currency)}</span>
-                </div>
+            <div class="goal-figures">
+                <span class="amount">${escapeHtml(formatDisplay(g.saved, g.currency))}</span>
+                <span>of ${escapeHtml(formatDisplay(g.target, g.currency))}</span>
             </div>
-            
-            <div class="savings-card-footer">
-                <button class="btn-glass" style="flex:1;" onclick="openDepositModal('${goal.id}')">
-                    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 4px; vertical-align: middle;">
-                        <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-                    </svg>
-                    Log Deposit
-                </button>
+            <div class="meter" role="progressbar" aria-label="${escapeHtml(g.name)} progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(Math.min(100, p))}">
+                <div class="meter-fill" style="width:${Math.min(100, p)}%" ${done ? 'data-state="done"' : ''}></div>
             </div>
-        `;
-        grid.appendChild(card);
-    });
+            ${sameCur ? '' : `<div class="goal-meta">Saved in ${g.currency}: ${escapeHtml(formatCurrency(g.saved, g.currency))} of ${escapeHtml(formatCurrency(g.target, g.currency))}</div>`}
+            <div class="goal-actions">
+                <button type="button" class="btn btn-primary btn-sm" data-deposit-goal="${escapeHtml(g.id)}">${icon('i-deposit', 'ic ic-sm')} Deposit</button>
+                <button type="button" class="btn btn-secondary btn-sm" data-edit-goal="${escapeHtml(g.id)}">${icon('i-edit', 'ic ic-sm')} Edit</button>
+            </div>
+        </article>`;
+    }).join('');
 };
 
+/* =========================================================================
+   15. Rendering — Insights
+   ========================================================================= */
 const renderAnalyticsTab = () => {
-    const activeRangeBtn = document.querySelector('.range-btn.active');
-    const range = activeRangeBtn ? activeRangeBtn.getAttribute('data-analytics-range') : '30';
+    const cur = state.config.currency;
+    document.querySelectorAll('.range-btn').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.analyticsRange === analyticsRange)));
+    $('analytics-range-label').textContent = RANGE_LABELS[analyticsRange];
 
-    const filteredExpenses = filterExpensesByRange(range);
-    const curr = state.config.currency;
+    const list = expensesInRange(analyticsRange);
+    const { start, end } = rangeBounds(analyticsRange);
+    const days = Math.max(1, daysBetween(start, end) + 1);
+    const total = sumDisplay(list);
 
-    document.getElementById('metric-total-items').textContent = filteredExpenses.length;
+    $('metric-total').textContent = formatCurrency(total, cur);
+    $('metric-total-items').textContent = plural(list.length, 'expense');
+    $('metric-avg-daily').textContent = formatCurrency(total / days, cur);
+    $('metric-avg-days').textContent = `over ${plural(days, 'day')}`;
 
-    let maxSpendVal = 0;
-    let maxSpendTitle = 'N/A';
-    filteredExpenses.forEach(exp => {
-        const val = convertToDisplayCurrency(exp.amount, exp.currency);
-        if (val > maxSpendVal) {
-            maxSpendVal = val;
-            maxSpendTitle = exp.desc;
-        }
+    let biggest = null;
+    list.forEach((e) => {
+        const v = toDisplay(e.amount, e.currency);
+        if (!biggest || v > biggest.v) biggest = { v, e };
     });
-    document.getElementById('metric-max-spend').textContent = formatCurrency(maxSpendVal, curr);
-    document.getElementById('metric-max-spend-title').textContent = maxSpendTitle;
+    $('metric-max-spend').textContent = formatCurrency(biggest ? biggest.v : 0, cur);
+    $('metric-max-spend-title').textContent = biggest ? biggest.e.desc : '—';
 
-    let daysDiff = 30;
-    if (range === '360') daysDiff = 360;
-    else if (range === 'lifetime') {
-        if (state.expenses.length > 1) {
-            const sorted = [...state.expenses].sort((a, b) => new Date(a.date) - new Date(b.date));
-            const firstDate = new Date(sorted[0].date);
-            const lastDate = new Date(sorted[sorted.length - 1].date);
-            const diffTime = Math.abs(lastDate - firstDate);
-            daysDiff = Math.max(1, Math.ceil(diffTime / (1000 * 60 * 60 * 24)));
-        } else {
-            daysDiff = 1;
-        }
+    const { budgetPct, budget } = monthStats();
+    $('metric-budget').textContent = `${Math.round(budgetPct)}%`;
+    $('metric-budget').className = `metric-value ${budgetPct >= 100 ? 'text-expense' : budgetPct >= 80 ? 'text-warning' : ''}`;
+    $('metric-budget-sub').textContent = `of ${formatCompact(budget, cur)} this month`;
+
+    renderHistoryChart(list, start, end);
+    renderCategoryChart(list, total);
+};
+
+/* =========================================================================
+   16. Rendering — Settings
+   ========================================================================= */
+const renderRateSetting = () => {
+    const input = $('setting-rate');
+    if (!input) return;
+    if (document.activeElement !== input) input.value = state.config.rate.toFixed(2);
+    const desc = $('rate-mode-desc');
+    if (state.config.rateLocked) {
+        desc.textContent = 'Using your own rate. Tap "Live rate" to go back to automatic updates.';
+    } else if (rateStatus === 'live' && state.config.rateUpdatedAt) {
+        desc.textContent = `Live rate, updated ${new Date(state.config.rateUpdatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}.`;
+    } else if (rateStatus === 'syncing') {
+        desc.textContent = 'Getting the latest rate…';
+    } else {
+        desc.textContent = state.config.rateUpdatedAt
+            ? `Offline. Using the rate from ${new Date(state.config.rateUpdatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.`
+            : 'Updates automatically when you are online.';
     }
-
-    const totalValInRange = filteredExpenses.reduce((sum, exp) => sum + convertToDisplayCurrency(exp.amount, exp.currency), 0);
-    const avgDailyVal = totalValInRange / daysDiff;
-    document.getElementById('metric-avg-daily').textContent = formatCurrency(avgDailyVal, curr);
-
-    drawAnalyticsTrendChart(range, filteredExpenses);
-    drawAnalyticsCategoryChart(filteredExpenses);
 };
 
 const renderSettingsTab = () => {
-    document.getElementById('setting-rate').value = state.config.rate.toFixed(2);
-    
-    const budgetInDisplay = convertToDisplayCurrency(state.config.budget, 'USD');
-    document.getElementById('setting-budget').value = Math.round(budgetInDisplay);
-    document.getElementById('setting-budget-currency-suffix').textContent = state.config.currency;
-};
-
-const filterExpensesByRange = (range) => {
-    const today = new Date();
-    let filterDate = new Date();
-    
-    if (range === '30') {
-        filterDate.setDate(today.getDate() - 30);
-    } else if (range === '360') {
-        filterDate.setDate(today.getDate() - 360);
-    } else {
-        return [...state.expenses];
+    renderRateSetting();
+    const budgetInput = $('setting-budget');
+    if (document.activeElement !== budgetInput) {
+        const v = convertAmount(state.config.budget, 'USD', state.config.currency);
+        budgetInput.value = state.config.currency === 'USD' ? (Math.round(v * 100) / 100) : Math.round(v);
     }
-    
-    return state.expenses.filter(exp => new Date(exp.date) >= filterDate);
-};
-
-// --- CHART GRAPHICS IMPLEMENTATION ---
-const renderMiniTrendChart = (range) => {
-    const ctx = document.getElementById('dashboard-trend-chart').getContext('2d');
-    const filtered = filterExpensesByRange(range);
-    
-    filtered.sort((a, b) => new Date(a.date) - new Date(b.date));
-
-    const grouped = {};
-    filtered.forEach(exp => {
-        const val = convertToDisplayCurrency(exp.amount, exp.currency);
-        grouped[exp.date] = (grouped[exp.date] || 0) + val;
-    });
-
-    if (filtered.length === 0) {
-        const todayStr = new Date().toISOString().split('T')[0];
-        grouped[todayStr] = 0;
-    }
-
-    const labels = Object.keys(grouped).map(d => formatShortDate(d));
-    const data = Object.values(grouped);
-
-    if (dashboardTrendChart) {
-        dashboardTrendChart.destroy();
-    }
-
-    const themeColors = getChartThemeColors();
-    const gradient = ctx.createLinearGradient(0, 0, 0, 240);
-    gradient.addColorStop(0, 'rgba(155, 81, 224, 0.35)');
-    gradient.addColorStop(1, 'rgba(155, 81, 224, 0.01)');
-
-    dashboardTrendChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: `Daily Spend (${state.config.currency})`,
-                data: data,
-                borderColor: '#9b51e0',
-                borderWidth: 2.5,
-                backgroundColor: gradient,
-                fill: true,
-                tension: 0.4,
-                pointBackgroundColor: '#9b51e0',
-                pointHoverRadius: 6,
-                pointRadius: 1.5,
-                pointHitRadius: 10
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    backgroundColor: themeColors.tooltipBg,
-                    titleColor: themeColors.text,
-                    bodyColor: themeColors.tooltipText,
-                    borderColor: themeColors.tooltipBorder,
-                    borderWidth: 1,
-                    displayColors: false,
-                    callbacks: {
-                        label: function(context) {
-                            return formatCurrency(context.parsed.y, state.config.currency);
-                        }
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    grid: { display: false, drawBorder: false },
-                    ticks: { color: themeColors.text, font: { size: 10, family: 'Outfit' } }
-                },
-                y: {
-                    grid: { color: themeColors.grid, drawBorder: false },
-                    ticks: {
-                        color: themeColors.text,
-                        font: { size: 10, family: 'Outfit' },
-                        callback: function(value) {
-                            return formatCurrency(value, state.config.currency).split('.')[0];
-                        }
-                    }
-                }
-            }
-        }
-    });
-};
-
-const drawAnalyticsTrendChart = (range, filteredExpenses) => {
-    const ctx = document.getElementById('analytics-history-chart').getContext('2d');
-    const sorted = [...filteredExpenses].sort((a, b) => new Date(a.date) - new Date(b.date));
-
-    let labels = [];
-    let data = [];
-
-    if (range === '30') {
-        const grouped = {};
-        sorted.forEach(exp => {
-            const val = convertToDisplayCurrency(exp.amount, exp.currency);
-            grouped[exp.date] = (grouped[exp.date] || 0) + val;
-        });
-        labels = Object.keys(grouped).map(d => formatShortDate(d));
-        data = Object.values(grouped);
-    } else {
-        const monthlyGrouped = {};
-        sorted.forEach(exp => {
-            const val = convertToDisplayCurrency(exp.amount, exp.currency);
-            const dateObj = new Date(exp.date);
-            const monthStr = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
-            monthlyGrouped[monthStr] = (monthlyGrouped[monthStr] || 0) + val;
-        });
-
-        labels = Object.keys(monthlyGrouped).map(mStr => {
-            const [y, m] = mStr.split('-');
-            const date = new Date(y, m - 1, 1);
-            return date.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
-        });
-        data = Object.values(monthlyGrouped);
-    }
-
-    if (labels.length === 0) {
-        labels = ['No Data'];
-        data = [0];
-    }
-
-    if (analyticsHistoryChart) {
-        analyticsHistoryChart.destroy();
-    }
-
-    const themeColors = getChartThemeColors();
-    const gradient = ctx.createLinearGradient(0, 0, 0, 320);
-    gradient.addColorStop(0, 'rgba(255, 42, 95, 0.35)');
-    gradient.addColorStop(1, 'rgba(255, 42, 95, 0.01)');
-
-    analyticsHistoryChart = new Chart(ctx, {
-        type: 'line',
-        data: {
-            labels: labels,
-            datasets: [{
-                label: `Amount Spent (${state.config.currency})`,
-                data: data,
-                borderColor: '#ff2a5f',
-                borderWidth: 2.5,
-                backgroundColor: gradient,
-                fill: true,
-                tension: 0.35,
-                pointBackgroundColor: '#ff2a5f',
-                pointHoverRadius: 6,
-                pointRadius: 2
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: { display: false },
-                tooltip: {
-                    backgroundColor: themeColors.tooltipBg,
-                    titleColor: themeColors.text,
-                    bodyColor: themeColors.tooltipText,
-                    borderColor: themeColors.tooltipBorder,
-                    borderWidth: 1,
-                    displayColors: false,
-                    callbacks: {
-                        label: function(context) {
-                            return formatCurrency(context.parsed.y, state.config.currency);
-                        }
-                    }
-                }
-            },
-            scales: {
-                x: {
-                    grid: { display: false, drawBorder: false },
-                    ticks: { color: themeColors.text, font: { size: 10, family: 'Outfit' } }
-                },
-                y: {
-                    grid: { color: themeColors.grid, drawBorder: false },
-                    ticks: {
-                        color: themeColors.text,
-                        font: { size: 10, family: 'Outfit' },
-                        callback: function(value) {
-                            return formatCurrency(value, state.config.currency).split('.')[0];
-                        }
-                    }
-                }
-            }
-        }
-    });
-};
-
-const drawAnalyticsCategoryChart = (filteredExpenses) => {
-    const ctx = document.getElementById('analytics-category-chart').getContext('2d');
-    
-    const categoryTotals = {};
-    filteredExpenses.forEach(exp => {
-        const val = convertToDisplayCurrency(exp.amount, exp.currency);
-        categoryTotals[exp.category] = (categoryTotals[exp.category] || 0) + val;
-    });
-
-    const categories = Object.keys(categoryTotals);
-    const totals = Object.values(categoryTotals);
-
-    if (analyticsCategoryChart) {
-        analyticsCategoryChart.destroy();
-    }
-
-    if (categories.length === 0) {
-        analyticsCategoryChart = new Chart(ctx, {
-            type: 'doughnut',
-            data: {
-                labels: ['No Data'],
-                datasets: [{
-                    data: [1],
-                    backgroundColor: ['rgba(255, 255, 255, 0.05)'],
-                    borderWidth: 0
-                }]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                plugins: {
-                    legend: { display: false }
-                }
-            }
-        });
-        return;
-    }
-
-    const isLight = state.config.theme === 'light';
-    const colorsMap = {
-        'Food': '#ff2a5f',
-        'Utilities': '#9b51e0',
-        'Rent': '#ff7300',
-        'Entertainment': '#00e676',
-        'Travel': '#00b8d4',
-        'Health': '#ffd600',
-        'Shopping': '#e91e63',
-        'Other': '#8e8e9f'
-    };
-
-    const backgroundColors = categories.map(cat => colorsMap[cat] || '#8e8e9f');
-    const themeColors = getChartThemeColors();
-
-    analyticsCategoryChart = new Chart(ctx, {
-        type: 'doughnut',
-        data: {
-            labels: categories,
-            datasets: [{
-                data: totals,
-                backgroundColor: backgroundColors,
-                borderWidth: 2,
-                borderColor: isLight ? '#ffffff' : '#0b0b11',
-                hoverOffset: 6
-            }]
-        },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            plugins: {
-                legend: {
-                    display: true,
-                    position: 'right',
-                    labels: {
-                        color: themeColors.text,
-                        font: { size: 10, family: 'Outfit' },
-                        boxWidth: 8,
-                        padding: 10
-                    }
-                },
-                tooltip: {
-                    backgroundColor: themeColors.tooltipBg,
-                    titleColor: themeColors.text,
-                    bodyColor: themeColors.tooltipText,
-                    borderColor: themeColors.tooltipBorder,
-                    borderWidth: 1,
-                    callbacks: {
-                        label: function(context) {
-                            const val = context.parsed;
-                            const total = context.dataset.data.reduce((a, b) => a + b, 0);
-                            const percent = ((val / total) * 100).toFixed(0);
-                            return ` ${context.label}: ${formatCurrency(val, state.config.currency)} (${percent}%)`;
-                        }
-                    }
-                }
-            },
-            cutout: '72%'
-        }
-    });
-};
-
-const generateUniqueId = () => {
-    return '_' + Math.random().toString(36).substr(2, 9);
-};
-
-const escapeHtml = (text) => {
-    const map = {
-        '&': '&amp;',
-        '<': '&lt;',
-        '>': '&gt;',
-        '"': '&quot;',
-        "'": '&#039;'
-    };
-    return text.replace(/[&<>"']/g, function(m) { return map[m]; });
-};
-
-const formatDisplayDate = (dateStr) => {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-};
-
-const formatShortDate = (dateStr) => {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
-};
-
-const deleteExpense = (id) => {
-    showConfirm('Delete Expense Record', 'Are you sure you want to delete this expense record permanently?', () => {
-        state.expenses = state.expenses.filter(exp => exp.id !== id);
-        saveState();
-        syncDeleteExpense(id);
-        renderExpensesList();
-        showToast('Expense record deleted successfully.', 'success');
-    });
-};
-
-const deleteSavingsGoal = (id) => {
-    showConfirm('Delete Savings Goal', 'Are you sure you want to delete this savings goal? All contribution history will be lost.', () => {
-        state.savings = state.savings.filter(goal => goal.id !== id);
-        saveState();
-        syncDeleteSaving(id);
-        renderSavingsGoals();
-        showToast('Savings goal deleted successfully.', 'success');
-    });
-};
-const toggleModal = (modalId, isOpen) => {
-    const modal = document.getElementById(modalId);
-    if (isOpen) {
-        modal.classList.add('active');
-        if (modalId === 'modal-expense') {
-            document.getElementById('expense-date').value = new Date().toISOString().split('T')[0];
-        }
-    } else {
-        modal.classList.remove('active');
-    }
-};
-
-window.openEditExpenseModal = (id) => {
-    const exp = state.expenses.find(e => e.id === id);
-    if (!exp) return;
-
-    document.getElementById('expense-modal-title').textContent = 'Edit Expense Record';
-    document.getElementById('expense-id').value = exp.id;
-    document.getElementById('expense-desc').value = exp.desc;
-    document.getElementById('expense-amount').value = exp.amount;
-    document.getElementById('expense-currency').value = exp.currency;
-    document.getElementById('expense-category').value = exp.category;
-    document.getElementById('expense-date').value = exp.date;
-    document.getElementById('expense-note').value = exp.note || '';
-
-    toggleModal('modal-expense', true);
-};
-
-window.openEditSavingsGoalModal = (id) => {
-    const goal = state.savings.find(g => g.id === id);
-    if (!goal) return;
-
-    document.getElementById('savings-goal-modal-title').textContent = 'Edit Savings Goal';
-    document.getElementById('savings-goal-id').value = goal.id;
-    document.getElementById('savings-goal-name').value = goal.name;
-    document.getElementById('savings-goal-target').value = goal.target;
-    document.getElementById('savings-goal-currency').value = goal.currency;
-    document.getElementById('savings-goal-initial').value = goal.saved;
-    document.getElementById('savings-goal-initial').previousElementSibling.textContent = 'Current Saved Amount';
-
-    toggleModal('modal-savings-goal', true);
-};
-
-window.openDepositModal = (goalId) => {
-    const select = document.getElementById('funds-select-goal');
-    select.innerHTML = '';
-    
-    state.savings.forEach(goal => {
-        const option = document.createElement('option');
-        option.value = goal.id;
-        option.textContent = goal.name;
-        if (goal.id === goalId) option.selected = true;
-        select.appendChild(option);
-    });
-
-    toggleModal('modal-savings-funds', true);
-};
-
-// --- ACTION EVENT HANDLERS ---
-const initActionListeners = () => {
-    document.getElementById('theme-toggle-btn').addEventListener('click', (e) => {
-        toggleTheme(e);
-    });
-
-    document.getElementById('go-to-expenses-btn').addEventListener('click', () => {
-        const expensesTabBtn = document.querySelector('[data-tab="expenses"]');
-        if (expensesTabBtn) expensesTabBtn.click();
-    });
-
-    document.getElementById('btn-quick-add-expense').addEventListener('click', () => {
-        document.getElementById('expense-modal-title').textContent = 'Log Expense';
-        document.getElementById('expense-form').reset();
-        document.getElementById('expense-id').value = '';
-        toggleModal('modal-expense', true);
-    });
-    
-    document.getElementById('btn-add-expense-main').addEventListener('click', () => {
-        document.getElementById('expense-modal-title').textContent = 'Log Expense';
-        document.getElementById('expense-form').reset();
-        document.getElementById('expense-id').value = '';
-        toggleModal('modal-expense', true);
-    });
-
-    document.getElementById('btn-close-expense-modal').addEventListener('click', () => toggleModal('modal-expense', false));
-    document.getElementById('btn-cancel-expense-modal').addEventListener('click', () => toggleModal('modal-expense', false));
-
-    document.getElementById('btn-quick-add-savings').addEventListener('click', () => {
-        document.getElementById('savings-goal-modal-title').textContent = 'Create Savings Goal';
-        document.getElementById('savings-goal-form').reset();
-        document.getElementById('savings-goal-id').value = '';
-        document.getElementById('savings-goal-initial').previousElementSibling.textContent = 'Initial Savings Balance';
-        toggleModal('modal-savings-goal', true);
-    });
-
-    document.getElementById('btn-add-savings-main').addEventListener('click', () => {
-        document.getElementById('savings-goal-modal-title').textContent = 'Create Savings Goal';
-        document.getElementById('savings-goal-form').reset();
-        document.getElementById('savings-goal-id').value = '';
-        document.getElementById('savings-goal-initial').previousElementSibling.textContent = 'Initial Savings Balance';
-        toggleModal('modal-savings-goal', true);
-    });
-
-    document.getElementById('btn-close-savings-goal-modal').addEventListener('click', () => toggleModal('modal-savings-goal', false));
-    document.getElementById('btn-cancel-savings-goal-modal').addEventListener('click', () => toggleModal('modal-savings-goal', false));
-
-    document.getElementById('btn-quick-log-funds').addEventListener('click', () => {
-        if (state.savings.length === 0) {
-            showToast('Please create a savings goal first.', 'info');
-            return;
-        }
-        openDepositModal(state.savings[0].id);
-    });
-
-    document.getElementById('btn-close-funds-modal').addEventListener('click', () => toggleModal('modal-savings-funds', false));
-    document.getElementById('btn-cancel-funds-modal').addEventListener('click', () => toggleModal('modal-savings-funds', false));
-
-    document.getElementById('expense-form').addEventListener('submit', (e) => {
-        e.preventDefault();
-        
-        const id = document.getElementById('expense-id').value;
-        const desc = document.getElementById('expense-desc').value;
-        const amount = parseFloat(document.getElementById('expense-amount').value);
-        const currency = document.getElementById('expense-currency').value;
-        const category = document.getElementById('expense-category').value;
-        const date = document.getElementById('expense-date').value;
-        const note = document.getElementById('expense-note').value;
-
-        let record = null;
-        if (id) {
-            const index = state.expenses.findIndex(exp => exp.id === id);
-            if (index !== -1) {
-                record = { id, desc, amount, currency, category, date, note };
-                state.expenses[index] = record;
-            }
-        } else {
-            const newId = generateUniqueId();
-            record = { id: newId, desc, amount, currency, category, date, note };
-            state.expenses.push(record);
-        }
-
-        saveState();
-        if (record) {
-            syncAddOrUpdateExpense(record); // Supabase sync
-        }
-        toggleModal('modal-expense', false);
-        showToast(id ? 'Expense record modified successfully.' : 'New expense record added successfully.', 'success');
-        
-        const activeTab = document.querySelector('.nav-item.active, .bottom-nav-item.active').getAttribute('data-tab');
-        if (activeTab === 'dashboard') renderDashboard();
-        else if (activeTab === 'expenses') renderExpensesList();
-    });
-
-    document.getElementById('savings-goal-form').addEventListener('submit', (e) => {
-        e.preventDefault();
-
-        const id = document.getElementById('savings-goal-id').value;
-        const name = document.getElementById('savings-goal-name').value;
-        const target = parseFloat(document.getElementById('savings-goal-target').value);
-        const currency = document.getElementById('savings-goal-currency').value;
-        const saved = parseFloat(document.getElementById('savings-goal-initial').value) || 0;
-
-        let record = null;
-        if (id) {
-            const index = state.savings.findIndex(g => g.id === id);
-            if (index !== -1) {
-                record = { id, name, target, currency, saved };
-                state.savings[index] = record;
-            }
-        } else {
-            const newId = generateUniqueId();
-            record = { id: newId, name, target, currency, saved };
-            state.savings.push(record);
-        }
-
-        saveState();
-        if (record) {
-            syncAddOrUpdateSaving(record); // Supabase sync
-        }
-        toggleModal('modal-savings-goal', false);
-        showToast(id ? 'Savings goal updated successfully.' : 'New savings goal established successfully.', 'success');
-
-        const activeTab = document.querySelector('.nav-item.active, .bottom-nav-item.active').getAttribute('data-tab');
-        if (activeTab === 'dashboard') renderDashboard();
-        else if (activeTab === 'savings') renderSavingsGoals();
-    });
-
-    document.getElementById('savings-funds-form').addEventListener('submit', (e) => {
-        e.preventDefault();
-
-        const goalId = document.getElementById('funds-select-goal').value;
-        const amount = parseFloat(document.getElementById('funds-amount').value);
-        const currency = document.getElementById('funds-currency').value;
-
-        const goalIndex = state.savings.findIndex(g => g.id === goalId);
-        if (goalIndex !== -1) {
-            const goal = state.savings[goalIndex];
-            const convertedContribution = convertAmount(amount, currency, goal.currency);
-            state.savings[goalIndex].saved += convertedContribution;
-            
-            saveState();
-            syncAddOrUpdateSaving(state.savings[goalIndex]); // Supabase sync
-            toggleModal('modal-savings-funds', false);
-            document.getElementById('savings-funds-form').reset();
-            showToast('Deposit logged successfully.', 'success');
-
-            const activeTab = document.querySelector('.nav-item.active, .bottom-nav-item.active').getAttribute('data-tab');
-            if (activeTab === 'dashboard') renderDashboard();
-            else if (activeTab === 'savings') renderSavingsGoals();
-        }
-    });
-
-    const currencyUSD = document.getElementById('currency-usd');
-    const currencyLKR = document.getElementById('currency-lkr');
-
-    const updateDisplayCurrency = (curr) => {
-        state.config.currency = curr;
-        saveState();
-
-        if (curr === 'USD') {
-            currencyUSD.classList.add('active');
-            currencyLKR.classList.remove('active');
-        } else {
-            currencyUSD.classList.remove('active');
-            currencyLKR.classList.add('active');
-        }
-
-        const activeTab = document.querySelector('.nav-item.active, .bottom-nav-item.active').getAttribute('data-tab');
-        if (activeTab === 'dashboard') renderDashboard();
-        else if (activeTab === 'expenses') renderExpensesList();
-        else if (activeTab === 'savings') renderSavingsGoals();
-        else if (activeTab === 'analytics') renderAnalyticsTab();
-        else if (activeTab === 'settings') renderSettingsTab();
-    };
-
-    currencyUSD.addEventListener('click', () => updateDisplayCurrency('USD'));
-    currencyLKR.addEventListener('click', () => updateDisplayCurrency('LKR'));
-
-    // Save Benchmark Rate
-    document.getElementById('btn-save-rate').addEventListener('click', () => {
-        const rateInput = document.getElementById('setting-rate');
-        const value = parseFloat(rateInput.value);
-        if (value > 0) {
-            state.config.rate = value;
-            saveState();
-            document.getElementById('current-rate-display').textContent = `1 USD = ${value.toFixed(2)} LKR`;
-            showToast(`Exchange rate manually set to 1 USD = ${value.toFixed(2)} LKR.`, 'success');
-        } else {
-            showToast('Please enter a valid conversion rate.', 'error');
-        }
-    });
-
-    // Save Monthly Budget Limit
-    document.getElementById('btn-save-budget').addEventListener('click', () => {
-        const budgetInput = document.getElementById('setting-budget');
-        const value = parseFloat(budgetInput.value);
-        if (value > 0) {
-            const budgetInUsd = convertAmount(value, state.config.currency, 'USD');
-            state.config.budget = budgetInUsd;
-            saveState();
-            showToast(`Monthly spending limit set to ${formatCurrency(value, state.config.currency)} successfully.`, 'success');
-            refreshActivePane();
-        } else {
-            showToast('Please enter a valid budget limit.', 'error');
-        }
-    });
-
-    // Sync Live rate
-    document.getElementById('btn-sync-rate').addEventListener('click', () => {
-        fetchLiveExchangeRate(true);
-    });
-
-    // Backup Data Export
-    document.getElementById('btn-export-data').addEventListener('click', () => {
-        const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(state, null, 2));
-        const downloadAnchor = document.createElement('a');
-        downloadAnchor.setAttribute("href", dataStr);
-        downloadAnchor.setAttribute("download", `vela_backup_${new Date().toISOString().split('T')[0]}.json`);
-        document.body.appendChild(downloadAnchor);
-        downloadAnchor.click();
-        downloadAnchor.remove();
-        showToast('Ledger backup file exported successfully.', 'success');
-    });
-
-    const importTrigger = document.getElementById('btn-import-trigger');
-    const fileImportInput = document.getElementById('file-import');
-    importTrigger.addEventListener('click', () => fileImportInput.click());
-
-    fileImportInput.addEventListener('change', (e) => {
-        const file = e.target.files[0];
-        if (!file) return;
-
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            try {
-                const importedState = JSON.parse(event.target.result);
-                if (importedState.expenses && importedState.savings && importedState.config) {
-                    state = importedState;
-                    saveState();
-                    showToast('Vela ledger backup imported successfully!', 'success');
-                    setTimeout(() => {
-                        window.location.reload();
-                    }, 1000);
-                } else {
-                    showToast('Invalid ledger format file.', 'error');
-                }
-            } catch (err) {
-                showToast('Failed to parse ledger JSON data.', 'error');
-            }
-        };
-        reader.readAsText(file);
-    });
-
-    document.getElementById('btn-wipe-data').addEventListener('click', () => {
-        showConfirm('Wipe Local Ledger Database', 'CAUTION: This will permanently delete your entire local Vela database. This action is irreversible. Proceed?', () => {
-            localStorage.removeItem('VELA_STATE');
-            window.location.reload();
-        });
-    });
-
-    document.getElementById('expense-search').addEventListener('input', renderExpensesList);
-    document.getElementById('expense-filter-category').addEventListener('change', renderExpensesList);
-
-    const rangeButtons = document.querySelectorAll('.range-btn');
-    rangeButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-            rangeButtons.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            renderAnalyticsTab();
-        });
-    });
-
-    const chartTimeButtons = document.querySelectorAll('.chart-time-btn');
-    chartTimeButtons.forEach(btn => {
-        btn.addEventListener('click', () => {
-            chartTimeButtons.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            const range = parseInt(btn.getAttribute('data-range'));
-            renderMiniTrendChart(range);
-        });
-    });
-};
-
-// --- DATA SYNC WITH SUPABASE ---
-const syncAddOrUpdateExpense = async (expense) => {
-    if (!supabaseClient || state.auth.isMock) return;
-    try {
-        const { error } = await supabaseClient
-            .from('expenses')
-            .upsert({
-                id: expense.id,
-                user_id: state.auth.user.id,
-                description: expense.desc,
-                amount: expense.amount,
-                currency: expense.currency,
-                category: expense.category,
-                date: expense.date,
-                note: expense.note
-            });
-        if (error) throw error;
-        console.log("Expense synced to Supabase:", expense.id);
-    } catch (err) {
-        console.error("Failed to sync expense to Supabase:", err);
-    }
-};
-
-const syncDeleteExpense = async (id) => {
-    if (!supabaseClient || state.auth.isMock) return;
-    try {
-        const { error } = await supabaseClient
-            .from('expenses')
-            .delete()
-            .eq('id', id);
-        if (error) throw error;
-        console.log("Expense deleted from Supabase:", id);
-    } catch (err) {
-        console.error("Failed to delete expense from Supabase:", err);
-    }
-};
-
-const syncAddOrUpdateSaving = async (saving) => {
-    if (!supabaseClient || state.auth.isMock) return;
-    try {
-        const { error } = await supabaseClient
-            .from('savings')
-            .upsert({
-                id: saving.id,
-                user_id: state.auth.user.id,
-                name: saving.name,
-                target: saving.target,
-                currency: saving.currency,
-                saved: saving.saved
-            });
-        if (error) throw error;
-        console.log("Savings goal synced to Supabase:", saving.id);
-    } catch (err) {
-        console.error("Failed to sync savings goal to Supabase:", err);
-    }
-};
-
-const syncDeleteSaving = async (id) => {
-    if (!supabaseClient || state.auth.isMock) return;
-    try {
-        const { error } = await supabaseClient
-            .from('savings')
-            .delete()
-            .eq('id', id);
-        if (error) throw error;
-        console.log("Savings goal deleted from Supabase:", id);
-    } catch (err) {
-        console.error("Failed to delete savings goal from Supabase:", err);
-    }
-};
-
-// Sync whole ledger from Supabase (pull)
-const pullLedgerFromSupabase = async () => {
-    if (!supabaseClient || state.auth.isMock) return;
-    try {
-        console.log("Fetching ledger data from Supabase...");
-        const [expensesResult, savingsResult] = await Promise.all([
-            supabaseClient.from('expenses').select('*'),
-            supabaseClient.from('savings').select('*')
-        ]);
-
-        if (expensesResult.error) throw expensesResult.error;
-        if (savingsResult.error) throw savingsResult.error;
-
-        state.expenses = (expensesResult.data || []).map(row => ({
-            id: row.id,
-            desc: row.description,
-            amount: parseFloat(row.amount),
-            currency: row.currency,
-            category: row.category,
-            date: row.date,
-            note: row.note
-        }));
-
-        state.savings = (savingsResult.data || []).map(row => ({
-            id: row.id,
-            name: row.name,
-            target: parseFloat(row.target),
-            currency: row.currency,
-            saved: parseFloat(row.saved)
-        }));
-
-        saveState();
-        console.log("Supabase ledger successfully loaded.");
-    } catch (err) {
-        console.error("Failed to pull ledger data from Supabase:", err);
-        showToast("Database pull failed. Using local cached records.", "error");
-    }
-};
-
-// Push whole local ledger to Supabase (bulk upload)
-const pushLocalLedgerToSupabase = async () => {
-    if (!supabaseClient || state.auth.isMock || !state.auth.user) return;
-    try {
-        console.log("Uploading local ledger to Supabase...");
-        
-        if (state.expenses.length > 0) {
-            const expensesRows = state.expenses.map(exp => ({
-                id: exp.id,
-                user_id: state.auth.user.id,
-                description: exp.desc,
-                amount: exp.amount,
-                currency: exp.currency,
-                category: exp.category,
-                date: exp.date,
-                note: exp.note
-            }));
-            const { error } = await supabaseClient.from('expenses').upsert(expensesRows);
-            if (error) throw error;
-        }
-
-        if (state.savings.length > 0) {
-            const savingsRows = state.savings.map(goal => ({
-                id: goal.id,
-                user_id: state.auth.user.id,
-                name: goal.name,
-                target: goal.target,
-                currency: goal.currency,
-                saved: goal.saved
-            }));
-            const { error } = await supabaseClient.from('savings').upsert(savingsRows);
-            if (error) throw error;
-        }
-
-        console.log("Local ledger uploaded successfully to Supabase.");
-    } catch (err) {
-        console.error("Failed to upload local ledger to Supabase:", err);
-    }
-};
-
-// --- USER PROFILE PROFILE ACTIONS ---
-const handleAvatarUpload = async (file) => {
-    if (!file) return;
-    
-    const maxSize = 2 * 1024 * 1024; // 2MB
-    if (file.size > maxSize) {
-        showToast("File size too large. Limit is 2MB.", "error");
-        return;
-    }
-
-    showToast("Uploading profile picture...", "info");
-    
-    if (supabaseClient && !state.auth.isMock && state.auth.user) {
-        try {
-            const fileExt = file.name.split('.').pop();
-            const fileName = `${state.auth.user.id}/${Date.now()}.${fileExt}`;
-            
-            // Upload to Storage
-            const { data, error } = await supabaseClient.storage
-                .from('avatars')
-                .upload(fileName, file, { cacheControl: '3600', upsert: true });
-                
-            if (error) throw error;
-            
-            // Get Public URL
-            const { data: { publicUrl } } = supabaseClient.storage
-                .from('avatars')
-                .getPublicUrl(fileName);
-                
-            // Update Profile in DB
-            const { error: profileError } = await supabaseClient
-                .from('profiles')
-                .upsert({
-                    id: state.auth.user.id,
-                    avatar_url: publicUrl,
-                    updated_at: new Date().toISOString()
-                });
-                
-            if (profileError) throw profileError;
-            
-            state.auth.user.avatar_url = publicUrl;
-            saveState();
-            updateUserProfileUI();
-            showToast("Profile image updated!", "success");
-        } catch (err) {
-            console.error("Upload failed:", err);
-            showToast("Failed to upload image to Supabase storage.", "error");
-        }
-    } else {
-        // Mock mode: Convert to base64 Data URL and save locally
-        const reader = new FileReader();
-        reader.onload = () => {
-            if (!state.auth.user) {
-                state.auth.user = { id: 'mock-user-1', email: 'guest@vela.io', full_name: 'Vela User' };
-            }
-            state.auth.user.avatar_url = reader.result;
-            saveState();
-            updateUserProfileUI();
-            showToast("Profile image updated locally!", "success");
-        };
-        reader.onerror = () => showToast("Failed to read image file.", "error");
-        reader.readAsDataURL(file);
-    }
-};
-
-const saveProfileChanges = async () => {
-    const usernameInput = document.getElementById('profile-username');
-    const newName = usernameInput.value.trim();
-    if (!newName) {
-        showToast("Please enter a valid display name.", "error");
-        return;
-    }
-
-    if (!state.auth.user) {
-        state.auth.user = { id: 'mock-user-1', email: 'guest@vela.io', full_name: 'Vela User' };
-    }
-    
-    state.auth.user.full_name = newName;
-    saveState();
-
-    if (supabaseClient && !state.auth.isMock && state.auth.user) {
-        try {
-            const { error } = await supabaseClient
-                .from('profiles')
-                .upsert({
-                    id: state.auth.user.id,
-                    full_name: newName,
-                    username: newName,
-                    updated_at: new Date().toISOString()
-                });
-            if (error) throw error;
-            showToast("Username updated on cloud!", "success");
-        } catch (err) {
-            console.error("Profile db update failed:", err);
-            showToast("Failed to update name on cloud. Saved locally.", "warning");
-        }
-    } else {
-        showToast("Profile name updated locally!", "success");
-    }
-
+    $('setting-budget-currency-suffix').textContent = state.config.currency;
+    updateThemeChrome();
     updateUserProfileUI();
 };
 
-const updateUserProfileUI = () => {
-    const avatarImg = document.getElementById('sidebar-user-avatar');
-    const nameEl = document.getElementById('sidebar-user-name');
-    const roleEl = document.getElementById('sidebar-user-role');
-    const profilePreviewImg = document.getElementById('profile-avatar-preview');
-    const profileUsernameInput = document.getElementById('profile-username');
-    const profileEmailInput = document.getElementById('profile-email-readonly');
+/* =========================================================================
+   17. Charts
+   ========================================================================= */
+const chartsReady = () => typeof window.Chart !== 'undefined';
 
-    const defaultAvatar = "https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=256";
-    
-    if (state.auth.user) {
-        const user = state.auth.user;
-        const avatarSrc = user.avatar_url || defaultAvatar;
-        
-        if (avatarImg) avatarImg.src = avatarSrc;
-        if (profilePreviewImg) profilePreviewImg.src = avatarSrc;
-        
-        const displayName = user.full_name || "Vela User";
-        if (nameEl) nameEl.textContent = displayName;
-        if (profileUsernameInput) profileUsernameInput.value = displayName;
-        
-        if (profileEmailInput) profileEmailInput.value = user.email || "guest@vela.io";
-        if (roleEl) {
-            roleEl.textContent = state.auth.isMock ? "Guest Account" : "Sync Account";
-        }
-    } else {
-        if (avatarImg) avatarImg.src = defaultAvatar;
-        if (profilePreviewImg) profilePreviewImg.src = defaultAvatar;
-        if (nameEl) nameEl.textContent = "Guest User";
-        if (roleEl) roleEl.textContent = "Local Only";
-        if (profileUsernameInput) profileUsernameInput.value = "Guest User";
-        if (profileEmailInput) profileEmailInput.value = "guest@vela.io";
-    }
+const hexToRgba = (hex, alpha) => {
+    const h = hex.replace('#', '');
+    if (h.length !== 6) return hex;
+    const n = parseInt(h, 16);
+    return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${alpha})`;
 };
 
-// --- AUTHENTICATION ACTIONS & ONBOARDING CONTROLLERS ---
-let onboardingPreference = 'demo'; // Default
+const chartTheme = () => ({
+    text: cssVar('--text-3'),
+    grid: cssVar('--chart-grid'),
+    primary: cssVar('--primary'),
+    surface: cssVar('--surface'),
+    tooltipBg: cssVar('--bg-elevated'),
+    tooltipText: cssVar('--text'),
+    tooltipBorder: cssVar('--border-strong'),
+    track: cssVar('--surface-2')
+});
 
-const navigateToOnboardingStep = (stepNumber) => {
-    const steps = document.querySelectorAll('.auth-step');
-    steps.forEach(step => step.classList.remove('active'));
-
-    const targetStep = document.getElementById(`auth-step-${stepNumber}`);
-    if (targetStep) targetStep.classList.add('active');
-
-    // Show step dots only for onboarding steps 2, 3, 4. Hide for step 1 (login screen)
-    const indicators = document.getElementById('auth-step-indicators');
-    if (indicators) {
-        if (stepNumber === 1) {
-            indicators.style.display = 'none';
-        } else {
-            indicators.style.display = 'flex';
+const baseOptions = (t) => ({
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 450 },
+    interaction: { mode: 'index', intersect: false },
+    plugins: {
+        legend: { display: false },
+        tooltip: {
+            backgroundColor: t.tooltipBg,
+            titleColor: t.text,
+            bodyColor: t.tooltipText,
+            borderColor: t.tooltipBorder,
+            borderWidth: 1,
+            padding: 10,
+            cornerRadius: 10,
+            displayColors: false,
+            titleFont: { family: 'Inter', size: 11, weight: '600' },
+            bodyFont: { family: 'Outfit', size: 14, weight: '600' },
+            callbacks: { label: (ctx) => formatCurrency(ctx.parsed.y, state.config.currency) }
         }
     }
+});
 
-    const dots = document.querySelectorAll('.step-indicators .dot');
-    dots.forEach(dot => {
-        const dotStep = parseInt(dot.getAttribute('data-step'));
-        if (dotStep === stepNumber) {
-            dot.classList.add('active');
-        } else {
-            dot.classList.remove('active');
+const axisOptions = (t) => ({
+    x: {
+        grid: { display: false },
+        border: { display: false },
+        ticks: { color: t.text, font: { family: 'Inter', size: 10 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 6 }
+    },
+    y: {
+        beginAtZero: true,
+        grid: { color: t.grid },
+        border: { display: false },
+        ticks: { color: t.text, font: { family: 'Inter', size: 10 }, maxTicksLimit: 5, callback: (v) => formatCompact(v, state.config.currency) }
+    }
+});
+
+const destroyChart = (key) => {
+    if (charts[key]) { charts[key].destroy(); charts[key] = null; }
+};
+
+const showChartMessage = (id, message) => {
+    const el = $(id);
+    if (!el) return;
+    el.hidden = !message;
+    el.textContent = message || '';
+};
+
+const renderTrendChart = () => {
+    destroyChart('trend');
+    if (!chartsReady()) { showChartMessage('dashboard-chart-empty', 'Charts load when you are online.'); return; }
+
+    const t = chartTheme();
+    const today = startOfDay(new Date());
+    const labels = [];
+    const values = [];
+
+    if (dashboardRange === '30') {
+        const buckets = new Map();
+        for (let i = 29; i >= 0; i--) {
+            const d = addDays(today, -i);
+            buckets.set(toISODate(d), 0);
+            labels.push(shortDayLabel(d));
+        }
+        state.expenses.forEach((e) => {
+            if (buckets.has(e.date)) buckets.set(e.date, buckets.get(e.date) + toDisplay(e.amount, e.currency));
+        });
+        values.push(...buckets.values());
+    } else {
+        const buckets = new Map();
+        for (let i = 11; i >= 0; i--) {
+            const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+            buckets.set(monthKey(d), 0);
+            labels.push(d.toLocaleDateString('en-US', { month: 'short' }));
+        }
+        state.expenses.forEach((e) => {
+            const k = e.date.slice(0, 7);
+            if (buckets.has(k)) buckets.set(k, buckets.get(k) + toDisplay(e.amount, e.currency));
+        });
+        values.push(...buckets.values());
+    }
+
+    const hasData = values.some((v) => v > 0);
+    showChartMessage('dashboard-chart-empty', hasData ? '' : (dashboardRange === '30' ? 'No spending in the last 30 days' : 'No spending in the last 12 months'));
+
+    const last = values.length - 1;
+    charts.trend = new Chart($('dashboard-trend-chart'), {
+        type: 'bar',
+        data: {
+            labels,
+            datasets: [{
+                data: values,
+                backgroundColor: values.map((_, i) => (i === last ? t.primary : hexToRgba(t.primary, 0.45))),
+                hoverBackgroundColor: t.primary,
+                borderRadius: dashboardRange === '30' ? 4 : 6,
+                borderSkipped: false,
+                maxBarThickness: 28
+            }]
+        },
+        options: { ...baseOptions(t), scales: axisOptions(t) }
+    });
+};
+
+const renderHistoryChart = (list, start, end) => {
+    destroyChart('history');
+    if (!chartsReady()) { showChartMessage('analytics-history-empty', 'Charts load when you are online.'); return; }
+    const t = chartTheme();
+    const span = daysBetween(start, end) + 1;
+    const byMonth = analyticsRange === '12m' || (analyticsRange === 'all' && span > 62);
+
+    const labels = [];
+    const totals = [];
+    if (byMonth) {
+        const buckets = new Map();
+        const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
+        while (cursor <= end) {
+            buckets.set(monthKey(cursor), 0);
+            labels.push(cursor.toLocaleDateString('en-US', { month: 'short', year: span > 366 ? '2-digit' : undefined }));
+            cursor.setMonth(cursor.getMonth() + 1);
+        }
+        list.forEach((e) => {
+            const k = e.date.slice(0, 7);
+            if (buckets.has(k)) buckets.set(k, buckets.get(k) + toDisplay(e.amount, e.currency));
+        });
+        totals.push(...buckets.values());
+    } else {
+        const buckets = new Map();
+        for (let i = 0; i < span; i++) {
+            const d = addDays(start, i);
+            buckets.set(toISODate(d), 0);
+            labels.push(shortDayLabel(d));
+        }
+        list.forEach((e) => {
+            if (buckets.has(e.date)) buckets.set(e.date, buckets.get(e.date) + toDisplay(e.amount, e.currency));
+        });
+        totals.push(...buckets.values());
+    }
+
+    let running = 0;
+    const cumulative = totals.map((v) => (running += v));
+    const hasData = running > 0;
+    showChartMessage('analytics-history-empty', hasData ? '' : 'No spending in this period');
+
+    const canvas = $('analytics-history-chart');
+    const ctx = canvas.getContext('2d');
+    const gradient = ctx.createLinearGradient(0, 0, 0, canvas.clientHeight || 240);
+    gradient.addColorStop(0, hexToRgba(t.primary, 0.32));
+    gradient.addColorStop(1, hexToRgba(t.primary, 0));
+
+    charts.history = new Chart(canvas, {
+        type: 'line',
+        data: {
+            labels,
+            datasets: [{
+                data: cumulative,
+                borderColor: t.primary,
+                borderWidth: 2.5,
+                backgroundColor: gradient,
+                fill: true,
+                tension: 0.3,
+                pointRadius: cumulative.map((_, i) => (i === cumulative.length - 1 ? 4 : 0)),
+                pointBackgroundColor: t.primary,
+                pointHoverRadius: 5
+            }]
+        },
+        options: { ...baseOptions(t), scales: axisOptions(t) }
+    });
+};
+
+const renderCategoryChart = (list, total) => {
+    destroyChart('category');
+    const cur = state.config.currency;
+    const byCat = {};
+    list.forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + toDisplay(e.amount, e.currency); });
+    const entries = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
+
+    $('donut-total').textContent = formatCompact(total, cur);
+    $('category-breakdown').innerHTML = entries.length
+        ? entries.map(([cat, v]) => {
+            const pct = total > 0 ? (v / total) * 100 : 0;
+            return `<li style="--cat:${catVar(cat)}">
+                ${catBadge(cat)}
+                <span class="breakdown-name">${cat}</span>
+                <span class="breakdown-val amount">${escapeHtml(formatCurrency(v, cur))}</span>
+                <span class="breakdown-bar"><span class="meter"><span class="meter-fill" style="display:block;width:${pct}%"></span></span><span class="breakdown-pct">${pct < 1 && pct > 0 ? '<1' : Math.round(pct)}%</span></span>
+            </li>`;
+        }).join('')
+        : `<li style="display:block" class="faint">No expenses in this period.</li>`;
+
+    if (!chartsReady()) return;
+    const t = chartTheme();
+    const colors = entries.map(([cat]) => cssVar(`--cat-${cat.toLowerCase()}`));
+    charts.category = new Chart($('analytics-category-chart'), {
+        type: 'doughnut',
+        data: {
+            labels: entries.length ? entries.map(([c]) => c) : ['None'],
+            datasets: [{
+                data: entries.length ? entries.map(([, v]) => v) : [1],
+                backgroundColor: entries.length ? colors : [t.track],
+                borderColor: t.surface,
+                borderWidth: entries.length > 1 ? 3 : 0,
+                hoverOffset: entries.length ? 6 : 0
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            cutout: '74%',
+            animation: { duration: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 0 : 450 },
+            plugins: {
+                legend: { display: false },
+                tooltip: {
+                    enabled: entries.length > 0,
+                    backgroundColor: t.tooltipBg,
+                    titleColor: t.text,
+                    bodyColor: t.tooltipText,
+                    borderColor: t.tooltipBorder,
+                    borderWidth: 1,
+                    padding: 10,
+                    cornerRadius: 10,
+                    callbacks: {
+                        label: (ctx) => {
+                            const pct = total > 0 ? Math.round((ctx.parsed / total) * 100) : 0;
+                            return ` ${ctx.label}: ${formatCurrency(ctx.parsed, cur)} (${pct}%)`;
+                        }
+                    }
+                }
+            }
         }
     });
 };
 
-const handleSignUp = async (email, password, fullName) => {
-    showToast("Creating account...", "info");
-    if (supabaseClient) {
+/* =========================================================================
+   18. Expense, goal & deposit sheets
+   ========================================================================= */
+const setCategoryChoice = (cat) => {
+    const radio = document.querySelector(`input[name="expense-category"][value="${CATEGORIES.includes(cat) ? cat : 'Other'}"]`);
+    if (radio) radio.checked = true;
+};
+
+const openAddExpense = () => {
+    $('expense-form').reset();
+    $('expense-id').value = '';
+    $('expense-modal-title').textContent = 'New expense';
+    $('btn-submit-expense').textContent = 'Add expense';
+    $('btn-delete-expense').hidden = true;
+    $('expense-currency').value = state.config.currency;
+    $('expense-date').value = toISODate();
+    setCategoryChoice(state.config.lastCategory);
+    openOrSwap('modal-expense');
+};
+
+const openEditExpense = (id) => {
+    const exp = state.expenses.find((e) => e.id === id);
+    if (!exp) return;
+    $('expense-form').reset();
+    $('expense-id').value = exp.id;
+    $('expense-modal-title').textContent = 'Edit expense';
+    $('btn-submit-expense').textContent = 'Save changes';
+    $('btn-delete-expense').hidden = false;
+    $('expense-amount').value = exp.amount;
+    $('expense-currency').value = exp.currency;
+    $('expense-desc').value = exp.desc;
+    $('expense-date').value = exp.date;
+    $('expense-note').value = exp.note || '';
+    setCategoryChoice(exp.category);
+    openOrSwap('modal-expense');
+};
+
+const fieldError = (input, message) => {
+    showToast(message, 'error');
+    if (input) input.focus();
+    return false;
+};
+
+const submitExpense = () => {
+    const id = $('expense-id').value;
+    const amount = toNumber($('expense-amount').value, NaN);
+    const currency = $('expense-currency').value === 'LKR' ? 'LKR' : 'USD';
+    const desc = $('expense-desc').value.trim();
+    const date = $('expense-date').value;
+    const note = $('expense-note').value.trim();
+    const catInput = document.querySelector('input[name="expense-category"]:checked');
+    const category = catInput ? catInput.value : 'Other';
+
+    if (!(amount > 0)) return fieldError($('expense-amount'), 'Enter an amount greater than zero.');
+    if (!desc) return fieldError($('expense-desc'), 'Add a short description, like "Groceries".');
+    if (!isISODate(date)) return fieldError($('expense-date'), 'Pick a date for this expense.');
+
+    let record;
+    if (id) {
+        const idx = state.expenses.findIndex((e) => e.id === id);
+        if (idx === -1) return false;
+        record = { ...state.expenses[idx], desc, amount, currency, category, date, note };
+        state.expenses[idx] = record;
+    } else {
+        record = { id: generateId(), desc, amount, currency, category, date, note, createdAt: Date.now() };
+        state.expenses.push(record);
+    }
+    state.config.lastCategory = category;
+    saveState();
+    queueSync('expenses', record.id, 'upsert');
+    closeSheet('modal-expense');
+    showToast(id ? 'Expense updated' : `Added ${formatCurrency(amount, currency)} for ${desc}`, 'success');
+    renderActive();
+    return true;
+};
+
+const deleteExpense = (id) => {
+    const exp = state.expenses.find((e) => e.id === id);
+    if (!exp) return;
+    showConfirm({
+        title: 'Delete this expense?',
+        message: `"${exp.desc}" (${formatCurrency(exp.amount, exp.currency)}) will be removed.`,
+        confirmLabel: 'Delete',
+        onConfirm: () => {
+            state.expenses = state.expenses.filter((e) => e.id !== id);
+            saveState();
+            queueSync('expenses', id, 'delete');
+            closeSheet('modal-expense');
+            showToast('Expense deleted', 'success');
+            renderActive();
+        }
+    });
+};
+
+const openAddGoal = () => {
+    $('savings-goal-form').reset();
+    $('savings-goal-id').value = '';
+    $('savings-goal-modal-title').textContent = 'New savings goal';
+    $('btn-submit-savings-goal').textContent = 'Create goal';
+    $('savings-goal-initial-label').textContent = 'Already saved';
+    $('btn-delete-goal').hidden = true;
+    $('savings-goal-currency').value = state.config.currency;
+    openOrSwap('modal-savings-goal');
+};
+
+const openEditGoal = (id) => {
+    const g = state.savings.find((x) => x.id === id);
+    if (!g) return;
+    $('savings-goal-form').reset();
+    $('savings-goal-id').value = g.id;
+    $('savings-goal-modal-title').textContent = 'Edit goal';
+    $('btn-submit-savings-goal').textContent = 'Save changes';
+    $('savings-goal-initial-label').textContent = 'Saved so far';
+    $('btn-delete-goal').hidden = false;
+    $('savings-goal-name').value = g.name;
+    $('savings-goal-target').value = g.target;
+    $('savings-goal-currency').value = g.currency;
+    $('savings-goal-initial').value = Math.round(g.saved * 100) / 100;
+    openOrSwap('modal-savings-goal');
+};
+
+const submitGoal = () => {
+    const id = $('savings-goal-id').value;
+    const name = $('savings-goal-name').value.trim();
+    const target = toNumber($('savings-goal-target').value, NaN);
+    const currency = $('savings-goal-currency').value === 'LKR' ? 'LKR' : 'USD';
+    const savedRaw = $('savings-goal-initial').value.trim();
+    const saved = savedRaw === '' ? 0 : toNumber(savedRaw, NaN);
+
+    if (!name) return fieldError($('savings-goal-name'), 'Give your goal a name.');
+    if (!(target > 0)) return fieldError($('savings-goal-target'), 'Enter a target greater than zero.');
+    if (!(saved >= 0)) return fieldError($('savings-goal-initial'), 'The saved amount can’t be negative.');
+
+    let record;
+    if (id) {
+        const idx = state.savings.findIndex((g) => g.id === id);
+        if (idx === -1) return false;
+        record = { ...state.savings[idx], name, target, currency, saved };
+        state.savings[idx] = record;
+    } else {
+        record = { id: generateId(), name, target, currency, saved, createdAt: Date.now() };
+        state.savings.push(record);
+    }
+    saveState();
+    queueSync('savings', record.id, 'upsert');
+    closeSheet('modal-savings-goal');
+    showToast(id ? 'Goal updated' : `Goal "${name}" created`, 'success');
+    renderActive();
+    return true;
+};
+
+const deleteGoal = (id) => {
+    const g = state.savings.find((x) => x.id === id);
+    if (!g) return;
+    showConfirm({
+        title: 'Delete this goal?',
+        message: `"${g.name}" and the ${formatCurrency(g.saved, g.currency)} recorded in it will be removed.`,
+        confirmLabel: 'Delete',
+        onConfirm: () => {
+            state.savings = state.savings.filter((x) => x.id !== id);
+            saveState();
+            queueSync('savings', id, 'delete');
+            closeSheet('modal-savings-goal');
+            showToast('Goal deleted', 'success');
+            renderActive();
+        }
+    });
+};
+
+const updateDepositHint = () => {
+    const goal = state.savings.find((g) => g.id === $('funds-select-goal').value);
+    const cur = $('funds-currency').value;
+    const hint = $('funds-hint');
+    if (!goal) { hint.textContent = ''; return; }
+    hint.textContent = goal.currency === cur
+        ? `Saved so far: ${formatCurrency(goal.saved, goal.currency)} of ${formatCurrency(goal.target, goal.currency)}`
+        : `Converted to ${goal.currency} at 1 USD = ${state.config.rate.toFixed(2)} LKR.`;
+};
+
+const openDeposit = (goalId) => {
+    if (!state.savings.length) {
+        showToast('Create a savings goal first, then deposit into it.', 'info');
+        openAddGoal();
+        return;
+    }
+    const select = $('funds-select-goal');
+    select.innerHTML = state.savings.map((g) => `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)}</option>`).join('');
+    const goal = state.savings.find((g) => g.id === goalId) || state.savings[0];
+    select.value = goal.id;
+    $('funds-amount').value = '';
+    $('funds-currency').value = goal.currency;
+    updateDepositHint();
+    openOrSwap('modal-savings-funds');
+};
+
+const submitDeposit = () => {
+    const goalId = $('funds-select-goal').value;
+    const amount = toNumber($('funds-amount').value, NaN);
+    const currency = $('funds-currency').value === 'LKR' ? 'LKR' : 'USD';
+    if (!(amount > 0)) return fieldError($('funds-amount'), 'Enter an amount greater than zero.');
+    const idx = state.savings.findIndex((g) => g.id === goalId);
+    if (idx === -1) return fieldError($('funds-select-goal'), 'Choose a goal to deposit into.');
+
+    const goal = state.savings[idx];
+    goal.saved = Math.round((goal.saved + convertAmount(amount, currency, goal.currency)) * 100) / 100;
+    saveState();
+    queueSync('savings', goal.id, 'upsert');
+    closeSheet('modal-savings-funds');
+    showToast(`Deposited ${formatCurrency(amount, currency)} to ${goal.name}`, 'success');
+    renderActive();
+    return true;
+};
+
+/* =========================================================================
+   19. Cloud sync (Supabase)
+   ========================================================================= */
+const canSync = () => !!(supabaseClient && !state.auth.isMock && state.auth.user && state.auth.user.id);
+const pendingCount = () => Object.keys(state.sync.expenses).length + Object.keys(state.sync.savings).length;
+
+const expenseRow = (e) => ({
+    id: e.id,
+    user_id: state.auth.user.id,
+    description: e.desc,
+    amount: e.amount,
+    currency: e.currency,
+    category: e.category,
+    date: e.date,
+    note: e.note || null
+});
+
+const goalRow = (g) => ({
+    id: g.id,
+    user_id: state.auth.user.id,
+    name: g.name,
+    target: g.target,
+    currency: g.currency,
+    saved: g.saved
+});
+
+let flushPromise = null;
+let flushAgain = false;
+
+const flushSync = () => {
+    if (!canSync() || (typeof navigator.onLine === 'boolean' && !navigator.onLine)) return Promise.resolve(pendingCount() === 0);
+    if (flushPromise) { flushAgain = true; return flushPromise; }
+
+    flushPromise = (async () => {
         try {
-            const { data, error } = await supabaseClient.auth.signUp({
-                email,
-                password,
-                options: {
-                    data: {
-                        full_name: fullName,
-                        username: fullName
+            for (const kind of ['expenses', 'savings']) {
+                const queue = state.sync[kind];
+                const ids = Object.keys(queue);
+                if (!ids.length) continue;
+                const upserts = ids.filter((id) => queue[id] === 'upsert');
+                const deletes = ids.filter((id) => queue[id] === 'delete');
+
+                if (upserts.length) {
+                    const rows = state[kind].filter((r) => upserts.includes(r.id)).map(kind === 'expenses' ? expenseRow : goalRow);
+                    if (rows.length) {
+                        const { error } = await supabaseClient.from(kind).upsert(rows);
+                        if (error) throw error;
                     }
+                    upserts.forEach((id) => { if (queue[id] === 'upsert') delete queue[id]; });
                 }
-            });
-            if (error) throw error;
-            
-            if (data.user) {
-                state.auth.user = {
-                    id: data.user.id,
-                    email: data.user.email,
-                    full_name: fullName,
-                    avatar_url: null
-                };
-                state.auth.isMock = false;
-                
-                saveState();
-                updateUserProfileUI();
-                
-                if (state.auth.completedOnboarding) {
-                    document.getElementById('auth-overlay-container').classList.remove('active');
-                    showToast("Account created! Logged in successfully.", "success");
-                    refreshActivePane();
-                } else {
-                    showToast("Account created! Welcome to Vela.", "success");
-                    navigateToOnboardingStep(2);
+                if (deletes.length) {
+                    const { error } = await supabaseClient.from(kind).delete().in('id', deletes);
+                    if (error) throw error;
+                    deletes.forEach((id) => { if (queue[id] === 'delete') delete queue[id]; });
                 }
             }
+            saveState();
+            return true;
         } catch (err) {
-            console.error("Sign up failed:", err);
-            showToast(err.message || "Sign up failed.", "error");
+            console.warn('Cloud sync failed; changes are kept on this device and will retry.', err);
+            saveState();
+            return false;
+        } finally {
+            flushPromise = null;
+            if (flushAgain) { flushAgain = false; setTimeout(flushSync, 0); }
+        }
+    })();
+    return flushPromise;
+};
+
+const queueSync = (kind, id, op) => {
+    if (!canSync()) return;
+    state.sync[kind][id] = op;
+    saveState();
+    flushSync();
+};
+
+const queueAllForUpload = () => {
+    state.expenses.forEach((e) => { state.sync.expenses[e.id] = 'upsert'; });
+    state.savings.forEach((g) => { state.sync.savings[g.id] = 'upsert'; });
+    saveState();
+};
+
+// Replace local data with the cloud copy (only after local changes have been sent).
+const pullLedgerFromSupabase = async () => {
+    if (!canSync()) return false;
+    const flushed = await flushSync();
+    if (!flushed || pendingCount() > 0) return false;
+    try {
+        const [ex, sv] = await Promise.all([
+            supabaseClient.from('expenses').select('*'),
+            supabaseClient.from('savings').select('*')
+        ]);
+        if (ex.error) throw ex.error;
+        if (sv.error) throw sv.error;
+        state.expenses = (ex.data || []).map((r) => normalizeExpense({ ...r, desc: r.description })).filter(Boolean);
+        state.savings = (sv.data || []).map(normalizeGoal).filter(Boolean);
+        saveState();
+        return true;
+    } catch (err) {
+        console.error('Could not load your data from the cloud:', err);
+        showToast("Couldn't load your synced data. Showing what's on this device.", 'warning');
+        return false;
+    }
+};
+
+const remoteHasData = async () => {
+    try {
+        const [ex, sv] = await Promise.all([
+            supabaseClient.from('expenses').select('id').limit(1),
+            supabaseClient.from('savings').select('id').limit(1)
+        ]);
+        return !!((ex.data && ex.data.length) || (sv.data && sv.data.length));
+    } catch (err) {
+        console.warn('Could not check cloud data:', err);
+        return false;
+    }
+};
+
+/* =========================================================================
+   20. Profile
+   ========================================================================= */
+const initialsFor = (name) => {
+    const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return 'V';
+    return (parts[0][0] + (parts.length > 1 ? parts[parts.length - 1][0] : '')).toUpperCase();
+};
+
+const displayName = () => (state.auth.user && state.auth.user.full_name) || 'Guest';
+
+const updateUserProfileUI = () => {
+    const user = state.auth.user;
+    const name = displayName();
+    const cloud = !state.auth.isMock && !!user;
+
+    document.querySelectorAll('[data-avatar]').forEach((el) => {
+        el.textContent = initialsFor(user && user.full_name);
+        if (user && user.avatar_url) {
+            const img = document.createElement('img');
+            img.alt = '';
+            img.referrerPolicy = 'no-referrer';
+            img.src = user.avatar_url;
+            img.onerror = () => img.remove();
+            el.appendChild(img);
+        }
+    });
+    document.querySelectorAll('[data-user-name]').forEach((el) => { el.textContent = name; });
+    document.querySelectorAll('[data-user-kind]').forEach((el) => { el.textContent = cloud ? 'Synced account' : 'On this device'; });
+
+    const email = $('profile-email');
+    if (email) email.textContent = cloud ? (user.email || '') : 'Data is stored on this device only';
+    const badge = $('profile-badge');
+    if (badge) {
+        badge.dataset.kind = cloud ? 'cloud' : 'local';
+        const pending = pendingCount();
+        $('profile-badge-text').textContent = cloud ? (pending ? `${pending} waiting to sync` : 'Synced') : 'Guest';
+    }
+    const nameInput = $('profile-username');
+    if (nameInput && document.activeElement !== nameInput) nameInput.value = user && user.full_name ? user.full_name : '';
+
+    const logout = $('btn-auth-logout');
+    if (logout) {
+        logout.className = cloud ? 'btn btn-danger btn-block' : 'btn btn-primary btn-block';
+        logout.innerHTML = cloud
+            ? `${icon('i-logout')} <span>Sign out</span>`
+            : `${icon('i-cloud')} <span>Sign in to sync</span>`;
+    }
+};
+
+// Shrink a picked photo to a 256px JPEG so it fits in storage and uploads fast.
+const resizeImage = (file, size = 256) => new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+        const scale = Math.max(size / img.width, size / img.height);
+        const w = img.width * scale;
+        const h = img.height * scale;
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, (size - w) / 2, (size - h) / 2, w, h);
+        URL.revokeObjectURL(url);
+        canvas.toBlob((blob) => (blob ? resolve({ blob, dataUrl: canvas.toDataURL('image/jpeg', 0.85) }) : reject(new Error('Could not process image'))), 'image/jpeg', 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Unsupported image')); };
+    img.src = url;
+});
+
+const handleAvatarUpload = async (file) => {
+    if (!file) return;
+    if (!/^image\//.test(file.type)) { showToast('Choose an image file (JPG, PNG or similar).', 'error'); return; }
+    if (file.size > 15 * 1024 * 1024) { showToast('That image is over 15 MB. Choose a smaller one.', 'error'); return; }
+
+    let resized;
+    try {
+        resized = await resizeImage(file);
+    } catch (err) {
+        showToast("That image couldn't be read. Try a JPG or PNG.", 'error');
+        return;
+    }
+
+    if (canSync()) {
+        try {
+            const path = `${state.auth.user.id}/${Date.now()}.jpg`;
+            const { error } = await supabaseClient.storage.from('avatars').upload(path, resized.blob, { cacheControl: '3600', upsert: true, contentType: 'image/jpeg' });
+            if (error) throw error;
+            const { data } = supabaseClient.storage.from('avatars').getPublicUrl(path);
+            const { error: pErr } = await supabaseClient.from('profiles').upsert({ id: state.auth.user.id, avatar_url: data.publicUrl, updated_at: new Date().toISOString() });
+            if (pErr) throw pErr;
+            state.auth.user.avatar_url = data.publicUrl;
+            saveState();
+            updateUserProfileUI();
+            showToast('Profile photo updated', 'success');
+        } catch (err) {
+            console.error('Avatar upload failed:', err);
+            showToast("Couldn't upload the photo. Check your connection and try again.", 'error');
+        }
+        return;
+    }
+
+    if (!state.auth.user) state.auth.user = { id: 'local', email: null, full_name: null, avatar_url: null };
+    state.auth.user.avatar_url = resized.dataUrl;
+    saveState();
+    updateUserProfileUI();
+    showToast('Profile photo updated', 'success');
+};
+
+const saveProfileChanges = async () => {
+    const name = $('profile-username').value.trim();
+    if (!name) { fieldError($('profile-username'), 'Enter a display name.'); return; }
+    if (!state.auth.user) state.auth.user = { id: 'local', email: null, full_name: null, avatar_url: null };
+    state.auth.user.full_name = name;
+    saveState();
+    updateUserProfileUI();
+
+    if (canSync()) {
+        try {
+            const { error } = await supabaseClient.from('profiles').upsert({
+                id: state.auth.user.id, full_name: name, username: name, updated_at: new Date().toISOString()
+            });
+            if (error) throw error;
+            showToast('Name saved', 'success');
+        } catch (err) {
+            console.error('Profile update failed:', err);
+            showToast("Name saved on this device, but it couldn't sync. It will update next time.", 'warning');
         }
     } else {
-        // Mock Sign Up
-        state.auth.user = {
-            id: 'mock-user-' + Math.random().toString(36).substr(2, 9),
-            email,
-            full_name: fullName,
-            avatar_url: null
-        };
-        state.auth.isMock = true;
-        
-        saveState();
-        updateUserProfileUI();
-        
-        if (state.auth.completedOnboarding) {
-            document.getElementById('auth-overlay-container').classList.remove('active');
-            showToast("Mock Account Created! (Supabase offline)", "success");
-            refreshActivePane();
-        } else {
-            showToast("Mock Account Created! (Supabase offline)", "success");
-            navigateToOnboardingStep(2);
+        showToast('Name saved', 'success');
+    }
+};
+
+/* =========================================================================
+   21. Authentication & onboarding
+   ========================================================================= */
+const goToStep = (step) => {
+    document.querySelectorAll('.auth-step').forEach((s) => s.classList.toggle('active', s.id === `auth-step-${step}`));
+    const dots = $('auth-step-indicators');
+    dots.hidden = step === 1;
+    dots.querySelectorAll('span').forEach((d) => d.classList.toggle('active', Number(d.dataset.step) === step));
+    const overlay = $('auth-overlay-container');
+    overlay.scrollTop = 0;
+};
+
+const showAuth = (step = 1) => {
+    document.documentElement.classList.remove('needs-auth');
+    $('auth-overlay-container').classList.add('active');
+    $('btn-skip-auth').textContent = state.auth.completedOnboarding ? 'Not now' : 'Continue without an account';
+    goToStep(step);
+};
+
+const hideAuth = () => {
+    document.documentElement.classList.remove('needs-auth');
+    $('auth-overlay-container').classList.remove('active');
+};
+
+const friendlyAuthError = (error) => {
+    const msg = (error && error.message) || '';
+    if (/invalid login credentials/i.test(msg)) return "That email and password don't match. Check them and try again.";
+    if (/email not confirmed/i.test(msg)) return 'Confirm your email first. Check your inbox for the link we sent.';
+    if (/already registered|already exists/i.test(msg)) return 'An account with this email already exists. Sign in instead.';
+    if (/password/i.test(msg) && /6/.test(msg)) return 'Use a password with at least 6 characters.';
+    if (/fetch|network|load failed/i.test(msg)) return "Can't reach the server. Check your connection and try again.";
+    if (/rate limit/i.test(msg)) return 'Too many attempts. Wait a minute and try again.';
+    return msg || 'Something went wrong. Try again.';
+};
+
+const requireCloud = () => {
+    if (supabaseClient) return true;
+    showToast("Sign-in needs an internet connection. You can keep using Vela on this device.", 'warning');
+    return false;
+};
+
+const handleSession = async (session) => {
+    if (!session || !session.user) return;
+    const user = session.user;
+    if (handledUserId === user.id) return;
+    handledUserId = user.id;
+
+    const wasGuestWithData = state.auth.isMock && state.auth.completedOnboarding && (state.expenses.length > 0 || state.savings.length > 0);
+    const previousCloudUser = !state.auth.isMock && state.auth.user ? state.auth.user.id : null;
+    if (previousCloudUser && previousCloudUser !== user.id) {
+        // Another account's cached data must not leak into this one.
+        state.expenses = [];
+        state.savings = [];
+        state.sync = { expenses: {}, savings: {} };
+    }
+
+    const meta = user.user_metadata || {};
+    let fullName = meta.full_name || meta.name || (user.email ? user.email.split('@')[0] : 'Vela user');
+    let avatarUrl = meta.avatar_url || meta.picture || null;
+    try {
+        const { data: profile } = await supabaseClient.from('profiles').select('*').eq('id', user.id).maybeSingle();
+        if (profile) {
+            fullName = profile.full_name || profile.username || fullName;
+            avatarUrl = profile.avatar_url || avatarUrl;
         }
+    } catch (err) {
+        console.warn('Could not load profile:', err);
+    }
+
+    state.auth.user = { id: user.id, email: user.email || null, full_name: fullName, avatar_url: avatarUrl };
+    state.auth.isMock = false;
+    saveState();
+
+    if (wasGuestWithData) {
+        queueAllForUpload(); // keep what the guest already logged
+    }
+
+    const hasRemote = await remoteHasData();
+    if (hasRemote || wasGuestWithData || state.auth.completedOnboarding) {
+        state.auth.completedOnboarding = true;
+        if (!hasRemote && (state.expenses.length || state.savings.length)) queueAllForUpload();
+        await pullLedgerFromSupabase();
+        saveState();
+        hideAuth();
+        if (wasGuestWithData) showToast('Signed in. Your data on this device is now synced.', 'success');
+    } else {
+        saveState();
+        showAuth(2);
+    }
+    updateUserProfileUI();
+    renderActive();
+};
+
+const resetToSignedOut = () => {
+    handledUserId = null;
+    state.expenses = [];
+    state.savings = [];
+    state.sync = { expenses: {}, savings: {} };
+    state.auth = { user: null, isMock: true, completedOnboarding: false };
+    saveState();
+    updateUserProfileUI();
+    renderActive();
+    showAuth(1);
+};
+
+const onAuthEvent = (event, session) => {
+    if (event === 'INITIAL_SESSION') {
+        if (session) {
+            handleSession(session);
+        } else if (!state.auth.isMock && state.auth.user) {
+            // The saved session is gone (expired or signed out elsewhere).
+            if (pendingCount() > 0) {
+                showToast('Sign in again to sync changes made on this device.', 'warning');
+                showAuth(1);
+            } else {
+                resetToSignedOut();
+            }
+        }
+    } else if (event === 'SIGNED_IN') {
+        if (session) handleSession(session);
+    } else if (event === 'SIGNED_OUT') {
+        if (!state.auth.isMock) resetToSignedOut();
     }
 };
 
 const handleSignIn = async (email, password) => {
-    showToast("Logging in...", "info");
-    if (supabaseClient) {
-        try {
-            const { data, error } = await supabaseClient.auth.signInWithPassword({
-                email,
-                password
-            });
-            if (error) throw error;
-            
-            if (data.user) {
-                let fullName = "Vela User";
-                let avatarUrl = null;
-                try {
-                    const { data: profile } = await supabaseClient
-                        .from('profiles')
-                        .select('*')
-                        .eq('id', data.user.id)
-                        .maybeSingle();
-                        
-                    if (profile) {
-                        fullName = profile.full_name || profile.username || fullName;
-                        avatarUrl = profile.avatar_url || avatarUrl;
-                    }
-                } catch (pErr) {
-                    console.warn("Could not query user profile details:", pErr);
-                }
-                
-                state.auth.user = {
-                    id: data.user.id,
-                    email: data.user.email,
-                    full_name: fullName,
-                    avatar_url: avatarUrl
-                };
-                state.auth.isMock = false;
-                
-                if (state.auth.completedOnboarding) {
-                    await pullLedgerFromSupabase();
-                }
-                
-                saveState();
-                updateUserProfileUI();
-                
-                if (state.auth.completedOnboarding) {
-                    document.getElementById('auth-overlay-container').classList.remove('active');
-                    showToast("Welcome back! Logged in successfully.", "success");
-                    refreshActivePane();
-                } else {
-                    showToast("Logged in successfully! Setting up your space...", "success");
-                    navigateToOnboardingStep(2);
-                }
-            }
-        } catch (err) {
-            console.error("Sign in failed:", err);
-            showToast(err.message || "Sign in failed.", "error");
-        }
+    if (!requireCloud()) return;
+    const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    if (error) { showToast(friendlyAuthError(error), 'error'); return; }
+    await handleSession(data.session);
+    if (state.auth.completedOnboarding) showToast(`Welcome back, ${displayName()}`, 'success');
+};
+
+const handleSignUp = async (email, password, fullName) => {
+    if (!requireCloud()) return;
+    const { data, error } = await supabaseClient.auth.signUp({
+        email,
+        password,
+        options: { data: { full_name: fullName, username: fullName }, emailRedirectTo: window.location.origin + window.location.pathname }
+    });
+    if (error) { showToast(friendlyAuthError(error), 'error'); return; }
+    if (data.session) {
+        await handleSession(data.session);
+        showToast(`Account created. Welcome, ${fullName}!`, 'success');
     } else {
-        // Mock Sign In
-        state.auth.user = {
-            id: 'mock-user-1',
-            email,
-            full_name: "Mock Master Planner",
-            avatar_url: null
-        };
-        state.auth.isMock = true;
-        
-        saveState();
-        updateUserProfileUI();
-        
-        if (state.auth.completedOnboarding) {
-            document.getElementById('auth-overlay-container').classList.remove('active');
-            showToast("Mock Login Successful! (Supabase offline)", "success");
-            refreshActivePane();
-        } else {
-            showToast("Mock Login Successful! (Supabase offline)", "success");
-            navigateToOnboardingStep(2);
-        }
+        // Email confirmation is switched on for this project.
+        setAuthMode('signin');
+        $('signin-email').value = email;
+        showToast(`Check ${email} for a confirmation link, then sign in here.`, 'info');
+    }
+};
+
+// OAuth leaves the page immediately, so check the auth server is reachable first;
+// otherwise the user lands on a browser error page instead of a clear message.
+const authServerReachable = async () => {
+    try {
+        const ctrl = new AbortController();
+        const timer = setTimeout(() => ctrl.abort(), 6000);
+        const res = await fetch(`${SUPABASE_URL}/auth/v1/health`, { headers: { apikey: SUPABASE_ANON_KEY }, signal: ctrl.signal, cache: 'no-store' });
+        clearTimeout(timer);
+        return res.status < 500;
+    } catch (err) {
+        return false;
     }
 };
 
 const handleGoogleSignIn = async () => {
-    showToast("Redirecting to Google...", "info");
-    if (supabaseClient) {
-        try {
-            const { error } = await supabaseClient.auth.signInWithOAuth({
-                provider: 'google',
-                options: {
-                    redirectTo: window.location.origin + window.location.pathname
-                }
-            });
-            if (error) throw error;
-        } catch (err) {
-            console.error("Google Auth failed:", err);
-            showToast("Google sign in redirection failed.", "error");
-        }
-    } else {
-        // Mock Google Login
-        state.auth.user = {
-            id: 'mock-google-user',
-            email: 'google.guest@vela.io',
-            full_name: 'Google Mock Guest',
-            avatar_url: 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?auto=format&fit=crop&q=80&w=256'
-        };
-        state.auth.isMock = true;
-        
-        saveState();
-        updateUserProfileUI();
-        
-        if (state.auth.completedOnboarding) {
-            document.getElementById('auth-overlay-container').classList.remove('active');
-            showToast("Mock Google Sign In Success!", "success");
-            refreshActivePane();
-        } else {
-            showToast("Mock Google Sign In Success!", "success");
-            navigateToOnboardingStep(2);
-        }
+    if (!requireCloud()) return;
+    if (!(await authServerReachable())) {
+        showToast("Can't reach the sign-in server right now. You can keep using Vela without an account.", 'error');
+        return;
     }
+    const { error } = await supabaseClient.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: window.location.origin + window.location.pathname }
+    });
+    if (error) showToast(friendlyAuthError(error), 'error');
 };
 
-const handleGuestSignIn = () => {
-    state.auth.user = { id: 'guest-local-user', email: 'guest@vela.io', full_name: 'Guest Planner', avatar_url: null };
+const handleGuest = () => {
+    if (state.auth.completedOnboarding) { hideAuth(); return; }
     state.auth.isMock = true;
-    
     saveState();
-    updateUserProfileUI();
-    
-    if (state.auth.completedOnboarding) {
-        document.getElementById('auth-overlay-container').classList.remove('active');
-        showToast("Exploring as Guest (Local mode)", "info");
-        refreshActivePane();
-    } else {
-        showToast("Guest access granted! Welcome.", "info");
-        navigateToOnboardingStep(2);
-    }
+    showAuth(2);
 };
 
-const handleSignOut = async () => {
-    showConfirm("Sign Out Account", "Are you sure you want to sign out? Your cloud data is safe, and logging back in will restore your profile.", async () => {
-        showToast("Signing out...", "info");
-        if (supabaseClient && !state.auth.isMock) {
-            try {
-                await supabaseClient.auth.signOut();
-            } catch (e) {
-                console.error("Supabase signOut error:", e);
-            }
+const handleSignOut = () => {
+    if (state.auth.isMock) { showAuth(1); return; }
+    const pending = pendingCount();
+    showConfirm({
+        title: 'Sign out?',
+        message: pending
+            ? `${plural(pending, 'change')} haven't synced yet and will be lost if you sign out now. Connect to the internet first to keep them.`
+            : 'Your data stays safe in your account. It will be removed from this device until you sign in again.',
+        confirmLabel: 'Sign out',
+        onConfirm: async () => {
+            try { if (supabaseClient) await supabaseClient.auth.signOut(); } catch (err) { console.warn('Sign out error:', err); }
+            resetToSignedOut();
+            showToast('Signed out', 'success');
         }
-        
-        state.auth.user = null;
-        state.auth.completedOnboarding = false;
-        state.expenses = [];
-        state.savings = [];
-        
+    });
+};
+
+const setAuthMode = (mode) => {
+    const signin = mode === 'signin';
+    $('btn-toggle-signin').setAttribute('aria-pressed', String(signin));
+    $('btn-toggle-signup').setAttribute('aria-pressed', String(!signin));
+    $('form-signin').hidden = !signin;
+    $('form-signup').hidden = signin;
+};
+
+const seedData = () => {
+    const today = new Date();
+    const ago = (n) => toISODate(addDays(today, -n));
+    const now = Date.now();
+    const e = (desc, amount, currency, category, daysAgo, note) => ({ id: generateId(), desc, amount, currency, category, date: ago(daysAgo), note, createdAt: now - daysAgo * 1000 });
+    state.expenses = [
+        e('Groceries at Keells', 45.5, 'USD', 'Food', 1, 'Weekly shop'),
+        e('Electricity bill', 15000, 'LKR', 'Utilities', 4, 'CEB monthly bill'),
+        e('Apartment rent', 400, 'USD', 'Rent', 9, ''),
+        e('Netflix', 15.49, 'USD', 'Entertainment', 12, ''),
+        e('PickMe ride', 2400, 'LKR', 'Travel', 14, 'To the office'),
+        e('Pharmacy', 35, 'USD', 'Health', 20, 'Prescriptions'),
+        e('Office chair', 120, 'USD', 'Shopping', 38, ''),
+        e('Fuel', 8500, 'LKR', 'Travel', 47, 'Full tank'),
+        e('Fibre internet', 4800, 'LKR', 'Utilities', 64, ''),
+        e('Birthday dinner', 95, 'USD', 'Food', 101, ''),
+        e('Online course', 200, 'USD', 'Entertainment', 190, ''),
+        e('Car insurance', 380, 'USD', 'Other', 290, 'Annual')
+    ];
+    state.savings = [
+        { id: generateId(), name: 'Emergency fund', target: 5000, currency: 'USD', saved: 2400, createdAt: now },
+        { id: generateId(), name: 'New laptop', target: 2500, currency: 'USD', saved: 750, createdAt: now },
+        { id: generateId(), name: 'Trip to Ella', target: 150000, currency: 'LKR', saved: 45000, createdAt: now }
+    ];
+};
+
+const completeOnboarding = async () => {
+    const btn = $('btn-complete-onboarding');
+    await withBusy(btn, async () => {
+        if (onboardingPreference === 'demo' && !state.expenses.length && !state.savings.length) {
+            seedData();
+            if (canSync()) queueAllForUpload();
+        }
+        state.auth.completedOnboarding = true;
         saveState();
+        hideAuth();
         updateUserProfileUI();
-        
-        const overlay = document.getElementById('auth-overlay-container');
-        if (overlay) overlay.classList.add('active');
-        
-        navigateToOnboardingStep(1);
-        showToast("Signed out. Welcome screen reset.", "success");
+        switchTab('dashboard', { fromHistory: true });
+        flushSync();
+        showToast(onboardingPreference === 'demo' ? 'Sample data added. Explore away!' : "You're all set. Tap + to log your first expense.", 'success');
     });
 };
 
-const initAuthActionListeners = () => {
-    // Next Buttons
-    document.querySelectorAll('.btn-onboard-next').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const nextStep = parseInt(btn.getAttribute('data-next-step'));
-            navigateToOnboardingStep(nextStep);
-        });
-    });
-
-    // Prev Buttons
-    document.querySelectorAll('.btn-onboard-prev').forEach(btn => {
-        btn.addEventListener('click', () => {
-            const prevStep = parseInt(btn.getAttribute('data-prev-step'));
-            navigateToOnboardingStep(prevStep);
-        });
-    });
-
-    // Seeding Preference Options
-    const optDemo = document.getElementById('opt-demo-data');
-    const optFresh = document.getElementById('opt-fresh-start');
-
-    if (optDemo && optFresh) {
-        optDemo.addEventListener('click', () => {
-            optDemo.classList.add('active');
-            optFresh.classList.remove('active');
-            onboardingPreference = 'demo';
-        });
-
-        optFresh.addEventListener('click', () => {
-            optFresh.classList.add('active');
-            optDemo.classList.remove('active');
-            onboardingPreference = 'fresh';
-        });
-    }
-
-    // Toggle forms: Sign In vs Sign Up
-    const btnToggleSignIn = document.getElementById('btn-toggle-signin');
-    const btnToggleSignUp = document.getElementById('btn-toggle-signup');
-    const formSignIn = document.getElementById('form-signin');
-    const formSignUp = document.getElementById('form-signup');
-
-    if (btnToggleSignIn && btnToggleSignUp) {
-        btnToggleSignIn.addEventListener('click', () => {
-            btnToggleSignIn.classList.add('active');
-            btnToggleSignUp.classList.remove('active');
-            formSignIn.classList.remove('hidden');
-            formSignUp.classList.add('hidden');
-        });
-
-        btnToggleSignUp.addEventListener('click', () => {
-            btnToggleSignUp.classList.add('active');
-            btnToggleSignIn.classList.remove('active');
-            formSignUp.classList.remove('hidden');
-            formSignIn.classList.add('hidden');
-        });
-    }
-
-    // Submit Forms
-    if (formSignIn) {
-        formSignIn.addEventListener('submit', (e) => {
-            e.preventDefault();
-            const email = document.getElementById('signin-email').value.trim();
-            const password = document.getElementById('signin-password').value.trim();
-            if (email && password) {
-                handleSignIn(email, password);
-            }
-        });
-    }
-
-    if (formSignUp) {
-        formSignUp.addEventListener('submit', (e) => {
-            e.preventDefault();
-            const name = document.getElementById('signup-name').value.trim();
-            const email = document.getElementById('signup-email').value.trim();
-            const password = document.getElementById('signup-password').value.trim();
-            if (name && email && password) {
-                handleSignUp(email, password, name);
-            }
-        });
-    }
-
-    // Skip / Guest Auth
-    const btnSkipAuth = document.getElementById('btn-skip-auth');
-    if (btnSkipAuth) {
-        btnSkipAuth.addEventListener('click', () => {
-            handleGuestSignIn();
-        });
-    }
-
-    // Google Sign In
-    const btnGoogle = document.getElementById('btn-google-login');
-    if (btnGoogle) {
-        btnGoogle.addEventListener('click', () => {
-            handleGoogleSignIn();
-        });
-    }
-
-    // Onboarding Complete Action Button
-    const btnCompleteOnboarding = document.getElementById('btn-complete-onboarding');
-    if (btnCompleteOnboarding) {
-        btnCompleteOnboarding.addEventListener('click', async () => {
-            state.auth.completedOnboarding = true;
-            if (onboardingPreference === 'demo') {
-                seedData();
-            } else {
-                state.expenses = [];
-                state.savings = [];
-            }
-            saveState();
-            updateUserProfileUI();
-            
-            // Sync to supabase if not mock
-            if (supabaseClient && !state.auth.isMock && state.auth.user) {
-                await pushLocalLedgerToSupabase();
-            }
-            
-            document.getElementById('auth-overlay-container').classList.remove('active');
-            showToast("Setup completed! Enjoy Vela.", "success");
-            refreshActivePane();
-        });
-    }
-
-    // Settings Profile changes
-    const clickZone = document.getElementById('profile-avatar-click-zone');
-    const avatarInput = document.getElementById('profile-avatar-input');
-    if (clickZone && avatarInput) {
-        clickZone.addEventListener('click', () => avatarInput.click());
-        avatarInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file) {
-                handleAvatarUpload(file);
-            }
-        });
-    }
-
-    const btnSaveProfile = document.getElementById('btn-save-profile');
-    if (btnSaveProfile) {
-        btnSaveProfile.addEventListener('click', () => {
-            saveProfileChanges();
-        });
-    }
-
-    const btnLogout = document.getElementById('btn-auth-logout');
-    if (btnLogout) {
-        btnLogout.addEventListener('click', () => {
-            handleSignOut();
-        });
-    }
-
-    // Sidebar footer shortcuts
-    const sidebarAvatar = document.getElementById('sidebar-avatar-btn');
-    const sidebarMeta = document.getElementById('sidebar-user-meta-btn');
-    
-    const jumpToSettings = () => {
-        const settingsTabBtn = document.querySelector('[data-tab="settings"]');
-        if (settingsTabBtn) {
-            settingsTabBtn.click();
-            const profileCard = document.getElementById('settings-profile-card');
-            if (profileCard) {
-                profileCard.scrollIntoView({ behavior: 'smooth' });
-            }
-        }
+/* =========================================================================
+   22. Backup, import, wipe
+   ========================================================================= */
+const exportBackup = () => {
+    const payload = {
+        app: 'vela',
+        version: APP_VERSION,
+        exportedAt: new Date().toISOString(),
+        config: { ...state.config },
+        expenses: state.expenses,
+        savings: state.savings
     };
-
-    if (sidebarAvatar) sidebarAvatar.addEventListener('click', jumpToSettings);
-    if (sidebarMeta) sidebarMeta.addEventListener('click', jumpToSettings);
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `vela-backup-${toISODate()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+    showToast(`Backup saved (${plural(state.expenses.length, 'expense')}, ${plural(state.savings.length, 'goal')})`, 'success');
 };
 
-const initPwaInstallation = () => {
-    const installCard = document.getElementById('install-card');
-    const installBtn = document.getElementById('btn-install-pwa');
+const importBackup = (file) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+        let parsed;
+        try {
+            parsed = JSON.parse(reader.result);
+        } catch (err) {
+            showToast("That file isn't a valid Vela backup (.json).", 'error');
+            return;
+        }
+        if (!parsed || (!Array.isArray(parsed.expenses) && !Array.isArray(parsed.savings))) {
+            showToast("That file doesn't contain any Vela expenses or goals.", 'error');
+            return;
+        }
+        const incoming = normalizeState({
+            config: { ...state.config, ...(parsed.config || {}), theme: state.config.theme },
+            expenses: parsed.expenses || [],
+            savings: parsed.savings || []
+        });
+        showConfirm({
+            title: 'Replace your data?',
+            message: `This backup has ${plural(incoming.expenses.length, 'expense')} and ${plural(incoming.savings.length, 'goal')}. They will replace what's on this device.`,
+            confirmLabel: 'Replace',
+            danger: false,
+            onConfirm: () => {
+                state.expenses = incoming.expenses;
+                state.savings = incoming.savings;
+                state.config = { ...incoming.config, theme: state.config.theme };
+                if (canSync()) queueAllForUpload();
+                saveState();
+                flushSync();
+                updateCurrencyButtons();
+                setRateStatus(state.config.rateLocked ? 'manual' : rateStatus);
+                renderActive();
+                showToast('Backup imported', 'success');
+            }
+        });
+    };
+    reader.onerror = () => showToast("That file couldn't be read.", 'error');
+    reader.readAsText(file);
+};
+
+const wipeData = () => {
+    const cloud = canSync();
+    showConfirm({
+        title: 'Delete data on this device?',
+        message: cloud
+            ? 'Everything stored on this device will be removed. Your synced data stays in your account and comes back when the app reloads.'
+            : `This permanently deletes ${plural(state.expenses.length, 'expense')} and ${plural(state.savings.length, 'goal')}. Export a backup first if you might need them.`,
+        confirmLabel: 'Delete everything',
+        onConfirm: () => {
+            storage.remove(STORAGE_KEY);
+            window.location.reload();
+        }
+    });
+};
+
+/* =========================================================================
+   23. PWA install
+   ========================================================================= */
+const initPwaInstall = () => {
+    const btn = $('btn-install-pwa');
+    const guide = $('install-guide');
+    const standalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+    if (standalone && guide) guide.hidden = true;
 
     window.addEventListener('beforeinstallprompt', (e) => {
         e.preventDefault();
-        deferredPrompt = e;
-        if (installCard) {
-            installCard.classList.remove('hidden');
-        }
+        deferredInstallPrompt = e;
+        if (btn) btn.hidden = false;
     });
-
-    if (installBtn) {
-        installBtn.addEventListener('click', () => {
-            if (deferredPrompt) {
-                deferredPrompt.prompt();
-                deferredPrompt.userChoice.then((choiceResult) => {
-                    if (choiceResult.outcome === 'accepted') {
-                        console.log('User accepted PWA install prompt');
-                        if (installCard) installCard.classList.add('hidden');
-                    }
-                    deferredPrompt = null;
-                });
+    if (btn) {
+        btn.addEventListener('click', async () => {
+            if (!deferredInstallPrompt) return;
+            deferredInstallPrompt.prompt();
+            try {
+                const choice = await deferredInstallPrompt.userChoice;
+                if (choice.outcome === 'accepted') btn.hidden = true;
+            } finally {
+                deferredInstallPrompt = null;
             }
         });
     }
-
     window.addEventListener('appinstalled', () => {
-        console.log('Vela app successfully installed.');
-        if (installCard) installCard.classList.add('hidden');
+        if (btn) btn.hidden = true;
+        if (guide) guide.hidden = true;
+        showToast('Vela is installed. Open it from your home screen.', 'success');
     });
 };
 
-// --- INITIALIZE APPLICATION ON LOAD ---
-document.addEventListener('DOMContentLoaded', () => {
-    loadState();
-    initSupabase();
-    initAuthActionListeners();
-    
-    const activeTheme = state.config.theme || 'dark';
-    document.documentElement.setAttribute('data-theme', activeTheme);
-    
-    document.getElementById('current-rate-display').textContent = `1 USD = ${state.config.rate.toFixed(2)} LKR`;
-    
-    const curr = state.config.currency;
-    if (curr === 'USD') {
-        document.getElementById('currency-usd').classList.add('active');
-        document.getElementById('currency-lkr').classList.remove('active');
-    } else {
-        document.getElementById('currency-usd').classList.remove('active');
-        document.getElementById('currency-lkr').classList.add('active');
-    }
+/* =========================================================================
+   24. Events
+   ========================================================================= */
+const updateCurrencyButtons = () => {
+    $('currency-usd').setAttribute('aria-pressed', String(state.config.currency === 'USD'));
+    $('currency-lkr').setAttribute('aria-pressed', String(state.config.currency === 'LKR'));
+};
 
-    initTabRouting();
-    initActionListeners();
-    initPwaInstallation();
-    
-    // Auth initialization and state checks
-    if (supabaseClient) {
-        supabaseClient.auth.onAuthStateChange(async (event, session) => {
-            if (session && session.user) {
-                let fullName = session.user.user_metadata.full_name || session.user.email.split('@')[0];
-                let avatarUrl = session.user.user_metadata.avatar_url || null;
-                
-                try {
-                    const { data: profile } = await supabaseClient
-                        .from('profiles')
-                        .select('*')
-                        .eq('id', session.user.id)
-                        .maybeSingle();
-                    if (profile) {
-                        fullName = profile.full_name || profile.username || fullName;
-                        avatarUrl = profile.avatar_url || avatarUrl;
-                    }
-                } catch (pe) {
-                    console.log("Error querying profile table:", pe);
-                }
-                
-                state.auth.user = {
-                    id: session.user.id,
-                    email: session.user.email,
-                    full_name: fullName,
-                    avatar_url: avatarUrl
-                };
-                state.auth.isMock = false;
+const setDisplayCurrency = (cur) => {
+    if (cur === state.config.currency) return;
+    state.config.currency = cur;
+    saveState();
+    updateCurrencyButtons();
+    renderActive();
+};
 
-                // Check if user has remote records to auto-bypass onboarding for returning users
-                let hasRemoteData = false;
-                try {
-                    const { data: remoteExpenses } = await supabaseClient.from('expenses').select('id').limit(1);
-                    const { data: remoteSavings } = await supabaseClient.from('savings').select('id').limit(1);
-                    if ((remoteExpenses && remoteExpenses.length > 0) || (remoteSavings && remoteSavings.length > 0)) {
-                        hasRemoteData = true;
-                    }
-                } catch (err) {
-                    console.warn("Could not check remote data status:", err);
-                }
-                
-                if (hasRemoteData || state.auth.completedOnboarding) {
-                    state.auth.completedOnboarding = true;
-                    await pullLedgerFromSupabase();
-                    saveState();
-                    updateUserProfileUI();
-                    
-                    const authOverlay = document.getElementById('auth-overlay-container');
-                    if (authOverlay) authOverlay.classList.remove('active');
-                    refreshActivePane();
-                } else {
-                    saveState();
-                    updateUserProfileUI();
-                    
-                    const authOverlay = document.getElementById('auth-overlay-container');
-                    if (authOverlay) authOverlay.classList.add('active');
-                    navigateToOnboardingStep(2);
-                }
-            } else {
-                if (!state.auth.completedOnboarding) {
-                    const authOverlay = document.getElementById('auth-overlay-container');
-                    if (authOverlay) authOverlay.classList.add('active');
-                    navigateToOnboardingStep(1);
-                } else {
-                    updateUserProfileUI();
-                    const authOverlay = document.getElementById('auth-overlay-container');
-                    if (authOverlay) authOverlay.classList.remove('active');
-                }
-            }
-        });
-    } else {
-        // Mock / Offline Auth check
-        if (!state.auth.completedOnboarding) {
-            const authOverlay = document.getElementById('auth-overlay-container');
-            if (authOverlay) authOverlay.classList.add('active');
-            navigateToOnboardingStep(1);
-        } else {
-            updateUserProfileUI();
-            const authOverlay = document.getElementById('auth-overlay-container');
-            if (authOverlay) authOverlay.classList.remove('active');
+const initEvents = () => {
+    // One delegated click handler for the whole app.
+    document.addEventListener('click', (e) => {
+        const el = e.target.closest('button, [data-tab], [data-goto]');
+        if (!el) return;
+        const d = el.dataset;
+
+        if (d.tab) { switchTab(d.tab); return; }
+        if (d.goto) { switchTab(d.goto); return; }
+        if (d.editExpense) { openEditExpense(d.editExpense); return; }
+        if (d.editGoal) { openEditGoal(d.editGoal); return; }
+        if (d.depositGoal) { openDeposit(d.depositGoal); return; }
+        if (d.filterCategory) { expenseFilter = d.filterCategory; renderExpensesList(); return; }
+        if (d.themeChoice) { setTheme(d.themeChoice, e); return; }
+        if (d.currency) { setDisplayCurrency(d.currency); return; }
+        if (el.hasAttribute('data-clear-filters')) {
+            expenseFilter = 'all';
+            $('expense-search').value = '';
+            renderExpensesList();
+            return;
         }
+        if (el.hasAttribute('data-close-sheet')) {
+            const overlay = el.closest('.sheet-overlay');
+            if (overlay) closeSheet(overlay.id);
+            return;
+        }
+        switch (d.action) {
+            case 'quick-add': openSheet('modal-quick-add'); break;
+            case 'add-expense': openAddExpense(); break;
+            case 'add-goal': openAddGoal(); break;
+            case 'deposit': openDeposit(); break;
+            default: break;
+        }
+    });
+
+    // Tap on the dimmed backdrop closes a sheet.
+    document.querySelectorAll('.sheet-overlay').forEach((overlay) => {
+        overlay.addEventListener('click', (e) => { if (e.target === overlay) closeSheet(overlay.id); });
+    });
+
+    // Confirm dialog
+    $('btn-confirm-ok').addEventListener('click', () => {
+        const handler = confirmHandler;
+        closeConfirm();
+        if (handler) handler();
+    });
+    $('btn-confirm-cancel').addEventListener('click', closeConfirm);
+    $('modal-confirm').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeConfirm(); });
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        if (isConfirmOpen()) { closeConfirm(); return; }
+        const top = openSheets[openSheets.length - 1];
+        if (top) closeSheet(top);
+    });
+
+    // Phone Back button / browser history
+    window.addEventListener('popstate', (e) => {
+        if (isConfirmOpen()) closeConfirm();
+        if (openSheets.length) {
+            hideSheet(openSheets[openSheets.length - 1]);
+            return;
+        }
+        const st = e.state;
+        if (st && st.tab && st.tab !== currentTab) switchTab(st.tab, { fromHistory: true });
+    });
+
+    // Header
+    $('theme-toggle-btn').addEventListener('click', (e) => setTheme(state.config.theme === 'dark' ? 'light' : 'dark', e));
+    $('rate-chip').addEventListener('click', () => {
+        switchTab('settings');
+        setTimeout(() => {
+            const block = $('setting-rate-block');
+            if (block) block.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }, 60);
+    });
+
+    let ticking = false;
+    window.addEventListener('scroll', () => {
+        if (ticking) return;
+        ticking = true;
+        requestAnimationFrame(() => {
+            $('appbar').classList.toggle('is-scrolled', window.scrollY > 4);
+            ticking = false;
+        });
+    }, { passive: true });
+
+    // Forms
+    $('expense-form').addEventListener('submit', (e) => { e.preventDefault(); submitExpense(); });
+    $('savings-goal-form').addEventListener('submit', (e) => { e.preventDefault(); submitGoal(); });
+    $('savings-funds-form').addEventListener('submit', (e) => { e.preventDefault(); submitDeposit(); });
+    $('btn-delete-expense').addEventListener('click', () => deleteExpense($('expense-id').value));
+    $('btn-delete-goal').addEventListener('click', () => deleteGoal($('savings-goal-id').value));
+    $('funds-select-goal').addEventListener('change', () => {
+        const goal = state.savings.find((g) => g.id === $('funds-select-goal').value);
+        if (goal) $('funds-currency').value = goal.currency;
+        updateDepositHint();
+    });
+    $('funds-currency').addEventListener('change', updateDepositHint);
+
+    // Expenses search
+    let searchTimer = null;
+    $('expense-search').addEventListener('input', () => {
+        clearTimeout(searchTimer);
+        searchTimer = setTimeout(renderExpensesList, 120);
+    });
+
+    // Chart ranges
+    document.querySelectorAll('.chart-time-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            dashboardRange = btn.dataset.range;
+            document.querySelectorAll('.chart-time-btn').forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+            renderTrendChart();
+        });
+    });
+    document.querySelectorAll('.range-btn').forEach((btn) => {
+        btn.addEventListener('click', () => {
+            analyticsRange = btn.dataset.analyticsRange;
+            renderAnalyticsTab();
+        });
+    });
+
+    // Settings
+    $('btn-save-rate').addEventListener('click', () => {
+        const value = toNumber($('setting-rate').value, NaN);
+        if (!(value > 0)) { fieldError($('setting-rate'), 'Enter a rate greater than zero, like 300.50.'); return; }
+        state.config.rate = value;
+        state.config.rateLocked = true;
+        saveState();
+        setRateStatus('manual');
+        renderActive();
+        showToast(`Using your rate: 1 USD = ${value.toFixed(2)} LKR`, 'success');
+    });
+    $('btn-sync-rate').addEventListener('click', (e) => withBusy(e.currentTarget, () => fetchLiveExchangeRate({ manual: true })));
+    $('btn-save-budget').addEventListener('click', () => {
+        const value = toNumber($('setting-budget').value, NaN);
+        if (!(value > 0)) { fieldError($('setting-budget'), 'Enter a monthly budget greater than zero.'); return; }
+        state.config.budget = convertAmount(value, state.config.currency, 'USD');
+        saveState();
+        showToast(`Monthly budget set to ${formatCurrency(value, state.config.currency)}`, 'success');
+        renderActive();
+    });
+    $('btn-export-data').addEventListener('click', exportBackup);
+    $('btn-import-trigger').addEventListener('click', () => $('file-import').click());
+    $('file-import').addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (file) importBackup(file);
+        e.target.value = '';
+    });
+    $('btn-wipe-data').addEventListener('click', wipeData);
+
+    // Profile
+    $('profile-avatar-click-zone').addEventListener('click', () => $('profile-avatar-input').click());
+    $('profile-avatar-input').addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (file) handleAvatarUpload(file);
+        e.target.value = '';
+    });
+    $('btn-save-profile').addEventListener('click', (e) => withBusy(e.currentTarget, saveProfileChanges));
+    $('profile-username').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('btn-save-profile').click(); } });
+    $('btn-auth-logout').addEventListener('click', handleSignOut);
+
+    // Auth & onboarding
+    $('btn-toggle-signin').addEventListener('click', () => setAuthMode('signin'));
+    $('btn-toggle-signup').addEventListener('click', () => setAuthMode('signup'));
+    $('form-signin').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const email = $('signin-email').value.trim();
+        const password = $('signin-password').value;
+        if (!email || !/\S+@\S+\.\S+/.test(email)) { fieldError($('signin-email'), 'Enter the email you signed up with.'); return; }
+        if (!password) { fieldError($('signin-password'), 'Enter your password.'); return; }
+        withBusy($('btn-submit-signin'), () => handleSignIn(email, password));
+    });
+    $('form-signup').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const name = $('signup-name').value.trim();
+        const email = $('signup-email').value.trim();
+        const password = $('signup-password').value;
+        if (!name) { fieldError($('signup-name'), 'Enter your name.'); return; }
+        if (!/\S+@\S+\.\S+/.test(email)) { fieldError($('signup-email'), 'Enter a valid email address.'); return; }
+        if (password.length < 6) { fieldError($('signup-password'), 'Use a password with at least 6 characters.'); return; }
+        withBusy($('btn-submit-signup'), () => handleSignUp(email, password, name));
+    });
+    $('btn-google-login').addEventListener('click', (e) => withBusy(e.currentTarget, handleGoogleSignIn));
+    $('btn-skip-auth').addEventListener('click', handleGuest);
+    document.querySelectorAll('.btn-onboard-next').forEach((b) => b.addEventListener('click', () => goToStep(Number(b.dataset.nextStep))));
+    document.querySelectorAll('.btn-onboard-prev').forEach((b) => b.addEventListener('click', () => goToStep(Number(b.dataset.prevStep))));
+    ['opt-fresh-start', 'opt-demo-data'].forEach((id) => {
+        $(id).addEventListener('click', () => {
+            onboardingPreference = id === 'opt-demo-data' ? 'demo' : 'fresh';
+            $('opt-fresh-start').setAttribute('aria-pressed', String(onboardingPreference === 'fresh'));
+            $('opt-demo-data').setAttribute('aria-pressed', String(onboardingPreference === 'demo'));
+        });
+    });
+    $('btn-complete-onboarding').addEventListener('click', completeOnboarding);
+
+    // Connectivity & app resume
+    window.addEventListener('online', () => {
+        flushSync().then(() => updateUserProfileUI());
+        fetchLiveExchangeRate();
+    });
+    window.addEventListener('offline', () => {
+        if (!state.config.rateLocked) setRateStatus('offline');
+        showToast("You're offline. Changes are saved on this device.", 'info');
+    });
+    let lastDay = toISODate();
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState !== 'visible') return;
+        if (toISODate() !== lastDay) { lastDay = toISODate(); renderActive(); }
+        if (pendingCount()) flushSync();
+    });
+};
+
+/* =========================================================================
+   25. Start-up
+   ========================================================================= */
+const initSupabase = () => {
+    if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
+    if (!window.supabase || typeof window.supabase.createClient !== 'function') {
+        console.warn('Supabase library unavailable (offline?). Running in local mode.');
+        return;
     }
-    
-    fetchLiveExchangeRate(false);
-});
+    try {
+        supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    } catch (err) {
+        console.error('Failed to start Supabase:', err);
+        supabaseClient = null;
+    }
+};
+
+const init = () => {
+    loadState();
+    document.documentElement.setAttribute('data-theme', state.config.theme);
+
+    buildFilterChips();
+    buildCategoryPicker();
+    initEvents();
+    initSheetDrag();
+    initPwaInstall();
+
+    updateThemeChrome();
+    updateCurrencyButtons();
+    setRateStatus(state.config.rateLocked ? 'manual' : 'offline');
+    updateUserProfileUI();
+
+    // We manage scroll ourselves; the browser restoring old positions on Back looks broken.
+    if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+    history.replaceState({ vela: 'tab', tab: 'dashboard' }, '');
+    switchTab('dashboard', { fromHistory: true });
+
+    if (state.auth.completedOnboarding) hideAuth();
+    else showAuth(1);
+
+    initSupabase();
+    if (supabaseClient) {
+        // Defer work out of the callback: awaiting Supabase calls inside it can deadlock the client.
+        supabaseClient.auth.onAuthStateChange((event, session) => {
+            setTimeout(() => onAuthEvent(event, session), 0);
+        });
+    }
+
+    fetchLiveExchangeRate();
+};
+
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
+else init();
