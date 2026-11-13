@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.1.0';
+const APP_VERSION = '4.2.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1931,9 +1931,9 @@ const deleteTx = (id) => {
 };
 
 /* =========================================================================
-   21b. Smart add: local prices, your usual items, price check, meal calculator
+   21b. Smart add: local prices, your usual items, price check, Vela bot
    ========================================================================= */
-// Everyday prices people actually pay. [name, category, price, in the meal calculator]
+// Everyday prices people actually pay. [name, category, price, a food or drink]
 const PRICE_BOOK = {
     LKR: {
         region: 'Sri Lanka',
@@ -2063,18 +2063,7 @@ const renderTxSuggest = () => {
     const q = normDesc($('tx-desc').value);
     const book = priceList(cur);
 
-    const usual = [...txHistory.values()].filter((g) => g.count >= 2)
-        .sort((a, b) => b.count - a.count || (a.last.date < b.last.date ? 1 : -1))
-        .slice(0, 6)
-        .map((g) => ({
-            kind: 'usual',
-            name: g.last.desc,
-            category: expenseCatExists(g.last.category) ? g.last.category : 'Other',
-            price: g.last.currency === cur ? g.last.amount : nicePrice(convertAmount(g.last.amount, g.last.currency, cur), cur),
-            count: g.count
-        }));
-    const seen = new Set(usual.map((p) => normDesc(p.name)));
-    let picks = usual.concat(book.items.filter((i) => !seen.has(normDesc(i.name))).map((i) => ({ kind: 'book', ...i })));
+    let picks = smartPicks(cur, 999);
     if (q) {
         const words = q.split(' ');
         const exact = picks.some((p) => normDesc(p.name) === q);
@@ -2084,7 +2073,9 @@ const renderTxSuggest = () => {
     }
     txPicks = picks.slice(0, q ? 8 : 16);
 
-    $('tx-suggest-src').textContent = `${book.approx ? 'Approx. prices' : 'Typical prices'} in ${book.region}`;
+    $('tx-suggest-src').textContent = q
+        ? `${book.approx ? 'Approx. prices' : 'Typical prices'} in ${book.region}`
+        : `Your usual and ${SLOT_NAMES[daySlot()]} picks first · ${book.approx ? 'approx. prices' : 'typical prices'} in ${book.region}`;
     $('tx-suggest-chips').innerHTML = txPicks.length
         ? txPicks.map((p, i) => `<button type="button" class="pick-chip" data-pick="${i}" data-kind="${p.kind}" style="--cat:${catColor(catById(p.category))}" aria-label="${escapeHtml(p.name)}, ${escapeHtml(formatCurrency(p.price, cur))}${p.kind === 'usual' ? `, you've added this ${p.count} times` : ''}">
             ${p.kind === 'usual' ? icon('i-repeat', 'ic ic-sm') : '<span class="chip-dot"></span>'}<span class="pick-name">${escapeHtml(p.name)}</span><span class="pick-price">${escapeHtml(formatCurrency(p.price, cur))}</span>
@@ -2156,125 +2147,336 @@ const onTxDescInput = () => {
 // The currency you usually spend in: your last-used account's, else the display currency.
 const homeCurrency = () => { const a = accountById(state.config.lastAccount); return normCur(a ? a.currency : dcur()); };
 
-/* ---- Meal calculator ---- */
-const meal = { cur: 'USD', qty: {}, people: 1, service: 0, fromTx: false };
+/* ---- Time of day: breakfast, lunch, tea time, dinner ---- */
+const daySlot = (d = new Date()) => { const h = d.getHours(); return h >= 5 && h < 11 ? 'b' : h >= 11 && h < 15 ? 'l' : h >= 15 && h < 18 ? 't' : 'd'; };
+const SLOT_NAMES = { b: 'breakfast', l: 'lunch', t: 'tea time', d: 'dinner' };
+const TIME_TAGS = {
+    'String hoppers': 'b', 'Egg hopper': 'bd', 'Plain tea': 'bt', 'Milk tea': 'bt', Coffee: 'bt', 'Bread loaf': 'b', 'Fresh juice': 'lt',
+    'Rice & curry': 'l', 'Lunch packet': 'l', 'Fried rice': 'ld', 'Chicken kottu': 'd', 'Short eats': 't', Pizza: 'd', Burger: 'ld',
+    Thali: 'l', Biryani: 'ld', 'Masala dosa': 'b', 'Idli plate': 'b', Samosa: 't', Chai: 'bt', Lassi: 'l',
+    Lunch: 'l', 'Dinner out': 'd', 'Burger meal': 'ld', Sandwich: 'l', 'Salad bowl': 'l', Tea: 'bt', Dessert: 'd', 'Soft drink': 'lt',
+    'Bus fare': 'bd', 'Train ticket': 'bd', 'Metro ticket': 'bd', 'Tuk-tuk ride': 'bd', 'Auto ride': 'bd'
+};
+const fitsSlot = (name, slot) => (TIME_TAGS[name] || '').includes(slot);
 
-const mealFoods = () => priceList(meal.cur).items.filter((i) => i.meal);
-const mealPrice = (name) => {
-    const input = document.querySelector(`[data-meal-price="${CSS.escape(name)}"]`);
-    const v = input ? toNumber(input.value, 0) : 0;
-    return v > 0 ? v : 0;
+// Things worth suggesting right now: what you buy at this time of day first, then the local list.
+const smartPicks = (cur, limit = 16) => {
+    const slot = daySlot();
+    const hist = historyStats();
+    const usual = [...hist.values()].filter((g) => g.count >= 2).map((g) => {
+        const sameTime = state.transactions.filter((t) => t.type === 'expense' && t.createdAt && normDesc(t.desc) === g.key && daySlot(new Date(t.createdAt)) === slot).length;
+        return {
+            kind: 'usual',
+            name: g.last.desc,
+            category: expenseCatExists(g.last.category) ? g.last.category : 'Other',
+            price: g.last.currency === cur ? g.last.amount : nicePrice(convertAmount(g.last.amount, g.last.currency, cur), cur),
+            count: g.count,
+            score: sameTime * 3 + g.count
+        };
+    }).sort((a, b) => b.score - a.score).slice(0, 6);
+    const seen = new Set(usual.map((p) => normDesc(p.name)));
+    const book = priceList(cur).items.filter((i) => !seen.has(normDesc(i.name))).map((i, idx) => ({ kind: 'book', ...i, score: (fitsSlot(i.name, slot) ? 100 : 0) - idx }));
+    book.sort((a, b) => b.score - a.score);
+    return usual.concat(book).slice(0, limit);
 };
 
-const renderMeal = () => {
-    const { region, approx } = priceList(meal.cur);
-    $('meal-sub').textContent = `${approx ? 'Approx. prices' : 'Typical prices'} in ${region} (${meal.cur}). Change any price and Vela remembers it.`;
-    $('meal-list').innerHTML = mealFoods().map((i) => {
-        const q = meal.qty[i.name] || 0;
-        const n = escapeHtml(i.name);
-        return `<li class="meal-row" data-active="${q > 0}">
-            <span class="meal-name">${n}</span>
-            <input type="number" class="input meal-price" inputmode="decimal" min="0" step="any" value="${i.price}" data-meal-price="${n}" aria-label="Price of ${n}">
-            <span class="stepper" role="group" aria-label="How many ${n}">
-                <button type="button" data-meal-step="-1" data-meal-name="${n}" aria-label="One less ${n}" ${q ? '' : 'disabled'}>−</button>
-                <output aria-live="polite">${q}</output>
-                <button type="button" data-meal-step="1" data-meal-name="${n}" aria-label="One more ${n}">+</button>
-            </span>
-        </li>`;
-    }).join('');
-    $('meal-people').textContent = String(meal.people);
-    setPressed('[data-meal-service]', (b) => Number(b.dataset.mealService) === meal.service);
-    updateMealTotals();
-};
+/* =========================================================================
+   Vela bot: a small assistant built into the app. It runs on the phone,
+   needs no internet and only reads your own Vela data.
+   ========================================================================= */
+const BOT_CHIPS = ['Suggest an expense', 'Spent this month', 'Budget left', 'Saving tips', 'Top categories', 'Help'];
+const botDrafts = {};
+let botStarted = false;
 
-const mealSummary = () => {
-    const chosen = mealFoods().filter((i) => (meal.qty[i.name] || 0) > 0).map((i) => ({ name: i.name, qty: meal.qty[i.name], price: mealPrice(i.name) }));
-    const subtotal = chosen.reduce((s, c) => s + c.qty * c.price, 0);
-    const service = subtotal * (meal.service / 100);
-    const total = subtotal + service;
-    return { chosen, subtotal, service, total, each: total / meal.people };
+const botScroll = () => { const b = $('bot-body'); requestAnimationFrame(() => { b.scrollTop = b.scrollHeight; }); };
+const botSay = (html, chips = BOT_CHIPS) => {
+    const li = document.createElement('li');
+    li.className = 'bot-msg bot-msg-bot';
+    li.innerHTML = `<div class="bot-bubble">${html}</div>`;
+    $('bot-log').appendChild(li);
+    $('bot-chips').innerHTML = chips.map((c) => `<button type="button" class="chip" data-bot-chip="${escapeHtml(c)}">${escapeHtml(c)}</button>`).join('');
+    botScroll();
+    return li;
 };
-
-const updateMealTotals = () => {
-    const s = mealSummary();
-    const cur = meal.cur;
-    const items = s.chosen.reduce((n, c) => n + c.qty, 0);
-    $('meal-count').textContent = items ? plural(items, 'item') : 'Nothing picked yet';
-    $('meal-service-amt').textContent = meal.service && s.subtotal > 0 ? `+${formatCurrency(s.service, cur)} service` : '';
-    $('meal-total').textContent = formatCurrency(s.total, cur);
-    $('meal-each').textContent = meal.people > 1 ? `${formatCurrency(s.each, cur)} each for ${meal.people} people` : '';
-    $('btn-meal-use').disabled = !(s.total > 0);
+const botUser = (text) => {
+    const li = document.createElement('li');
+    li.className = 'bot-msg bot-msg-user';
+    li.innerHTML = `<div class="bot-bubble">${escapeHtml(text)}</div>`;
+    $('bot-log').appendChild(li);
+    botScroll();
 };
+const money = (v) => escapeHtml(formatCurrency(v, dcur()));
 
-const openMealCalc = (fromTx) => {
-    meal.fromTx = !!fromTx && isSheetOpen('modal-tx');
-    const cur = meal.fromTx ? normCur($('tx-currency').value) : homeCurrency();
-    if (cur !== meal.cur) meal.qty = {};
-    meal.cur = cur;
-    $('meal-new-name').value = '';
-    $('meal-new-price').value = '';
-    renderMeal();
-    openOrSwap('modal-meal');
-};
-
-const stepMeal = (name, delta) => {
-    const q = Math.max(0, Math.min(99, (meal.qty[name] || 0) + delta));
-    meal.qty[name] = q;
-    const btn = document.querySelector(`[data-meal-step="1"][data-meal-name="${CSS.escape(name)}"]`);
-    const row = btn && btn.closest('.meal-row');
-    if (row) {
-        row.dataset.active = String(q > 0);
-        row.querySelector('output').textContent = String(q);
-        row.querySelector('[data-meal-step="-1"]').disabled = !q;
+const openBot = () => {
+    if (!botStarted) {
+        botStarted = true;
+        const name = state.auth.user && state.auth.user.full_name ? `, ${escapeHtml(state.auth.user.full_name.split(' ')[0])}` : '';
+        botSay(`Hi${name}! I'm <strong>Vela bot</strong>. Tell me what you spent, like <em>“kottu 1200”</em> or <em>“bus 100 yesterday”</em>, and I'll add it. Ask me things like <em>“how much on food this month?”</em> or tap a button below.`);
     }
-    haptic();
-    updateMealTotals();
+    openOrSwap('modal-bot');
+    botScroll();
 };
 
-const addMealItem = () => {
-    const name = $('meal-new-name').value.trim().replace(/\s+/g, ' ').slice(0, 40);
-    const price = toNumber($('meal-new-price').value, NaN);
-    if (!name) return fieldError($('meal-new-name'), 'Name the item, like "Watalappan".');
-    if (!(price > 0)) return fieldError($('meal-new-price'), 'Enter its price.');
-    rememberPrice(meal.cur, name, price, { added: true, category: 'Food' });
-    meal.qty[name] = (meal.qty[name] || 0) + 1;
-    $('meal-new-name').value = '';
-    $('meal-new-price').value = '';
-    renderMeal();
-    showToast(`${name} added to your list`, 'success');
-    return true;
+/* ---- Understanding what you typed ---- */
+const PERIODS = [
+    [/\btoday\b/, 'today'], [/\byesterday\b/, 'yesterday'], [/\b(this|current) week\b|\bweek\b/, 'week'],
+    [/\blast month\b/, 'lastMonth'], [/\b(this )?year\b/, 'year'], [/\bmonth\b/, 'month']
+];
+const periodRange = (key) => {
+    const today = startOfDay(new Date());
+    if (key === 'today') return { start: today, end: today, label: 'today' };
+    if (key === 'yesterday') { const y = addDays(today, -1); return { start: y, end: y, label: 'yesterday' }; }
+    if (key === 'week') return { start: addDays(today, -6), end: today, label: 'in the last 7 days' };
+    if (key === 'lastMonth') return { start: new Date(today.getFullYear(), today.getMonth() - 1, 1), end: new Date(today.getFullYear(), today.getMonth(), 0), label: 'last month' };
+    if (key === 'year') return { start: new Date(today.getFullYear(), 0, 1), end: today, label: 'this year' };
+    return { start: new Date(today.getFullYear(), today.getMonth(), 1), end: today, label: 'this month' };
+};
+const findPeriod = (t) => { const hit = PERIODS.find(([re]) => re.test(t)); return periodRange(hit ? hit[1] : 'month'); };
+const inRange = (tx, r) => { const d = parseDate(tx.date); return d >= r.start && d <= r.end; };
+
+const findCategory = (t, type = 'expense') => {
+    const cats = catsOfType(type);
+    const byName = cats.find((c) => new RegExp(`\\b${c.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`).test(t) || new RegExp(`\\b${c.id.toLowerCase()}\\b`).test(t));
+    if (byName) return byName;
+    if (type !== 'expense') return null;
+    const hint = CATEGORY_HINTS.find(([, re]) => re.test(t));
+    return hint ? cats.find((c) => c.id === hint[0]) || null : null;
 };
 
-const useMealTotal = () => {
-    const s = mealSummary();
-    if (!(s.total > 0)) return;
-    const cur = meal.cur;
-    const fmt = (v) => formatCurrency(v, cur);
-    const desc = (s.chosen.length === 1
-        ? `${s.chosen[0].qty > 1 ? `${s.chosen[0].qty}× ` : ''}${s.chosen[0].name}`
-        : `Meal: ${s.chosen.slice(0, 2).map((c) => c.name).join(', ')}${s.chosen.length > 2 ? ` +${s.chosen.length - 2} more` : ''}`).slice(0, 80);
-    const lines = s.chosen.map((c) => `${c.qty} × ${c.name} @ ${fmt(c.price)} = ${fmt(c.qty * c.price)}`);
-    if (meal.service) lines.push(`Service ${meal.service}%: ${fmt(s.service)}`);
-    if (meal.people > 1) lines.push(`Split ${meal.people} ways: ${fmt(s.each)} each`);
-    const d = decimalsFor(cur);
-    const total = Number(s.total.toFixed(d));
+const CUR_WORDS = [[/(\brs\.?|\blkr\b|\brupees?\b)/, 'LKR'], [/(\$|\busd\b|\bdollars?\b)/, 'USD'], [/(₹|\binr\b)/, 'INR'], [/(€|\beur\b|\beuros?\b)/, 'EUR'], [/(£|\bgbp\b|\bpounds?\b)/, 'GBP'], [/\baed\b|\bdirhams?\b/, 'AED']];
 
-    if (meal.fromTx) openOrSwap('modal-tx');
-    else { openAddTx('expense'); fillCurrencySelect($('tx-currency'), cur); }
-    $('tx-desc').value = desc;
-    $('tx-amount').value = total;
-    $('tx-note').value = lines.join('\n').slice(0, 240);
-    if (expenseCatExists('Food')) { selectTxCategory('Food'); txCatTouched = true; }
-    clearFieldErrors($('tx-form'));
-    meal.qty = {};
-    meal.people = 1;
+// "spent 1,200 on kottu yesterday" -> { type, desc, amount, currency, category, date }
+const parseEntry = (raw) => {
+    const t = raw.toLowerCase();
+    const num = t.match(/(\d[\d,]*(?:\.\d+)?)\s*(k\b)?/);
+    let amount = num ? toNumber(num[1].replace(/,/g, ''), NaN) * (num[2] ? 1000 : 1) : NaN;
+    let currency = homeCurrency();
+    const curHit = CUR_WORDS.find(([re]) => re.test(t));
+    if (curHit && isCurrency(curHit[1])) currency = curHit[1];
+    let date = todayISO();
+    if (/\bday before yesterday\b/.test(t)) date = toISODate(addDays(new Date(), -2));
+    else if (/\byesterday\b/.test(t)) date = toISODate(addDays(new Date(), -1));
+    const isIncome = /\b(salary|got paid|received|income|earned|bonus|refund|got \d)/.test(t);
+    let desc = raw.replace(/(\d[\d,]*(?:\.\d+)?)\s*(k\b)?/i, ' ')
+        .replace(/\b(day before yesterday|yesterday|today|this morning|tonight)\b/gi, ' ')
+        .replace(/(\brs\.?|\blkr\b|\brupees?\b|\$|\busd\b|\bdollars?\b|₹|\binr\b|€|\beur\b|\beuros?\b|£|\bgbp\b|\bpounds?\b|\baed\b)/gi, ' ')
+        .replace(/\b(i|we|have|has|just|spent|spend|paid|pay|bought|buy|add|added|log|an?|expense|income|got paid|received|earned|got|for|on|of|worth|please|pls)\b/gi, ' ')
+        .replace(/\s+/g, ' ').trim().replace(/^(at|to|from)\s+/i, '');
+    const type = isIncome ? 'income' : 'expense';
+    let category = null;
+    if (type === 'income') {
+        const c = /salary|paid/.test(t) ? 'Salary' : /freelance|client|gig/.test(t) ? 'Freelance' : /gift/.test(t) ? 'Gift' : /business|sale/.test(t) ? 'Business' : 'OtherIncome';
+        category = state.categories.some((x) => x.id === c) ? c : FALLBACK_CATEGORY.income;
+        if (!desc) desc = catById(category, 'income').name;
+    } else {
+        // A known item with no amount: use what you usually pay, or the local price.
+        const key = normDesc(desc);
+        const pick = key ? smartPicks(currency, 999).find((p) => normDesc(p.name) === key || (key.length > 3 && normDesc(p.name).includes(key))) : null;
+        if (pick) {
+            if (!(amount > 0)) amount = pick.price;
+            if (normDesc(pick.name).includes(key)) desc = desc || pick.name;
+            category = pick.category;
+        }
+        const g = historyStats().get(key);
+        if (!category && g && expenseCatExists(g.last.category)) category = g.last.category;
+        if (!category) { const c = findCategory(t); category = c ? c.id : FALLBACK_CATEGORY.expense; }
+        if (!desc) desc = catById(category).name;
+    }
+    desc = desc.charAt(0).toUpperCase() + desc.slice(1);
+    return { type, desc: desc.slice(0, 80), amount, currency, category, date };
+};
+
+const draftCard = (d) => {
+    const id = generateId();
+    botDrafts[id] = d;
+    const cat = catById(d.category, d.type);
+    return `<div class="bot-card" data-draft="${id}">
+        <div class="bot-card-row">${catBadge(d.category, d.type)}<div class="bot-card-main"><strong>${escapeHtml(d.desc)}</strong><span>${escapeHtml(cat.name)} · ${escapeHtml(relativeDayLabel(d.date))}</span></div>
+        <span class="amount ${d.type === 'income' ? 'text-income' : ''}">${escapeHtml(formatCurrency(d.amount, d.currency))}</span></div>
+        <div class="bot-card-actions"><button type="button" class="btn btn-secondary btn-sm" data-bot-edit="${id}">Change</button><button type="button" class="btn ${d.type === 'income' ? 'btn-income' : 'btn-primary'} btn-sm" data-bot-add="${id}">Add ${d.type}</button></div>
+    </div>`;
+};
+
+const quickSaveTx = (d) => {
+    const acc = state.accounts.find((a) => a.id === state.config.lastAccount) || state.accounts[0];
+    const record = { id: generateId(), type: d.type, desc: d.desc, amount: d.amount, currency: d.currency, category: d.category, date: d.date, note: '', createdAt: Date.now(), recurringId: null, accountId: acc.id, receipt: null };
+    state.transactions.push(record);
+    state.config.lastCategory[d.type] = d.category;
+    saveState();
+    haptic('MEDIUM');
+    queueSync('transaction', record.id, 'upsert');
+    renderActive();
+    return record;
+};
+
+const botAdd = (id, btn) => {
+    const d = botDrafts[id];
+    if (!d) return;
+    delete botDrafts[id];
+    const rec = quickSaveTx(d);
+    const card = btn.closest('.bot-card');
+    card.querySelector('.bot-card-actions').innerHTML = `<span class="bot-done">${icon('i-check', 'ic ic-sm')} Added</span><button type="button" class="btn btn-secondary btn-sm" data-bot-undo="${escapeHtml(rec.id)}">Undo</button>`;
+    let extra = '';
+    if (d.type === 'expense') {
+        const s = monthStats();
+        const left = s.budget - s.spent;
+        extra = left >= 0 ? ` You have <strong>${money(left)}</strong> left in this month's budget.` : ` You're <strong>${money(-left)}</strong> over this month's budget.`;
+    }
+    botSay(`Done!${extra} Anything else?`);
+};
+
+const botUndo = (id, btn) => {
+    if (!state.transactions.some((t) => t.id === id)) return;
+    state.transactions = state.transactions.filter((t) => t.id !== id);
+    saveState();
+    queueSync('transaction', id, 'delete');
+    renderActive();
+    btn.closest('.bot-card-actions').innerHTML = '<span class="bot-done">Removed</span>';
+};
+
+const botEdit = (id) => {
+    const d = botDrafts[id];
+    if (!d) return;
+    openAddTx(d.type);
+    fillCurrencySelect($('tx-currency'), d.currency);
+    $('tx-desc').value = d.desc;
+    if (d.amount > 0) $('tx-amount').value = d.amount;
+    $('tx-date').value = d.date;
+    selectTxCategory(d.category);
+    txCatTouched = true;
     renderTxSuggest();
     updatePriceHint();
 };
 
-const mealBack = () => {
-    if (meal.fromTx) openOrSwap('modal-tx');
-    else closeSheet('modal-meal');
+/* ---- Answers ---- */
+const answerSpent = (t) => {
+    const r = findPeriod(t);
+    const cat = findCategory(t);
+    let list = state.transactions.filter((x) => x.type === 'expense' && inRange(x, r));
+    if (cat) list = list.filter((x) => x.category === cat.id);
+    if (!list.length) return botSay(`You haven't spent anything${cat ? ` on ${escapeHtml(cat.name)}` : ''} ${r.label}.`);
+    const total = sumDisplay(list);
+    const top = [...list].sort((a, b) => toDisplay(b.amount, b.currency) - toDisplay(a.amount, a.currency))[0];
+    botSay(`You spent <strong>${money(total)}</strong>${cat ? ` on ${escapeHtml(cat.name)}` : ''} ${r.label}, across ${plural(list.length, 'entry', 'entries')}. The biggest was <strong>${escapeHtml(top.desc)}</strong> (${escapeHtml(formatDisplay(top.amount, top.currency))}).`);
+};
+
+const answerIncome = (t) => {
+    const r = findPeriod(t);
+    const list = state.transactions.filter((x) => x.type === 'income' && inRange(x, r));
+    botSay(list.length ? `Your income ${r.label} is <strong>${money(sumDisplay(list))}</strong> from ${plural(list.length, 'entry', 'entries')}.` : `No income logged ${r.label}. Tell me like <em>“salary 150000”</em> and I'll add it.`);
+};
+
+const daysLeftInMonth = () => { const n = new Date(); return daysInMonth(n.getFullYear(), n.getMonth()) - n.getDate() + 1; };
+
+const answerBudget = (t) => {
+    const s = monthStats();
+    const left = s.budget - s.spent;
+    const askAmt = t.match(/(\d[\d,]*(?:\.\d+)?)/);
+    if (/\bafford\b/.test(t) && askAmt) {
+        const want = toNumber(askAmt[1].replace(/,/g, ''), 0);
+        if (want <= 0) return botSay('How much is it?');
+        return botSay(want <= left
+            ? `Yes. After ${money(want)} you'd still have <strong>${money(left - want)}</strong> left this month (about ${money((left - want) / daysLeftInMonth())} a day).`
+            : `It would put you <strong>${money(want - left)}</strong> over this month's budget. Maybe wait until next month, or cut back somewhere else first.`);
+    }
+    if (left < 0) return botSay(`You're <strong>${money(-left)}</strong> over your ${money(s.budget)} budget this month (${Math.round(s.budgetPct)}%). Try to keep spending to essentials until the month ends.`);
+    botSay(`You have <strong>${money(left)}</strong> left of your ${money(s.budget)} budget this month. That's about <strong>${money(left / daysLeftInMonth())}</strong> a day for the next ${plural(daysLeftInMonth(), 'day')}.`);
+};
+
+const answerTop = (t) => {
+    const r = findPeriod(t);
+    const by = {};
+    state.transactions.filter((x) => x.type === 'expense' && inRange(x, r)).forEach((x) => { by[x.category] = (by[x.category] || 0) + toDisplay(x.amount, x.currency); });
+    const rows = Object.entries(by).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    if (!rows.length) return botSay(`Nothing spent ${r.label} yet.`);
+    const total = Object.values(by).reduce((a, b) => a + b, 0);
+    botSay(`Where your money went ${r.label}:<ol class="bot-list">${rows.map(([id, v]) => `<li><strong>${escapeHtml(catById(id).name)}</strong>: ${money(v)} (${Math.round((v / total) * 100)}%)</li>`).join('')}</ol>`);
+};
+
+const answerTips = () => {
+    const tips = [];
+    const s = monthStats();
+    const now = new Date();
+    const dayFrac = now.getDate() / daysInMonth(now.getFullYear(), now.getMonth());
+    if (s.spent > 0 && dayFrac < 0.95) {
+        const pace = s.spent / dayFrac;
+        if (pace > s.budget) tips.push(`At this pace you'll spend about <strong>${money(pace)}</strong> this month, ${money(pace - s.budget)} over budget. Aim for ${money(Math.max(0, s.budget - s.spent) / daysLeftInMonth())} a day from now.`);
+    }
+    // Small things bought often add up.
+    const cutoff = toISODate(addDays(new Date(), -30));
+    const groups = {};
+    state.transactions.filter((x) => x.type === 'expense' && x.date >= cutoff).forEach((x) => {
+        const k = normDesc(x.desc);
+        groups[k] = groups[k] || { name: x.desc, n: 0, sum: 0 };
+        groups[k].n += 1;
+        groups[k].sum += toDisplay(x.amount, x.currency);
+    });
+    const habit = Object.values(groups).filter((g) => g.n >= 4).sort((a, b) => b.sum - a.sum)[0];
+    if (habit) tips.push(`You bought <strong>${escapeHtml(habit.name)}</strong> ${habit.n} times in 30 days (${money(habit.sum)}). Halving it would save about <strong>${money(habit.sum / 2)}</strong> a month.`);
+    // Biggest jump against last month.
+    const pm = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prev = {};
+    state.transactions.filter((x) => x.type === 'expense' && inMonth(x, pm.getFullYear(), pm.getMonth()) && parseDate(x.date).getDate() <= now.getDate())
+        .forEach((x) => { prev[x.category] = (prev[x.category] || 0) + toDisplay(x.amount, x.currency); });
+    const jump = Object.entries(s.byCat).map(([id, v]) => [id, v - (prev[id] || 0), prev[id] || 0]).filter(([, d, p]) => p > 0 && d > p * 0.3).sort((a, b) => b[1] - a[1])[0];
+    if (jump) tips.push(`<strong>${escapeHtml(catById(jump[0]).name)}</strong> is up ${money(jump[1])} on the same days last month. Worth a look.`);
+    if (!state.config.categoryBudgets.Food && s.byCat.Food) tips.push('Set a <strong>Food</strong> budget in Plan so I can warn you before it runs out.');
+    if (s.income > 0 && s.net > 0 && !state.savings.length) tips.push(`You're ${money(s.net)} ahead this month. Start a savings goal and move some of it there.`);
+    const general = ['Cook at home a few more days a week; it is usually the quickest saving.', 'Carry a water bottle and a flask of tea; small drinks add up fast.', 'Wait a day before any buy you did not plan. Most of the urge goes away.', 'Check your phone and internet plans once a year for a cheaper package.'];
+    while (tips.length < 3) tips.push(general[tips.length % general.length]);
+    botSay(`Here's what I'd try:<ol class="bot-list">${tips.slice(0, 3).map((x) => `<li>${x}</li>`).join('')}</ol>`);
+};
+
+const answerSuggest = () => {
+    const cur = homeCurrency();
+    const slot = daySlot();
+    const picks = smartPicks(cur, 6);
+    botSay(`It's ${SLOT_NAMES[slot]} time. Here's what you might want to log — tap one and I'll set it up:<div class="bot-picks">${picks.map((p) => `<button type="button" class="pick-chip" data-bot-say="${escapeHtml(`${p.name} ${p.price}`)}" style="--cat:${catColor(catById(p.category))}">${p.kind === 'usual' ? icon('i-repeat', 'ic ic-sm') : '<span class="chip-dot"></span>'}<span class="pick-name">${escapeHtml(p.name)}</span><span class="pick-price">${escapeHtml(formatCurrency(p.price, cur))}</span></button>`).join('')}</div>`);
+};
+
+const answerBalance = () => {
+    const s = monthStats();
+    botSay(`Across your accounts you have <strong>${money(netWorth())}</strong>. This month: ${money(s.income)} in, ${money(s.spent)} out, so you're ${s.net >= 0 ? `<strong>${money(s.net)}</strong> ahead` : `<strong>${money(-s.net)}</strong> behind`}.`);
+};
+
+const answerBills = () => {
+    const due = state.recurring.filter((b) => b.type === 'expense').sort((a, b) => (a.nextDate > b.nextDate ? 1 : -1)).slice(0, 4);
+    botSay(due.length
+        ? `Coming up:<ol class="bot-list">${due.map((b) => `<li><strong>${escapeHtml(b.name)}</strong>: ${escapeHtml(formatDisplay(b.amount, b.currency))}, ${escapeHtml(dueLabel(b.nextDate).text.toLowerCase())}</li>`).join('')}</ol>`
+        : 'You have no bills set up. Add them in Plan and I\'ll remind you before they are due.');
+};
+
+const answerHelp = () => botSay(`I can:<ol class="bot-list">
+    <li><strong>Add entries</strong>: “rice and curry 450”, “tuk 300 yesterday”, “salary 150000”</li>
+    <li><strong>Answer questions</strong>: “spent on food this week?”, “budget left?”, “can I afford 5000?”</li>
+    <li><strong>Help you save</strong>: “saving tips”, “top categories”, “suggest an expense”</li>
+    <li><strong>Show totals</strong>: “my balance”, “income this month”, “bills due”</li></ol>`);
+
+const botHandle = (raw) => {
+    const text = raw.trim();
+    if (!text) return;
+    botUser(text);
+    const t = text.toLowerCase();
+    const isQuestion = /\?|\b(how|what|where|when|which|show|tell|can i|could i|do i|am i)\b/.test(t);
+    const hasNumber = /\d/.test(t);
+    setTimeout(() => {
+        if (/^(hi|hii+|hello|hey|ayubowan|good (morning|evening|afternoon))\b/.test(t)) return botSay('Hello! What did you spend today? Or ask me anything about your money.');
+        if (/^(thanks|thank you|thx|ok|okay|great|nice)\b/.test(t)) return botSay('Any time!');
+        if (/\bhelp\b|what can you do/.test(t)) return answerHelp();
+        if (/afford/.test(t)) return answerBudget(t);
+        if (/suggest|what (should|to) (i )?(add|log|buy)|usual/.test(t)) return answerSuggest();
+        if (/sav(e|ing)|tips?|advice|reduce|cut (down|back)/.test(t)) return answerTips();
+        if (/budget|left|remaining/.test(t)) return answerBudget(t);
+        if (/\btop\b|most|biggest|where.*(money|go)/.test(t)) return answerTop(t);
+        if (/bills?|due|subscriptions?/.test(t)) return answerBills();
+        if (/balance|net worth|accounts?|how much (do )?i have/.test(t)) return answerBalance();
+        if (isQuestion && /income|earn|salary/.test(t)) return answerIncome(t);
+        if ((isQuestion && !hasNumber) || /^(spent|spending|expenses?)\b.*(today|yesterday|week|month|year|on)\b|this month$/.test(t) && !hasNumber) return answerSpent(t);
+        const d = parseEntry(text);
+        if (d.amount > 0) return botSay(`Got it. Add this ${d.type}?${draftCard(d)}`, ['Suggest an expense', 'Budget left', 'Help']);
+        if (d.desc && !hasNumber) return botSay(`How much was <strong>${escapeHtml(d.desc)}</strong>? Type it like <em>“${escapeHtml(d.desc.toLowerCase())} 500”</em>.`);
+        botSay("I didn't quite get that. Try <em>“kottu 1200”</em> to add something, or tap a button below.");
+    }, 250);
 };
 
 /* ---- First-run card on Home ---- */
@@ -2291,10 +2493,11 @@ const starterHtml = () => {
         <div class="starter-picks">${picks.map((p) => `<button type="button" class="pick-chip" data-starter-pick="${escapeHtml(p.name)}" style="--cat:${catColor(catById(p.category))}"><span class="chip-dot"></span><span class="pick-name">${escapeHtml(p.name)}</span><span class="pick-price">${escapeHtml(formatCurrency(p.price, cur))}</span></button>`).join('')}</div>
         <div class="starter-actions">
             <button type="button" class="btn btn-primary btn-sm" data-action="add-expense">${icon('i-plus', 'ic ic-sm')} Add expense</button>
-            <button type="button" class="btn btn-secondary btn-sm" data-action="open-meal-calc">${icon('i-calc', 'ic ic-sm')} Meal calculator</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-action="open-bot">${icon('i-bot', 'ic ic-sm')} Ask Vela bot</button>
         </div>
         <ul class="starter-steps">
             <li>${icon('i-check', 'ic ic-sm')}<span>Vela learns what you buy often and suggests it next time.</span></li>
+            <li>${icon('i-check', 'ic ic-sm')}<span>Or just tell the bot “kottu 1200” and it adds it for you.</span></li>
             <li>${icon('i-check', 'ic ic-sm')}<span>Set a monthly budget in <button type="button" class="link-btn" data-goto="plan">Plan</button> to get alerts.</span></li>
         </ul>
     </li>`;
@@ -3983,8 +4186,11 @@ const initEvents = () => {
         if (d.txType) { setTxType(d.txType); return; }
         if (d.pick) { const p = txPicks[Number(d.pick)]; if (p) applyPick(p); return; }
         if (d.starterPick) { starterPick(d.starterPick); return; }
-        if (d.mealStep) { stepMeal(d.mealName, Number(d.mealStep)); return; }
-        if (d.mealService) { meal.service = Number(d.mealService); setPressed('[data-meal-service]', (b) => Number(b.dataset.mealService) === meal.service); updateMealTotals(); return; }
+        if (d.botChip) { botHandle(d.botChip); return; }
+        if (d.botSay) { botHandle(d.botSay); return; }
+        if (d.botAdd) { botAdd(d.botAdd, el); return; }
+        if (d.botEdit) { botEdit(d.botEdit); return; }
+        if (d.botUndo) { botUndo(d.botUndo, el); return; }
         if (d.billType) { setBillType(d.billType); return; }
         if (d.debtDir) { setDebtDir(d.debtDir); return; }
         if (d.fundsMode) { setFundsMode(d.fundsMode); return; }
@@ -4023,11 +4229,7 @@ const initEvents = () => {
             case 'add-budget': openBudget(); break;
             case 'add-transfer': openTransfer(); break;
             case 'add-account': openAccountEditor(); break;
-            case 'open-meal-calc': openMealCalc(isSheetOpen('modal-tx')); break;
-            case 'meal-back': mealBack(); break;
-            case 'meal-use': useMealTotal(); break;
-            case 'meal-people-dec': meal.people = Math.max(1, meal.people - 1); $('meal-people').textContent = String(meal.people); updateMealTotals(); break;
-            case 'meal-people-inc': meal.people = Math.min(50, meal.people + 1); $('meal-people').textContent = String(meal.people); updateMealTotals(); break;
+            case 'open-bot': haptic(); openBot(); break;
             case 'open-accounts': openAccountManager(); break;
             case 'open-currencies': openCurrencySheet(); break;
             case 'pick-receipt': $('tx-receipt-input').click(); break;
@@ -4165,13 +4367,12 @@ const initEvents = () => {
     $('tx-desc').addEventListener('input', onTxDescInput);
     $('tx-amount').addEventListener('input', updatePriceHint);
     $('tx-category-picker').addEventListener('change', () => { txCatTouched = true; });
-    $('meal-list').addEventListener('input', (e) => { if (e.target.matches('[data-meal-price]')) updateMealTotals(); });
-    $('meal-list').addEventListener('change', (e) => {
-        const name = e.target.dataset && e.target.dataset.mealPrice;
-        const v = toNumber(e.target.value, 0);
-        if (name && v > 0) rememberPrice(meal.cur, name, v);
+    $('bot-form').addEventListener('submit', (e) => {
+        e.preventDefault();
+        const v = $('bot-input').value;
+        $('bot-input').value = '';
+        botHandle(v);
     });
-    $('meal-add-form').addEventListener('submit', (e) => { e.preventDefault(); addMealItem(); });
     $('tx-receipt-input').addEventListener('change', (e) => {
         const file = e.target.files && e.target.files[0];
         if (file) pickReceipt(file);

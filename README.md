@@ -8,8 +8,8 @@ A phone-first expense and savings tracker that works in USD and LKR. It is a sta
 - **Accounts:** cash, bank, card and mobile wallets with live balances, and transfers between them (even across currencies).
 - **Any currency:** 17 currencies with live rates; show everything in the one you choose.
 - **Receipt photos** on any expense, kept on the phone and backed up when signed in.
-- **Quick picks** with typical local prices (Sri Lanka, India, US, and scaled for other currencies), your own usual items learnt from history, and auto-picked categories as you type.
-- **Meal calculator**: pick dishes and drinks, people sharing and service charge, then save the total as one itemised expense. Prices you change are remembered.
+- **Quick picks** with typical local prices (Sri Lanka, India, US, and scaled for other currencies), your own usual items learnt from history, ordered for the time of day (breakfast, lunch, tea, dinner), and auto-picked categories as you type.
+- **Vela bot**: a built-in assistant that works offline. Type “kottu 1200” or “bus 100 yesterday” to add entries, or ask “spent on food this week?”, “budget left?”, “can I afford 5000?” and “saving tips”.
 - **Price check**: a gentle warning when an amount is far above or below what you usually pay.
 - **Calendar view** of a month's spending, day by day.
 - **Activity:** every entry by month, with search and category filters.
