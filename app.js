@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.4.0';
+const APP_VERSION = '4.5.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1166,6 +1166,31 @@ const breakdownHtml = (entries, total, type) => entries.map(([catId, v]) => {
     </li>`;
 }).join('');
 
+// Money that counts up to its new value (skipped when the user prefers less motion).
+const reduceMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const countUp = (el, to, cur) => {
+    if (!el) return;
+    const from = el.dataset.v === undefined ? 0 : Number(el.dataset.v);
+    const sameCur = el.dataset.cur === undefined || el.dataset.cur === cur;
+    el.dataset.v = String(to);
+    el.dataset.cur = cur;
+    cancelAnimationFrame(el._raf);
+    clearTimeout(el._done);
+    if (reduceMotion() || document.hidden || !sameCur || !isFinite(from) || from === to) { el.textContent = formatCurrency(to, cur); return; }
+    const t0 = performance.now();
+    const dur = 750;
+    const step = (now) => {
+        const p = Math.min(1, (now - t0) / dur);
+        const e = 1 - Math.pow(1 - p, 3);
+        el.textContent = formatCurrency(p < 1 ? from + (to - from) * e : to, cur);
+        if (p < 1) el._raf = requestAnimationFrame(step);
+    };
+    el._raf = requestAnimationFrame(step);
+    // If the browser pauses animation frames, still land on the right number.
+    clearTimeout(el._done);
+    el._done = setTimeout(() => { cancelAnimationFrame(el._raf); el.textContent = formatCurrency(to, cur); }, dur + 150);
+};
+
 /* =========================================================================
    15. Rendering — Home
    ========================================================================= */
@@ -1175,7 +1200,7 @@ const renderDashboard = () => {
     const s = monthStats();
 
     $('dash-month-label').textContent = `${now.toLocaleDateString('en-US', { month: 'long' })} balance`;
-    $('dash-balance').textContent = formatCurrency(s.net, cur);
+    countUp($('dash-balance'), s.net, cur);
     $('dash-balance-sub').textContent = s.income > 0
         ? `${Math.max(0, Math.round((s.net / s.income) * 100))}% of this month's income left`
         : (s.spent > 0 ? "Add your income to see what's left" : 'Income minus spending this month');
@@ -3871,16 +3896,58 @@ const paintDots = (dotsEl, n) => dotsEl.querySelectorAll('span').forEach((s, i) 
 const shake = (el) => { el.classList.remove('shake'); void el.offsetWidth; el.classList.add('shake'); };
 const isLocked = () => $('lock-screen').classList.contains('active');
 
+
+/* ---- Fingerprint scanner: animated states for the lock screen ---- */
+const FP_PATHS = [
+    'M32 30.5c-1.7 0-3 1.3-3 3 0 5.2-1.1 9.6-3.6 13.6',
+    'M35 33.5c0 6.3-1 11.4-3.2 15.6',
+    'M23.2 44.5c1.3-3.2 2-6.8 2-11a6.8 6.8 0 0 1 13.6 0c0 2.6-.2 5.1-.6 7.5',
+    'M37.2 46.5c.6-1.6 1-3.3 1.4-5',
+    'M19.6 39.5c.7-2 1-4 1-6a11.4 11.4 0 0 1 22.8 0c0 2.1-.1 4.1-.4 6.1',
+    'M16.4 34.5c-.2-.4-.2-.7-.2-1a15.8 15.8 0 0 1 31.6 0c0 3-.3 6-.9 8.7',
+    'M13 39c-.6-1.8-1-3.7-1-5.5',
+    'M17.8 23.6a18.6 18.6 0 0 1 28.4 0',
+    'M21.4 16.6a20.8 20.8 0 0 1 21.2 0',
+    'M51.6 30.5c.3 1 .4 2 .4 3 0 3.2-.3 6.3-1 9.2'
+];
+const fpPaths = (cls) => FP_PATHS.map((d, i) => `<path class="${cls}" pathLength="1" style="--i:${i}" d="${d}"/>`).join('');
+const fpCoreHtml = () => `<svg class="fp-svg" viewBox="0 0 64 64" aria-hidden="true">
+    <defs><linearGradient id="fp-grad" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="var(--fp-a)"/><stop offset="1" stop-color="var(--fp-b)"/></linearGradient></defs>
+    <g class="fp-base">${fpPaths('')}</g><g class="fp-fill">${fpPaths('')}</g></svg><span class="fp-laser"></span>`;
+const setScanner = (st, label) => {
+    const s = $('fp-scanner');
+    if (!s) return;
+    s.dataset.state = st;
+    if (label) $('fp-label').textContent = label;
+};
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Fade the lock away and bring the app in.
+const unlockAnimated = () => {
+    const el = $('lock-screen');
+    el.classList.add('unlocking');
+    document.documentElement.classList.add('app-reveal');
+    setTimeout(() => { el.classList.remove('unlocking'); unlock(); }, 480);
+    setTimeout(() => document.documentElement.classList.remove('app-reveal'), 1300);
+};
+
 const showLock = () => {
     if (!state.config.lock.enabled) { document.documentElement.classList.remove('is-locked'); return; }
     lockBuffer = '';
     paintDots($('lock-dots'), 0);
     $('lock-msg').textContent = '';
     $('lock-msg').dataset.error = 'false';
-    buildKeypad($('lock-keypad'), 'lock', state.config.lock.biometric && biometricAvailable);
+    const bio = state.config.lock.biometric && biometricAvailable;
+    buildKeypad($('lock-keypad'), 'lock', false);
+    $('lock-screen').classList.toggle('has-bio', !!bio);
+    $('lock-screen').classList.remove('unlocking');
+    $('lock-dots').classList.remove('ok');
+    $('fp-wrap').hidden = !bio;
+    $('lock-title').textContent = bio ? 'Unlock Vela' : 'Enter your PIN';
+    if (bio) { if (!$('fp-core').firstChild) $('fp-core').innerHTML = fpCoreHtml(); setScanner('idle', 'Touch the sensor to unlock'); }
     $('lock-screen').classList.add('active');
     document.documentElement.classList.add('is-locked');
-    if (state.config.lock.biometric && biometricAvailable) setTimeout(tryBiometricUnlock, 350);
+    if (bio) setTimeout(tryBiometricUnlock, 450);
 };
 
 const unlock = () => {
@@ -3891,13 +3958,33 @@ const unlock = () => {
     haptic('LIGHT');
 };
 
+let bioBusy = false;
 const tryBiometricUnlock = async () => {
     const bio = nativePlugin('NativeBiometric');
-    if (!bio) return;
+    if (!bio || bioBusy || !isLocked()) return;
+    bioBusy = true;
+    setScanner('scanning', 'Scanning…');
+    const started = Date.now();
     try {
         await bio.verifyIdentity({ reason: 'Unlock Vela', title: 'Unlock Vela', subtitle: 'Use your fingerprint or face', negativeButtonText: 'Use PIN', maxAttempts: 3 });
-        unlock();
-    } catch (err) { /* user chose PIN or failed */ }
+        await wait(Math.max(0, 1100 - (Date.now() - started))); // let the scan finish on screen
+        setScanner('success', 'Welcome back');
+        haptic('MEDIUM');
+        await wait(750);
+        unlockAnimated();
+    } catch (err) {
+        const why = String((err && (err.message || err.code)) || '');
+        if (/cancel|negative|use pin|user/i.test(why)) {
+            setScanner('idle', 'Tap the fingerprint to try again');
+        } else {
+            setScanner('error', 'Not recognised. Try again or use your PIN');
+            haptic('HEAVY');
+            await wait(1600);
+            if (isLocked()) setScanner('idle', 'Tap the fingerprint to try again');
+        }
+    } finally {
+        bioBusy = false;
+    }
 };
 
 const onLockKey = async (k) => {
@@ -3915,9 +4002,16 @@ const onLockKey = async (k) => {
     const attempt = lockBuffer;
     lockBuffer = '';
     const ok = (await hashPin(attempt, state.config.lock.salt)) === state.config.lock.hash;
-    if (ok) { unlock(); return; }
+    if (ok) {
+        $('lock-dots').classList.add('ok');
+        if ($('fp-scanner') && !$('fp-wrap').hidden) setScanner('success', 'Welcome back');
+        haptic('MEDIUM');
+        setTimeout(unlockAnimated, 320);
+        return;
+    }
     lockFails++;
     shake($('lock-dots'));
+    if (!$('fp-wrap').hidden) { setScanner('error'); setTimeout(() => { if (isLocked() && !bioBusy) setScanner('idle'); }, 900); }
     haptic('HEAVY');
     setTimeout(() => paintDots($('lock-dots'), 0), 250);
     if (lockFails >= 5) {
@@ -4385,7 +4479,27 @@ const onAppVisible = () => {
     renderActive();
 };
 
+// A soft ink ripple where you touch buttons.
+const initRipples = () => {
+    document.addEventListener('pointerdown', (e) => {
+        if (reduceMotion() || e.button > 0) return;
+        const el = e.target.closest('.btn, .key, .action-tile, .fab, .pick-chip, .chip, .account-chip, .icon-btn, .fp-scanner');
+        if (!el || el.disabled) return;
+        const r = el.getBoundingClientRect();
+        const size = Math.max(r.width, r.height) * 2.2;
+        const ink = document.createElement('span');
+        ink.className = 'ripple-ink';
+        ink.style.width = ink.style.height = `${size}px`;
+        ink.style.left = `${e.clientX - r.left - size / 2}px`;
+        ink.style.top = `${e.clientY - r.top - size / 2}px`;
+        el.appendChild(ink);
+        ink.addEventListener('animationend', () => ink.remove(), { once: true });
+        setTimeout(() => ink.remove(), 900);
+    }, { passive: true });
+};
+
 const initEvents = () => {
+    initRipples();
     document.addEventListener('click', (e) => {
         const el = e.target.closest('button, [data-tab], [data-goto]');
         if (!el) return;

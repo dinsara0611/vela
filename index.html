@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.4.0">
+    <link rel="stylesheet" href="style.css?v=4.5.0">
 </head>
 <body data-view="dashboard">
 
@@ -1116,6 +1116,15 @@
         <div class="lock-head">
             <div class="auth-logo"><svg aria-hidden="true"><use href="#logo-sail"/></svg></div>
             <h2 class="lock-title" id="lock-title">Enter your PIN</h2>
+            <div class="fp-wrap" id="fp-wrap" hidden>
+                <button class="fp-scanner" id="fp-scanner" type="button" data-lock-key="bio" data-state="idle" aria-label="Unlock with your fingerprint">
+                    <span class="fp-ring"></span><span class="fp-ring"></span>
+                    <span class="fp-orbit"></span>
+                    <span class="fp-core" id="fp-core"></span>
+                    <span class="fp-check"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></span>
+                </button>
+                <span class="fp-label" id="fp-label" aria-live="polite">Touch the sensor to unlock</span>
+            </div>
             <p class="lock-msg" id="lock-msg" aria-live="assertive"></p>
             <div class="pin-dots" id="lock-dots"><span></span><span></span><span></span><span></span></div>
         </div>
@@ -1212,7 +1221,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.4.0"></script>
+    <script src="app.js?v=4.5.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
