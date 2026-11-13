@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '3.1.0';
+const APP_VERSION = '4.0.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -70,12 +70,14 @@ const createDefaultState = () => ({
     savings: [],      // { id, name, target, currency, saved, deadline, createdAt }
     recurring: [],    // { id, type, name, amount, currency, category, frequency, nextDate, anchorDay, autoLog, createdAt }
     debts: [],        // { id, direction: lent|borrowed, person, amount, currency, repaid, dueDate, note, createdAt }
+    accounts: [],     // { id, name, kind, currency, opening, createdAt }
     categories: DEFAULT_CATEGORIES.map((c) => ({ ...c, builtIn: true })),
     config: {
-        rate: 300,
-        rateLocked: false,
-        rateUpdatedAt: null,
-        currency: 'USD',
+        rates: {},                 // currency -> units per 1 USD (live)
+        rateOverrides: {},         // currency -> your own rate
+        ratesUpdatedAt: null,
+        currency: 'USD',           // amounts are shown in this currency
+        currencies: ['USD', 'LKR'],
         theme: prefersLight() ? 'light' : 'dark',
         budget: 1000,              // overall monthly budget, USD
         categoryBudgets: {},       // categoryId -> monthly limit, USD
@@ -95,6 +97,9 @@ let currentTab = 'dashboard';
 let planTab = 'budgets';
 let activityType = 'all';
 let activityCategory = 'all';
+let activityAccount = 'all';
+let activityView = 'list';
+let activityDay = null;
 let activityMonth = { y: new Date().getFullYear(), m: new Date().getMonth() };
 let dashboardRange = '30';
 let analyticsRange = '30';
@@ -182,23 +187,64 @@ const dueLabel = (s) => {
     return { text: `Due ${shortDate(s)}`, tone: '' };
 };
 
-/* ---- Money ---- */
+/* ---- Money: any currency; rates are units per 1 USD ---- */
+const CURRENCIES = {
+    USD: { symbol: '$', name: 'US dollar' },
+    LKR: { symbol: 'Rs. ', name: 'Sri Lankan rupee' },
+    EUR: { symbol: '€', name: 'Euro' },
+    GBP: { symbol: '£', name: 'British pound' },
+    INR: { symbol: '₹', name: 'Indian rupee' },
+    AED: { symbol: 'AED ', name: 'UAE dirham' },
+    SAR: { symbol: 'SAR ', name: 'Saudi riyal' },
+    QAR: { symbol: 'QAR ', name: 'Qatari riyal' },
+    KWD: { symbol: 'KWD ', name: 'Kuwaiti dinar' },
+    OMR: { symbol: 'OMR ', name: 'Omani rial' },
+    AUD: { symbol: 'A$', name: 'Australian dollar' },
+    CAD: { symbol: 'C$', name: 'Canadian dollar' },
+    SGD: { symbol: 'S$', name: 'Singapore dollar' },
+    MYR: { symbol: 'RM ', name: 'Malaysian ringgit' },
+    JPY: { symbol: '¥', name: 'Japanese yen' },
+    CNY: { symbol: 'CN¥', name: 'Chinese yuan' },
+    MVR: { symbol: 'Rf ', name: 'Maldivian rufiyaa' }
+};
+// Used until the first live update; approximate.
+const FALLBACK_RATES = { USD: 1, LKR: 300, EUR: 0.92, GBP: 0.79, INR: 84, AED: 3.6725, SAR: 3.75, QAR: 3.64, KWD: 0.307, OMR: 0.385, AUD: 1.52, CAD: 1.38, SGD: 1.34, MYR: 4.6, JPY: 150, CNY: 7.2, MVR: 15.4 };
+const isCurrency = (c) => typeof c === 'string' && Object.prototype.hasOwnProperty.call(CURRENCIES, c);
+const normCur = (c) => (isCurrency(c) ? c : 'USD');
+const fmtCache = {};
+const decimalsFor = (cur) => {
+    try { return new Intl.NumberFormat('en-US', { style: 'currency', currency: cur }).resolvedOptions().maximumFractionDigits; } catch (e) { return 2; }
+};
+const numberFmt = (cur) => fmtCache[cur] || (fmtCache[cur] = new Intl.NumberFormat('en-US', { minimumFractionDigits: decimalsFor(cur), maximumFractionDigits: decimalsFor(cur) }));
 const money2 = new Intl.NumberFormat('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const moneyCompact = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
-const symbolFor = (cur) => (cur === 'USD' ? '$' : 'Rs. ');
-const convertAmount = (amount, from, to) => {
-    if (from === to) return amount;
-    const rate = state.config.rate;
-    if (from === 'USD' && to === 'LKR') return amount * rate;
-    if (from === 'LKR' && to === 'USD') return amount / rate;
-    return amount;
+const symbolFor = (cur) => (CURRENCIES[cur] ? CURRENCIES[cur].symbol : `${cur} `);
+const rateFor = (cur) => {
+    if (cur === 'USD') return 1;
+    const own = state.config.rateOverrides[cur];
+    if (own > 0) return own;
+    const live = state.config.rates[cur];
+    return live > 0 ? live : (FALLBACK_RATES[cur] || 1);
 };
+const formatRate = (r) => (r >= 100 ? r.toFixed(2) : r >= 1 ? r.toFixed(3) : r.toFixed(4));
+const convertAmount = (amount, from, to) => (from === to ? amount : (amount / rateFor(from)) * rateFor(to));
 const toDisplay = (amount, cur) => convertAmount(amount, cur, state.config.currency);
-const formatCurrency = (amount, cur) => `${amount < 0 ? '-' : ''}${symbolFor(cur)}${money2.format(Math.abs(amount))}`;
-const formatSigned = (amount, cur) => `${amount > 0 ? '+' : amount < 0 ? '−' : ''}${symbolFor(cur)}${money2.format(Math.abs(amount))}`;
-const formatCompact = (amount, cur) => `${amount < 0 ? '-' : ''}${symbolFor(cur).trim()}${cur === 'LKR' ? ' ' : ''}${moneyCompact.format(Math.abs(amount))}`;
+const formatCurrency = (amount, cur) => `${amount < 0 ? '-' : ''}${symbolFor(cur)}${numberFmt(cur).format(Math.abs(amount))}`;
+const formatSigned = (amount, cur) => `${amount > 0 ? '+' : amount < 0 ? '−' : ''}${symbolFor(cur)}${numberFmt(cur).format(Math.abs(amount))}`;
+const formatCompact = (amount, cur) => {
+    const sym = symbolFor(cur);
+    return `${amount < 0 ? '-' : ''}${sym.trim()}${/\s$/.test(sym) ? ' ' : ''}${moneyCompact.format(Math.abs(amount))}`;
+};
 const formatDisplay = (amount, cur) => formatCurrency(toDisplay(amount, cur), state.config.currency);
 const dcur = () => state.config.currency;
+const myCurrencies = () => state.config.currencies.filter(isCurrency);
+const fillCurrencySelect = (sel, value) => {
+    if (!sel) return;
+    const v = normCur(value);
+    const list = [...new Set([...myCurrencies(), v])];
+    sel.innerHTML = list.map((c) => `<option value="${c}">${c}</option>`).join('');
+    sel.value = v;
+};
 // Small boxes on phones: full amount when it fits, "Rs. 599.3K" when it doesn't (full value in the tooltip).
 const fitMoney = (v, cur, max = 11) => {
     const full = formatCurrency(v, cur);
@@ -223,6 +269,36 @@ const catBadge = (catId, type) => {
     return `<span class="cat-badge" style="--cat:${catColor(c)}">${icon(iconId)}</span>`;
 };
 
+/* ---- Accounts ---- */
+const ACCOUNT_KINDS = {
+    cash: { label: 'Cash', icon: 'i-cash' },
+    bank: { label: 'Bank account', icon: 'i-bank' },
+    card: { label: 'Card', icon: 'i-card' },
+    mobile: { label: 'Mobile wallet', icon: 'x-phone' },
+    savings: { label: 'Savings', icon: 'i-target' }
+};
+const accountById = (id) => state.accounts.find((a) => a.id === id) || state.accounts[0];
+const accountIcon = (a) => (ACCOUNT_KINDS[a && a.kind] || ACCOUNT_KINDS.cash).icon;
+const accountBalance = (acc) => {
+    let bal = acc.opening;
+    state.transactions.forEach((t) => {
+        if (t.type === 'transfer') {
+            if (t.accountId === acc.id) bal -= convertAmount(t.amount, t.currency, acc.currency);
+            if (t.toAccountId === acc.id) bal += convertAmount(t.toAmount, t.toCurrency, acc.currency);
+        } else if (t.accountId === acc.id) {
+            bal += (t.type === 'income' ? 1 : -1) * convertAmount(t.amount, t.currency, acc.currency);
+        }
+    });
+    return bal;
+};
+const netWorth = () => state.accounts.reduce((s, a) => s + toDisplay(accountBalance(a), a.currency), 0);
+const fillAccountSelect = (sel, value, { all = false } = {}) => {
+    if (!sel) return;
+    sel.innerHTML = (all ? ['<option value="all">All accounts</option>'] : [])
+        .concat(state.accounts.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)} (${a.currency})</option>`)).join('');
+    sel.value = value && (value === 'all' || state.accounts.some((a) => a.id === value)) ? value : (all ? 'all' : state.accounts[0].id);
+};
+
 /* =========================================================================
    5. Persistence & migration
    ========================================================================= */
@@ -233,15 +309,21 @@ const normalizeTx = (t, forcedType) => {
     if (!t || typeof t !== 'object') return null;
     const amount = toNumber(t.amount, NaN);
     if (!(amount > 0)) return null;
-    const type = forcedType || (t.type === 'income' ? 'income' : 'expense');
+    const type = forcedType || (t.type === 'income' ? 'income' : t.type === 'transfer' ? 'transfer' : 'expense');
     const desc = String(t.desc != null ? t.desc : (t.description != null ? t.description : '')).trim().slice(0, 120);
+    const transfer = type === 'transfer'
+        ? { toAccountId: t.toAccountId ? String(t.toAccountId) : null, toCurrency: normCur(t.toCurrency || t.currency), toAmount: toNumber(t.toAmount, amount) > 0 ? toNumber(t.toAmount, amount) : amount }
+        : {};
     return {
+        ...transfer,
         id: String(t.id || generateId()),
         type,
-        desc: desc || (type === 'income' ? 'Income' : 'Expense'),
+        accountId: t.accountId ? String(t.accountId) : null,
+        receipt: t.receipt && t.receipt.id ? { id: String(t.receipt.id), path: t.receipt.path ? String(t.receipt.path) : null } : null,
+        desc: desc || (type === 'income' ? 'Income' : type === 'transfer' ? 'Transfer' : 'Expense'),
         amount,
-        currency: t.currency === 'LKR' ? 'LKR' : 'USD',
-        category: String(t.category || FALLBACK_CATEGORY[type]),
+        currency: normCur(t.currency),
+        category: type === 'transfer' ? 'Transfer' : String(t.category || FALLBACK_CATEGORY[type]),
         date: cleanDate(t.date) || toISODate(),
         note: t.note ? String(t.note).slice(0, 500) : '',
         createdAt: stamp(t.createdAt) || stamp(t.created_at),
@@ -257,7 +339,7 @@ const normalizeGoal = (g) => {
         id: String(g.id || generateId()),
         name: String(g.name || 'Savings goal').trim().slice(0, 80) || 'Savings goal',
         target,
-        currency: g.currency === 'LKR' ? 'LKR' : 'USD',
+        currency: normCur(g.currency),
         saved: Math.max(0, toNumber(g.saved, 0)),
         deadline: cleanDate(g.deadline),
         createdAt: stamp(g.createdAt) || stamp(g.created_at)
@@ -275,11 +357,12 @@ const normalizeBill = (b) => {
         type,
         name: String(b.name || 'Bill').trim().slice(0, 60) || 'Bill',
         amount,
-        currency: b.currency === 'LKR' ? 'LKR' : 'USD',
+        currency: normCur(b.currency),
         category: String(b.category || FALLBACK_CATEGORY[type]),
         frequency: FREQ_LABELS[b.frequency] ? b.frequency : 'monthly',
         nextDate,
         anchorDay: Math.min(31, Math.max(1, toNumber(b.anchorDay, parseDate(nextDate).getDate()))),
+        accountId: b.accountId ? String(b.accountId) : null,
         autoLog: b.autoLog !== false,
         createdAt: stamp(b.createdAt)
     };
@@ -294,12 +377,36 @@ const normalizeDebt = (d) => {
         direction: d.direction === 'borrowed' ? 'borrowed' : 'lent',
         person: String(d.person || 'Someone').trim().slice(0, 60) || 'Someone',
         amount,
-        currency: d.currency === 'LKR' ? 'LKR' : 'USD',
+        currency: normCur(d.currency),
         repaid: Math.min(amount, Math.max(0, toNumber(d.repaid, 0))),
         dueDate: cleanDate(d.dueDate),
         note: d.note ? String(d.note).slice(0, 500) : '',
         createdAt: stamp(d.createdAt)
     };
+};
+
+const normalizeAccount = (a) => {
+    if (!a || typeof a !== 'object' || !a.id) return null;
+    return {
+        id: String(a.id),
+        name: String(a.name || 'Account').trim().slice(0, 40) || 'Account',
+        kind: ACCOUNT_KINDS[a.kind] ? a.kind : 'cash',
+        currency: normCur(a.currency),
+        opening: toNumber(a.opening, 0),
+        createdAt: stamp(a.createdAt)
+    };
+};
+
+// Every entry belongs to an account; older data gets a "Cash" account.
+const ensureAccounts = (st) => {
+    if (!st.accounts.length) st.accounts = [{ id: 'acc-cash', name: 'Cash', kind: 'cash', currency: st.config.currency || 'USD', opening: 0, createdAt: 0 }];
+    const ids = new Set(st.accounts.map((a) => a.id));
+    const first = st.accounts[0].id;
+    st.transactions.forEach((t) => {
+        if (!ids.has(t.accountId)) t.accountId = first;
+        if (t.type === 'transfer' && !ids.has(t.toAccountId)) t.toAccountId = first;
+    });
+    st.recurring.forEach((b) => { if (!ids.has(b.accountId)) b.accountId = first; });
 };
 
 const normalizeCategory = (c) => {
@@ -333,11 +440,22 @@ const normalizeState = (raw) => {
     if (!raw || typeof raw !== 'object') return base;
 
     const cfg = raw.config && typeof raw.config === 'object' ? raw.config : {};
-    const rate = toNumber(cfg.rate, 300);
-    base.config.rate = rate > 0 ? rate : 300;
-    base.config.rateLocked = !!cfg.rateLocked;
-    base.config.rateUpdatedAt = cfg.rateUpdatedAt || null;
-    base.config.currency = cfg.currency === 'LKR' ? 'LKR' : 'USD';
+    const copyRates = (src) => {
+        const outRates = {};
+        if (src && typeof src === 'object') Object.keys(src).forEach((k) => { const v = toNumber(src[k], 0); if (isCurrency(k) && v > 0) outRates[k] = v; });
+        return outRates;
+    };
+    base.config.rates = copyRates(cfg.rates);
+    base.config.rateOverrides = copyRates(cfg.rateOverrides);
+    const legacyRate = toNumber(cfg.rate, 0); // v1-v3 kept a single USD -> LKR rate
+    if (legacyRate > 0 && !base.config.rates.LKR) {
+        if (cfg.rateLocked) base.config.rateOverrides.LKR = legacyRate;
+        else base.config.rates.LKR = legacyRate;
+    }
+    base.config.ratesUpdatedAt = cfg.ratesUpdatedAt || cfg.rateUpdatedAt || null;
+    base.config.currency = normCur(cfg.currency);
+    const curList = Array.isArray(cfg.currencies) ? cfg.currencies.filter(isCurrency) : [];
+    base.config.currencies = [...new Set((curList.length ? curList : ['USD', 'LKR']).concat(base.config.currency))];
     if (cfg.theme === 'light' || cfg.theme === 'dark') base.config.theme = cfg.theme;
     const budget = toNumber(cfg.budget, 1000);
     base.config.budget = budget > 0 ? budget : 1000;
@@ -355,6 +473,7 @@ const normalizeState = (raw) => {
     if (cfg.lock && typeof cfg.lock === 'object' && cfg.lock.hash && cfg.lock.salt) {
         base.config.lock = { enabled: !!cfg.lock.enabled, hash: String(cfg.lock.hash), salt: String(cfg.lock.salt), biometric: !!cfg.lock.biometric };
     }
+    base.config.lastAccount = cfg.lastAccount ? String(cfg.lastAccount) : null;
     base.config.reminders = !!cfg.reminders;
     base.config.reminderIds = Array.isArray(cfg.reminderIds) ? cfg.reminderIds.filter(Number.isInteger) : [];
 
@@ -368,6 +487,8 @@ const normalizeState = (raw) => {
     base.savings = Array.isArray(raw.savings) ? raw.savings.map(normalizeGoal).filter(Boolean) : [];
     base.recurring = Array.isArray(raw.recurring) ? raw.recurring.map(normalizeBill).filter(Boolean) : [];
     base.debts = Array.isArray(raw.debts) ? raw.debts.map(normalizeDebt).filter(Boolean) : [];
+    base.accounts = Array.isArray(raw.accounts) ? raw.accounts.map(normalizeAccount).filter(Boolean) : [];
+    ensureAccounts(base);
 
     if (raw.auth && typeof raw.auth === 'object') {
         const u = raw.auth.user;
@@ -647,7 +768,12 @@ const setTheme = (theme, originEvent) => {
     let y = window.innerHeight / 2;
     if (originEvent && originEvent.clientX) { x = originEvent.clientX; y = originEvent.clientY; }
     const endRadius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
-    const transition = document.startViewTransition(() => applyTheme(theme));
+    // The animated reveal needs the browser to draw a frame. If it can't (busy or background tab),
+    // switch the theme anyway so the button never appears to do nothing.
+    let applied = false;
+    const run = () => { if (!applied) { applied = true; applyTheme(theme); } };
+    const transition = document.startViewTransition(run);
+    setTimeout(run, 400);
     transition.ready.then(() => {
         document.documentElement.animate(
             { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${endRadius}px at ${x}px ${y}px)`] },
@@ -661,20 +787,24 @@ const setTheme = (theme, originEvent) => {
    ========================================================================= */
 let rateStatus = 'offline';
 
+// The currency the app bar compares with the dollar: the display currency, or your first other one.
+const chipCurrency = () => (dcur() !== 'USD' ? dcur() : myCurrencies().find((c) => c !== 'USD') || null);
+
 const setRateStatus = (status) => {
     rateStatus = status;
     const dot = $('connection-indicator');
     const text = $('current-rate-display');
-    if (text) text.textContent = status === 'syncing' ? 'Updating rate…' : `$1 = Rs. ${state.config.rate.toFixed(2)}`;
-    if (dot) dot.dataset.status = status;
+    const c = chipCurrency();
+    if (text) text.textContent = status === 'syncing' ? 'Updating rates…' : (c ? `$1 = ${symbolFor(c).trim()}${/\s$/.test(symbolFor(c)) ? ' ' : ''}${formatRate(rateFor(c))}` : 'Exchange rates');
+    const shown = c && state.config.rateOverrides[c] > 0 ? 'manual' : status;
+    if (dot) dot.dataset.status = shown;
     const chip = $('rate-chip');
-    const titles = { live: 'Live exchange rate', syncing: 'Updating exchange rate', manual: 'Your own exchange rate', offline: 'Saved exchange rate (offline)' };
-    if (chip) chip.title = `${titles[status] || ''}. Tap to change.`;
+    const titles = { live: 'Live exchange rate', syncing: 'Updating exchange rates', manual: 'Your own exchange rate', offline: 'Saved exchange rate (offline)' };
+    if (chip) chip.title = `${titles[shown] || ''}. Tap to change.`;
     renderRateSetting();
 };
 
 const fetchLiveExchangeRate = async ({ manual = false } = {}) => {
-    if (state.config.rateLocked && !manual) { setRateStatus('manual'); return; }
     setRateStatus('syncing');
     const ctrl = typeof AbortController !== 'undefined' ? new AbortController() : null;
     const timer = ctrl ? setTimeout(() => ctrl.abort(), 9000) : null;
@@ -682,19 +812,19 @@ const fetchLiveExchangeRate = async ({ manual = false } = {}) => {
         const res = await fetch(RATE_URL, { cache: 'no-store', signal: ctrl ? ctrl.signal : undefined });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        const rate = Number(data && data.rates && data.rates.LKR);
-        if (!(rate > 0)) throw new Error('No LKR rate in response');
-        state.config.rate = rate;
-        state.config.rateLocked = false;
-        state.config.rateUpdatedAt = Date.now();
+        const rates = (data && data.rates) || {};
+        if (!(Number(rates.LKR) > 0)) throw new Error('Rates missing from response');
+        Object.keys(CURRENCIES).forEach((c) => { const v = Number(rates[c]); if (v > 0) state.config.rates[c] = v; });
+        if (manual) state.config.rateOverrides = {};
+        state.config.ratesUpdatedAt = Date.now();
         saveState();
         setRateStatus('live');
         renderActive();
-        if (manual) showToast(`Live rate updated: 1 USD = ${rate.toFixed(2)} LKR`, 'success');
+        if (manual) showToast('Live exchange rates updated', 'success');
     } catch (err) {
-        console.warn('Live exchange rate unavailable:', err);
-        setRateStatus(state.config.rateLocked ? 'manual' : 'offline');
-        if (manual) showToast(`Couldn't reach the rate service. Still using 1 USD = ${state.config.rate.toFixed(2)} LKR.`, 'warning');
+        console.warn('Live exchange rates unavailable:', err);
+        setRateStatus('offline');
+        if (manual) showToast("Couldn't reach the rate service. Using the last saved rates.", 'warning');
     } finally {
         if (timer) clearTimeout(timer);
     }
@@ -750,9 +880,10 @@ const goToPlan = (sub) => {
     else switchTab('plan');
 };
 
-const goToActivity = (type) => {
+const goToActivity = (type, keepAccount = false) => {
     activityType = type || 'all';
     activityCategory = 'all';
+    if (!keepAccount) activityAccount = 'all';
     const now = new Date();
     activityMonth = { y: now.getFullYear(), m: now.getMonth() };
     if (currentTab === 'activity') renderActivity();
@@ -763,6 +894,7 @@ const goToActivity = (type) => {
    11. Calculations
    ========================================================================= */
 const expenses = () => state.transactions.filter((t) => t.type === 'expense');
+const inAccount = (t, accId) => accId === 'all' || t.accountId === accId || (t.type === 'transfer' && t.toAccountId === accId);
 const sortByNewest = (list) => [...list].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
 const sumDisplay = (list) => list.reduce((s, e) => s + toDisplay(e.amount, e.currency), 0);
 const inMonth = (t, y, m) => { const d = parseDate(t.date); return d.getFullYear() === y && d.getMonth() === m; };
@@ -846,7 +978,9 @@ const logBill = (bill, date) => {
         date,
         note: '',
         createdAt: Date.now(),
-        recurringId: bill.id
+        recurringId: bill.id,
+        accountId: bill.accountId || state.accounts[0].id,
+        receipt: null
     };
     state.transactions.push(tx);
     queueSync('transaction', tx.id, 'upsert', false);
@@ -965,7 +1099,17 @@ const enableReminders = async (on) => {
 /* =========================================================================
    14. Rendering — shared pieces
    ========================================================================= */
+const transferLine = (t) => `${accountById(t.accountId).name} to ${accountById(t.toAccountId).name}`;
+
 const txRow = (t, { showDate = true } = {}) => {
+    const when = showDate ? `<span class="tx-when">${escapeHtml(relativeDayLabel(t.date))}</span>` : '';
+    if (t.type === 'transfer') {
+        return `<li><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}">
+            <span class="cat-badge" style="--cat:var(--text-2)">${icon('i-swap')}</span>
+            <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub"><span>${escapeHtml(transferLine(t))}</span></span></span>
+            <span class="tx-amt"><span class="amount is-transfer">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>${when}</span>
+        </button></li>`;
+    }
     const cat = catById(t.category, t.type);
     const value = toDisplay(t.amount, t.currency);
     const signed = formatSigned(t.type === 'income' ? value : -value, dcur());
@@ -973,8 +1117,8 @@ const txRow = (t, { showDate = true } = {}) => {
     const label = showDate ? cat.name : (t.note || cat.name);
     return `<li><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}">
         ${catBadge(t.category, t.type)}
-        <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub">${t.recurringId ? icon('i-repeat') : ''}<span>${escapeHtml(label)}</span>${orig}</span></span>
-        <span class="tx-amt"><span class="amount ${t.type === 'income' ? 'is-income' : ''}">${escapeHtml(signed)}</span>${showDate ? `<span class="tx-when">${escapeHtml(relativeDayLabel(t.date))}</span>` : ''}</span>
+        <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub">${t.recurringId ? icon('i-repeat') : ''}${t.receipt ? icon('i-image') : ''}<span>${escapeHtml(label)}</span>${orig}</span></span>
+        <span class="tx-amt"><span class="amount ${t.type === 'income' ? 'is-income' : ''}">${escapeHtml(signed)}</span>${when}</span>
     </button></li>`;
 };
 
@@ -1070,6 +1214,15 @@ const renderDashboard = () => {
         </div>`;
     }).join('');
 
+    setMoney($('networth'), netWorth(), cur, 16);
+    $('account-strip').innerHTML = state.accounts.map((a) => {
+        const bal = accountBalance(a);
+        return `<button type="button" class="account-chip" data-account-filter="${escapeHtml(a.id)}" aria-label="${escapeHtml(a.name)}: ${escapeHtml(formatCurrency(bal, a.currency))}. Show its activity">
+            <span class="account-chip-top"><span class="account-icon">${icon(accountIcon(a))}</span><span class="account-name">${escapeHtml(a.name)}</span></span>
+            <span class="account-bal amount ${bal < 0 ? 'text-expense' : ''}" title="${escapeHtml(formatCurrency(bal, a.currency))}">${escapeHtml(fitMoney(bal, a.currency, 14))}</span>
+        </button>`;
+    }).join('') + `<button type="button" class="account-chip account-add" data-action="add-account">${icon('i-plus')}<span>Add account</span></button>`;
+
     const recent = sortByNewest(state.transactions).slice(0, 6);
     $('recent-list').innerHTML = recent.length
         ? recent.map((t) => txRow(t)).join('')
@@ -1097,6 +1250,10 @@ const renderActivity = () => {
     $('month-prev').style.opacity = query ? '0.35' : '';
 
     setPressed('[data-activity-type]', (b) => b.dataset.activityType === activityType);
+    setPressed('[data-activity-view]', (b) => b.dataset.activityView === activityView);
+    fillAccountSelect($('activity-account'), activityAccount, { all: true });
+    activityAccount = $('activity-account').value;
+    $('activity-account-wrap').hidden = state.accounts.length < 2;
 
     const chipCats = activityType === 'all' ? state.categories : catsOfType(activityType);
     if (activityCategory !== 'all' && !chipCats.some((c) => c.id === activityCategory)) activityCategory = 'all';
@@ -1104,7 +1261,8 @@ const renderActivity = () => {
         .concat(chipCats.map((c) => `<button type="button" class="chip" data-filter-category="${escapeHtml(c.id)}" aria-pressed="${activityCategory === c.id}" style="--cat:${catColor(c)}"><span class="chip-dot"></span>${escapeHtml(c.name)}</button>`))
         .join('');
 
-    const base = query ? state.transactions : state.transactions.filter((t) => inMonth(t, y, m));
+    const scoped = state.transactions.filter((t) => inAccount(t, activityAccount));
+    const base = query ? scoped : scoped.filter((t) => inMonth(t, y, m));
     let list = base;
     if (activityType !== 'all') list = list.filter((t) => t.type === activityType);
     if (activityCategory !== 'all') list = list.filter((t) => t.category === activityCategory);
@@ -1123,14 +1281,25 @@ const renderActivity = () => {
     setMoney($('act-net'), inc - out, cur, 11, true);
     $('act-net').className = `amount ${inc - out >= 0 ? 'text-income' : 'text-expense'}`;
 
-    const container = $('activity-list');
+    const showCalendar = activityView === 'calendar' && !query;
+    renderCalendar(showCalendar ? base.filter((t) => (activityType === 'all' || t.type === activityType) && (activityCategory === 'all' || t.category === activityCategory)) : null, y, m);
+    if (showCalendar) {
+        if (activityDay && activityDay.slice(0, 7) === `${y}-${pad2(m + 1)}`) list = list.filter((t) => t.date === activityDay);
+        else { activityDay = null; list = []; }
+    }
+
+    const container = $('activity-entries');
+    if (showCalendar && !activityDay) {
+        container.innerHTML = '<p class="card-sub calendar-hint">Tap a day to see what you spent and earned.</p>';
+        return;
+    }
     if (!state.transactions.length) {
         container.innerHTML = `<div class="card">${emptyState({ iconId: 'i-activity', title: 'No activity yet', text: 'Expenses and income you add show up here, grouped by day.', actionLabel: 'Add expense', action: 'add-expense' })}</div>`;
         return;
     }
     if (!list.length) {
         const what = activityType === 'all' ? 'entries' : activityType === 'income' ? 'income' : 'expenses';
-        container.innerHTML = `<div class="card"><div class="empty"><span class="empty-icon">${icon('i-search')}</span><span class="empty-title">Nothing here</span><span class="empty-text">${query ? 'No entries match your search.' : `No ${what} in ${escapeHtml(monthName(y, m, { month: 'long' }))}.`}</span>${(activityType !== 'all' || activityCategory !== 'all' || query) ? '<button type="button" class="btn btn-secondary btn-sm" data-clear-filters>Clear filters</button>' : ''}</div></div>`;
+        container.innerHTML = `<div class="card"><div class="empty"><span class="empty-icon">${icon('i-search')}</span><span class="empty-title">Nothing here</span><span class="empty-text">${query ? 'No entries match your search.' : showCalendar ? `Nothing logged on ${escapeHtml(relativeDayLabel(activityDay))}.` : `No ${what} in ${escapeHtml(monthName(y, m, { month: 'long' }))}.`}</span>${(activityType !== 'all' || activityCategory !== 'all' || activityAccount !== 'all' || query) ? '<button type="button" class="btn btn-secondary btn-sm" data-clear-filters>Clear filters</button>' : ''}</div></div>`;
         return;
     }
 
@@ -1147,6 +1316,40 @@ const renderActivity = () => {
             <div class="card card-list"><ul class="tx-list">${g.items.map((t) => txRow(t, { showDate: false })).join('')}</ul></div>
         </div>`;
     }).join('');
+};
+
+const renderCalendar = (list, y, m) => {
+    const el = $('activity-calendar');
+    if (!list) { el.hidden = true; return; }
+    el.hidden = false;
+    const spent = {};
+    const earned = {};
+    list.forEach((t) => {
+        if (t.type === 'expense') spent[t.date] = (spent[t.date] || 0) + toDisplay(t.amount, t.currency);
+        if (t.type === 'income') earned[t.date] = (earned[t.date] || 0) + toDisplay(t.amount, t.currency);
+    });
+    const max = Math.max(0, ...Object.values(spent));
+    const days = daysInMonth(y, m);
+    const lead = new Date(y, m, 1).getDay();
+    const today = todayISO();
+    const cur = dcur();
+    const cells = [];
+    for (let i = 0; i < lead; i++) cells.push('<span class="cal-blank"></span>');
+    for (let d = 1; d <= days; d++) {
+        const iso = `${y}-${pad2(m + 1)}-${pad2(d)}`;
+        const out = spent[iso] || 0;
+        const inc = earned[iso] || 0;
+        const heat = max > 0 && out > 0 ? Math.max(0.12, out / max) : 0;
+        const label = `${shortDate(iso)}${out ? `, spent ${formatCurrency(out, cur)}` : ''}${inc ? `, earned ${formatCurrency(inc, cur)}` : ''}`;
+        cells.push(`<button type="button" class="cal-day" data-cal-day="${iso}" style="--heat:${heat.toFixed(2)}" ${heat > 0.55 ? 'data-hot="true"' : ''} aria-pressed="${activityDay === iso}" ${iso === today ? 'aria-current="date"' : ''} aria-label="${escapeHtml(label)}">
+            <span class="cal-num">${d}</span>
+            ${out ? `<span class="cal-amt">${escapeHtml(formatCompact(out, cur).replace(/^[^\d-]+/, ''))}</span>` : ''}
+            ${inc ? '<span class="cal-dot" aria-hidden="true"></span>' : ''}
+        </button>`);
+    }
+    const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    el.innerHTML = `<div class="cal-grid">${names.map((n) => `<span class="cal-head" aria-hidden="true">${n.slice(0, 2)}</span>`).join('')}${cells.join('')}</div>
+        <div class="cal-legend"><span><i class="cal-swatch"></i>More spending is a deeper green</span><span><i class="cal-dot"></i>Income</span></div>`;
 };
 
 /* =========================================================================
@@ -1364,19 +1567,29 @@ const renderAnalytics = () => {
    ========================================================================= */
 const renderRateSetting = () => {
     const input = $('setting-rate');
-    if (!input) return;
-    if (document.activeElement !== input) input.value = state.config.rate.toFixed(2);
+    const sel = $('setting-rate-currency');
+    if (!input || !sel) return;
+    const others = myCurrencies().filter((c) => c !== 'USD');
+    const block = $('setting-rate-block');
+    block.hidden = !others.length;
+    if (!others.length) return;
+    const keep = others.includes(sel.value) ? sel.value : (others.includes(dcur()) ? dcur() : others[0]);
+    sel.innerHTML = others.map((c) => `<option value="${c}">${c}</option>`).join('');
+    sel.value = keep;
+    if (document.activeElement !== input) input.value = formatRate(rateFor(keep));
     const desc = $('rate-mode-desc');
-    if (state.config.rateLocked) desc.textContent = 'Using your own rate. Tap "Live rate" to go back to automatic updates.';
-    else if (rateStatus === 'live' && state.config.rateUpdatedAt) desc.textContent = `Live rate, updated ${new Date(state.config.rateUpdatedAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' })}.`;
-    else if (rateStatus === 'syncing') desc.textContent = 'Getting the latest rate…';
-    else desc.textContent = state.config.rateUpdatedAt ? `Offline. Using the rate from ${new Date(state.config.rateUpdatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}.` : 'Updates automatically when you are online.';
+    if (state.config.rateOverrides[keep] > 0) desc.textContent = `Using your own rate for ${keep}. Tap "Live rate" to go back to automatic updates.`;
+    else if (rateStatus === 'syncing') desc.textContent = 'Getting the latest rates…';
+    else if (state.config.ratesUpdatedAt && state.config.rates[keep]) desc.textContent = `${rateStatus === 'live' ? 'Live' : 'Saved'} rate from ${new Date(state.config.ratesUpdatedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.`;
+    else desc.textContent = 'Approximate until the first live update. Rates update automatically when you are online.';
 };
 
 const renderSettings = () => {
     renderRateSetting();
     updateThemeChrome();
     updateUserProfileUI();
+    $('currencies-desc').textContent = `${myCurrencies().join(', ')}. Amounts shown in ${dcur()}.`;
+    $('accounts-desc').textContent = state.accounts.map((a) => a.name).join(', ');
     const custom = state.categories.filter((c) => !c.builtIn).length;
     $('categories-count').textContent = `${state.categories.length} categories${custom ? ` (${custom} of your own)` : ''}. Add your own.`;
     const lock = state.config.lock;
@@ -1405,7 +1618,7 @@ const hexToRgba = (hex, alpha) => {
 };
 const chartTheme = () => ({
     text: cssVar('--text-3'), grid: cssVar('--chart-grid'),
-    income: cssVar('--income'), expense: cssVar('--expense'), surface: cssVar('--surface'),
+    income: cssVar('--income'), expense: cssVar('--chart-out'), surface: cssVar('--surface'),
     tooltipBg: cssVar('--bg-elevated'), tooltipText: cssVar('--text'), tooltipBorder: cssVar('--border-strong'), track: cssVar('--surface-2')
 });
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -1454,6 +1667,7 @@ const bucketize = (list, start, end, byMonth) => {
             c.setMonth(c.getMonth() + 1);
         }
         list.forEach((t) => {
+            if (t.type === 'transfer') return;
             const k = t.date.slice(0, 7);
             const map = t.type === 'income' ? inc : out;
             if (map.has(k)) map.set(k, map.get(k) + toDisplay(t.amount, t.currency));
@@ -1468,6 +1682,7 @@ const bucketize = (list, start, end, byMonth) => {
             labels.push(d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
         }
         list.forEach((t) => {
+            if (t.type === 'transfer') return;
             const map = t.type === 'income' ? inc : out;
             if (map.has(t.date)) map.set(t.date, map.get(t.date) + toDisplay(t.amount, t.currency));
         });
@@ -1580,7 +1795,10 @@ const openAddTx = (type = 'expense') => {
     $('tx-form').reset();
     $('tx-id').value = '';
     $('btn-delete-tx').hidden = true;
-    $('tx-currency').value = dcur();
+    fillAccountSelect($('tx-account'), activityAccount !== 'all' ? activityAccount : state.config.lastAccount);
+    $('tx-account-field').hidden = state.accounts.length < 2;
+    setReceiptDraft(null);
+    fillCurrencySelect($('tx-currency'), accountById($('tx-account').value).currency);
     $('tx-date').value = todayISO();
     setTxType(type);
     openOrSwap('modal-tx');
@@ -1589,11 +1807,15 @@ const openAddTx = (type = 'expense') => {
 const openEditTx = (id) => {
     const t = state.transactions.find((x) => x.id === id);
     if (!t) return;
+    if (t.type === 'transfer') { openTransfer(t.id); return; }
     $('tx-form').reset();
+    fillAccountSelect($('tx-account'), t.accountId);
+    $('tx-account-field').hidden = state.accounts.length < 2;
+    setReceiptDraft(t);
     $('tx-id').value = t.id;
     $('btn-delete-tx').hidden = false;
     $('tx-amount').value = t.amount;
-    $('tx-currency').value = t.currency;
+    fillCurrencySelect($('tx-currency'), t.currency);
     $('tx-desc').value = t.desc;
     $('tx-date').value = t.date;
     $('tx-note').value = t.note || '';
@@ -1615,13 +1837,14 @@ const budgetAlert = (categoryId) => {
     else if (s.budgetPct >= 80) showToast(`You've used ${Math.round(s.budgetPct)}% of this month's budget.`, 'warning');
 };
 
-const submitTx = () => {
+const submitTx = async () => {
     const id = $('tx-id').value;
     const amount = toNumber($('tx-amount').value, NaN);
-    const currency = $('tx-currency').value === 'LKR' ? 'LKR' : 'USD';
+    const currency = normCur($('tx-currency').value);
     const desc = $('tx-desc').value.trim();
     const date = $('tx-date').value;
     const note = $('tx-note').value.trim();
+    const accountId = $('tx-account').value || state.accounts[0].id;
     const catInput = document.querySelector('input[name="tx-category"]:checked');
     const category = catInput ? catInput.value : FALLBACK_CATEGORY[txType];
 
@@ -1629,20 +1852,37 @@ const submitTx = () => {
     if (!desc) return fieldError($('tx-desc'), txType === 'income' ? 'Add where the money came from, like "Salary".' : 'Add a short description, like "Groceries".');
     if (!isISODate(date)) return fieldError($('tx-date'), 'Pick a date.');
 
+    const prev = id ? state.transactions.find((t) => t.id === id) : null;
+    let receipt = prev ? prev.receipt : null;
+    if (receiptDraft.mode === 'new') {
+        try {
+            const rid = generateId();
+            await receiptStore.put(rid, receiptDraft.blob);
+            if (receipt) removeReceipt(receipt);
+            receipt = { id: rid, path: null };
+        } catch (err) {
+            showToast("The receipt photo couldn't be saved on this device. The entry was saved without it.", 'warning');
+        }
+    } else if (receiptDraft.mode === 'remove' && receipt) {
+        removeReceipt(receipt);
+        receipt = null;
+    }
+
     let record;
-    if (id) {
+    if (prev) {
         const idx = state.transactions.findIndex((t) => t.id === id);
-        if (idx === -1) return false;
-        record = { ...state.transactions[idx], type: txType, desc, amount, currency, category, date, note };
+        record = { ...prev, type: txType, desc, amount, currency, category, date, note, accountId, receipt };
         state.transactions[idx] = record;
     } else {
-        record = { id: generateId(), type: txType, desc, amount, currency, category, date, note, createdAt: Date.now(), recurringId: null };
+        record = { id: generateId(), type: txType, desc, amount, currency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt };
         state.transactions.push(record);
     }
     state.config.lastCategory[txType] = category;
+    state.config.lastAccount = accountId;
     saveState();
     haptic('MEDIUM');
     queueSync('transaction', record.id, 'upsert');
+    if (receipt && !receipt.path) uploadReceipt(record);
     closeSheet('modal-tx');
     showToast(id ? 'Saved' : `${txType === 'income' ? 'Income' : 'Expense'} added: ${formatCurrency(amount, currency)}`, 'success');
     const now = new Date();
@@ -1658,6 +1898,7 @@ const deleteTx = (id) => {
         title: `Delete this ${t.type === 'income' ? 'income' : 'expense'}?`,
         message: `"${t.desc}" (${formatCurrency(t.amount, t.currency)}) will be removed.`,
         onConfirm: () => {
+            if (t.receipt) removeReceipt(t.receipt);
             state.transactions = state.transactions.filter((x) => x.id !== id);
             saveState();
             queueSync('transaction', id, 'delete');
@@ -1678,7 +1919,7 @@ const openAddGoal = () => {
     $('btn-submit-goal').textContent = 'Create goal';
     $('goal-saved-label').textContent = 'Already saved';
     $('btn-delete-goal').hidden = true;
-    $('goal-currency').value = dcur();
+    fillCurrencySelect($('goal-currency'), dcur());
     openOrSwap('modal-goal');
 };
 
@@ -1693,7 +1934,7 @@ const openEditGoal = (id) => {
     $('btn-delete-goal').hidden = false;
     $('goal-name').value = g.name;
     $('goal-target').value = g.target;
-    $('goal-currency').value = g.currency;
+    fillCurrencySelect($('goal-currency'), g.currency);
     $('goal-saved').value = round2(g.saved);
     $('goal-deadline').value = g.deadline || '';
     openOrSwap('modal-goal');
@@ -1703,7 +1944,7 @@ const submitGoal = () => {
     const id = $('goal-id').value;
     const name = $('goal-name').value.trim();
     const target = toNumber($('goal-target').value, NaN);
-    const currency = $('goal-currency').value === 'LKR' ? 'LKR' : 'USD';
+    const currency = normCur($('goal-currency').value);
     const savedRaw = $('goal-saved').value.trim();
     const saved = savedRaw === '' ? 0 : toNumber(savedRaw, NaN);
     const deadline = $('goal-deadline').value || null;
@@ -1752,7 +1993,7 @@ const updateFundsHint = () => {
     const cur = $('funds-currency').value;
     $('funds-hint').textContent = !goal ? '' : goal.currency === cur
         ? `Saved so far: ${formatCurrency(goal.saved, goal.currency)} of ${formatCurrency(goal.target, goal.currency)}`
-        : `Converted to ${goal.currency} at 1 USD = ${state.config.rate.toFixed(2)} LKR.`;
+        : `Converted to ${goal.currency} at today's rate.`;
 };
 
 const setFundsMode = (mode) => {
@@ -1772,7 +2013,7 @@ const openDeposit = (goalId) => {
     const goal = state.savings.find((g) => g.id === goalId) || state.savings[0];
     select.value = goal.id;
     $('funds-amount').value = '';
-    $('funds-currency').value = goal.currency;
+    fillCurrencySelect($('funds-currency'), goal.currency);
     setFundsMode('deposit');
     updateFundsHint();
     openOrSwap('modal-funds');
@@ -1781,7 +2022,7 @@ const openDeposit = (goalId) => {
 const submitFunds = () => {
     const goal = state.savings.find((g) => g.id === $('funds-goal').value);
     const amount = toNumber($('funds-amount').value, NaN);
-    const currency = $('funds-currency').value === 'LKR' ? 'LKR' : 'USD';
+    const currency = normCur($('funds-currency').value);
     if (!goal) return fieldError($('funds-goal'), 'Choose a goal.');
     if (!(amount > 0)) return fieldError($('funds-amount'), 'Enter an amount greater than zero.');
     const delta = convertAmount(amount, currency, goal.currency);
@@ -1865,9 +2106,11 @@ const openAddBill = (type = 'expense') => {
     $('bill-id').value = '';
     $('bill-title').textContent = 'New bill or regular income';
     $('btn-delete-bill').hidden = true;
-    $('bill-currency').value = dcur();
+    fillCurrencySelect($('bill-currency'), dcur());
     $('bill-next').value = todayISO();
     setSwitch($('bill-auto'), true);
+    fillAccountSelect($('bill-account'), state.config.lastAccount);
+    $('bill-account-field').hidden = state.accounts.length < 2;
     setBillType(type);
     openOrSwap('modal-bill');
 };
@@ -1881,10 +2124,12 @@ const openEditBill = (id) => {
     $('btn-delete-bill').hidden = false;
     $('bill-name').value = b.name;
     $('bill-amount').value = b.amount;
-    $('bill-currency').value = b.currency;
+    fillCurrencySelect($('bill-currency'), b.currency);
     $('bill-frequency').value = b.frequency;
     $('bill-next').value = b.nextDate;
     setSwitch($('bill-auto'), b.autoLog);
+    fillAccountSelect($('bill-account'), b.accountId);
+    $('bill-account-field').hidden = state.accounts.length < 2;
     setBillType(b.type, b.category);
     openOrSwap('modal-bill');
 };
@@ -1901,12 +2146,13 @@ const submitBill = () => {
         type: billType,
         name,
         amount,
-        currency: $('bill-currency').value === 'LKR' ? 'LKR' : 'USD',
+        currency: normCur($('bill-currency').value),
         category: $('bill-category').value,
         frequency: FREQ_LABELS[$('bill-frequency').value] ? $('bill-frequency').value : 'monthly',
         nextDate,
         anchorDay: parseDate(nextDate).getDate(),
-        autoLog: isOn($('bill-auto'))
+        autoLog: isOn($('bill-auto')),
+        accountId: $('bill-account').value || state.accounts[0].id
     };
     let record;
     if (id) {
@@ -1959,7 +2205,7 @@ const openAddDebt = () => {
     $('debt-id').value = '';
     $('debt-title').textContent = 'New debt';
     $('btn-delete-debt').hidden = true;
-    $('debt-currency').value = dcur();
+    fillCurrencySelect($('debt-currency'), dcur());
     setDebtDir('lent');
     openOrSwap('modal-debt');
 };
@@ -1973,7 +2219,7 @@ const openEditDebt = (id) => {
     $('btn-delete-debt').hidden = false;
     $('debt-person').value = d.person;
     $('debt-amount').value = d.amount;
-    $('debt-currency').value = d.currency;
+    fillCurrencySelect($('debt-currency'), d.currency);
     $('debt-repaid').value = d.repaid ? round2(d.repaid) : '';
     $('debt-due').value = d.dueDate || '';
     $('debt-note').value = d.note || '';
@@ -1985,7 +2231,7 @@ const submitDebt = () => {
     const id = $('debt-id').value;
     const person = $('debt-person').value.trim();
     const amount = toNumber($('debt-amount').value, NaN);
-    const currency = $('debt-currency').value === 'LKR' ? 'LKR' : 'USD';
+    const currency = normCur($('debt-currency').value);
     const repaidRaw = $('debt-repaid').value.trim();
     const repaid = repaidRaw === '' ? 0 : toNumber(repaidRaw, NaN);
     if (!person) return fieldError($('debt-person'), 'Add a name.');
@@ -2211,7 +2457,7 @@ const flushSync = () => {
             if (state.syncSettings) {
                 const { error } = await supabaseClient.from('vela_settings').upsert({
                     user_id: state.auth.user.id,
-                    data: { budget: state.config.budget, categoryBudgets: state.config.categoryBudgets, currency: state.config.currency },
+                    data: { budget: state.config.budget, categoryBudgets: state.config.categoryBudgets, currency: state.config.currency, currencies: state.config.currencies, accounts: state.accounts },
                     updated_at: now
                 });
                 if (error) throw error;
@@ -2273,7 +2519,10 @@ const pullFromCloud = async () => {
             const d = set.data.data;
             if (toNumber(d.budget, 0) > 0) state.config.budget = toNumber(d.budget, 1000);
             if (d.categoryBudgets && typeof d.categoryBudgets === 'object') state.config.categoryBudgets = { ...d.categoryBudgets };
+            if (Array.isArray(d.currencies) && d.currencies.some(isCurrency)) state.config.currencies = [...new Set(d.currencies.filter(isCurrency).concat(dcur()))];
+            if (Array.isArray(d.accounts)) state.accounts = d.accounts.map(normalizeAccount).filter(Boolean);
         }
+        ensureAccounts(state);
         saveState();
         return true;
     } catch (err) {
@@ -2434,7 +2683,8 @@ const friendlyAuthError = (error) => {
     if (/already registered|already exists/i.test(msg)) return 'An account with this email already exists. Sign in instead.';
     if (/password/i.test(msg) && /6/.test(msg)) return 'Use a password with at least 6 characters.';
     if (/fetch|network|load failed/i.test(msg)) return "Can't reach the server. Check your connection and try again.";
-    if (/rate limit/i.test(msg)) return 'Too many attempts. Wait a minute and try again.';
+    if (/rate limit|too many/i.test(msg)) return 'Too many emails or attempts. Wait a few minutes and try again.';
+    if (/error sending|smtp|email address not authorized/i.test(msg)) return "Supabase couldn't send the email. In the Supabase dashboard, set up an email provider or turn off email confirmation.";
     if (/provider is not enabled|unsupported provider/i.test(msg)) return 'Google sign-in is not switched on for this app yet.';
     return msg || 'Something went wrong. Try again.';
 };
@@ -2472,6 +2722,8 @@ const handleSession = async (session) => {
         state.recurring = [];
         state.debts = [];
         state.categories = mergeCategories([]);
+        state.accounts = [];
+        ensureAccounts(state);
         state.sync = {};
     }
 
@@ -2514,6 +2766,8 @@ const resetToSignedOut = () => {
     state.debts = [];
     state.categories = mergeCategories([]);
     state.config.categoryBudgets = {};
+    state.accounts = [];
+    ensureAccounts(state);
     state.sync = {};
     state.syncSettings = false;
     state.auth = { user: null, isMock: true, completedOnboarding: false };
@@ -2541,9 +2795,39 @@ const onAuthEvent = (event, session) => {
 const handleSignIn = async (email, password) => {
     if (!requireCloud()) return;
     const { data, error } = await supabaseClient.auth.signInWithPassword({ email, password });
-    if (error) { showToast(friendlyAuthError(error), 'error'); return; }
+    if (error) {
+        if (/email not confirmed/i.test(error.message || '')) { showAuthNotice(email); return; }
+        showToast(friendlyAuthError(error), 'error');
+        return;
+    }
+    hideAuthNotice();
     await handleSession(data.session);
     if (state.auth.completedOnboarding) showToast(`Welcome back, ${displayName()}`, 'success');
+};
+
+let noticeEmail = '';
+const showAuthNotice = (email) => {
+    noticeEmail = email;
+    $('auth-notice-body').textContent = `We sent a link to ${email}. Open it on this phone, then come back and sign in. Check spam if it isn't in your inbox.`;
+    $('auth-notice').hidden = false;
+    $('signin-email').value = email;
+    setAuthMode('signin');
+};
+const hideAuthNotice = () => { $('auth-notice').hidden = true; };
+const resendConfirmation = async () => {
+    if (!noticeEmail || !requireCloud()) return;
+    const { error } = await supabaseClient.auth.resend({ type: 'signup', email: noticeEmail, options: { emailRedirectTo: authRedirectUrl() } });
+    if (error) showToast(friendlyAuthError(error), 'error');
+    else showToast(`Sent another link to ${noticeEmail}`, 'success');
+};
+
+// Sign-in providers send errors back in the address (for example a blocked redirect). Show them once.
+const reportAuthErrorInUrl = () => {
+    const params = new URLSearchParams(`${window.location.search.slice(1)}&${window.location.hash.replace(/^#/, '')}`);
+    const msg = params.get('error_description');
+    if (!msg) return;
+    showToast(`Sign-in didn't finish: ${msg.replace(/\+/g, ' ')}`, 'error');
+    history.replaceState(history.state, '', window.location.pathname);
 };
 
 const handleSignUp = async (email, password, fullName) => {
@@ -2558,9 +2842,7 @@ const handleSignUp = async (email, password, fullName) => {
         await handleSession(data.session);
         showToast(`Account created. Welcome, ${fullName}!`, 'success');
     } else {
-        setAuthMode('signin');
-        $('signin-email').value = email;
-        showToast(`Check ${email} for a confirmation link, then sign in here.`, 'info');
+        showAuthNotice(email);
     }
 };
 
@@ -2693,6 +2975,18 @@ const seedData = () => {
         { id: generateId(), direction: 'borrowed', person: 'Amaya', amount: 50, currency: 'USD', repaid: 0, dueDate: ahead(10), note: 'Concert tickets', createdAt: now }
     ];
     state.config.categoryBudgets = { Food: 150, Entertainment: 50, Travel: 80 };
+    state.accounts = [
+        { id: 'acc-cash', name: 'Cash', kind: 'cash', currency: 'LKR', opening: 18000, createdAt: now },
+        { id: generateId(), name: 'Commercial Bank', kind: 'bank', currency: 'LKR', opening: 420000, createdAt: now },
+        { id: generateId(), name: 'Visa card', kind: 'card', currency: 'USD', opening: 0, createdAt: now }
+    ];
+    const [cash, bank, card] = state.accounts;
+    state.transactions.forEach((t) => {
+        t.accountId = t.type === 'income' ? bank.id : t.currency === 'USD' ? card.id : cash.id;
+        t.receipt = null;
+    });
+    state.recurring.forEach((b) => { b.accountId = b.type === 'income' ? bank.id : b.currency === 'USD' ? card.id : bank.id; });
+    state.transactions.push({ id: generateId(), type: 'transfer', desc: 'ATM withdrawal', amount: 20000, currency: 'LKR', accountId: bank.id, toAccountId: cash.id, toAmount: 20000, toCurrency: 'LKR', category: 'Transfer', date: ago(5), note: '', createdAt: now, recurringId: null, receipt: null });
     state.config.budget = 1500;
 };
 
@@ -2960,10 +3254,11 @@ const exportCsv = async () => {
         return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const cur = dcur();
-    const rows = [['Date', 'Type', 'Description', 'Category', 'Amount', 'Currency', `Amount (${cur})`, 'Note']];
+    const rows = [['Date', 'Type', 'Description', 'Category', 'Account', 'Amount', 'Currency', `Amount (${cur})`, 'Note']];
     sortByNewest(state.transactions).forEach((t) => rows.push([
-        t.date, t.type === 'income' ? 'Income' : 'Expense', t.desc, catById(t.category, t.type).name,
-        t.amount.toFixed(2), t.currency, toDisplay(t.amount, t.currency).toFixed(2), t.note || ''
+        t.date, t.type === 'income' ? 'Income' : t.type === 'transfer' ? 'Transfer' : 'Expense', t.desc,
+        t.type === 'transfer' ? transferLine(t) : catById(t.category, t.type).name, accountById(t.accountId).name,
+        t.amount.toFixed(decimalsFor(t.currency)), t.currency, toDisplay(t.amount, t.currency).toFixed(2), t.note || ''
     ]));
     const csv = '﻿' + rows.map((r) => r.map(cell).join(',')).join('\r\n');
     try {
@@ -2988,7 +3283,8 @@ const loadJsPdf = () => {
     return jspdfLoading;
 };
 
-const pdfMoney = (v, cur) => `${v < 0 ? '-' : ''}${cur === 'USD' ? '$' : 'Rs. '}${money2.format(Math.abs(v))}`;
+// The PDF font covers Latin-1 only, so symbols like ₹ fall back to the currency code.
+const pdfMoney = (v, cur) => `${v < 0 ? '-' : ''}${/^[\x20-\xFF]+$/.test(symbolFor(cur)) ? symbolFor(cur) : `${cur} `}${numberFmt(cur).format(Math.abs(v))}`;
 
 const exportPdf = async () => {
     let JsPDF;
@@ -3017,7 +3313,7 @@ const exportPdf = async () => {
     doc.setFontSize(12);
     doc.text(`Monthly report - ${monthName(Y, M)}`, L, 26);
     doc.setFontSize(8.5);
-    doc.text(`${displayName()} - generated ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - amounts in ${cur} (1 USD = ${state.config.rate.toFixed(2)} LKR)`, L, 32);
+    doc.text(`${displayName()} - generated ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })} - amounts in ${cur}`, L, 32);
     y = 50;
 
     const boxes = [
@@ -3104,8 +3400,8 @@ const exportPdf = async () => {
     if (s.list.length) {
         tableRow(['Date', 'Description', 'Category', 'Amount'], [24, 78, 40, 36], { header: true, alignRight: [3] });
         sortByNewest(s.list).forEach((t) => tableRow([
-            shortDate(t.date), t.desc, catById(t.category, t.type).name,
-            `${t.type === 'income' ? '+' : '-'}${money(toDisplay(t.amount, t.currency))}`
+            shortDate(t.date), t.desc, t.type === 'transfer' ? transferLine(t) : catById(t.category, t.type).name,
+            `${t.type === 'income' ? '+' : t.type === 'transfer' ? '' : '-'}${money(toDisplay(t.amount, t.currency))}`
         ], [24, 78, 40, 36], { alignRight: [3] }));
     } else {
         doc.setFontSize(9);
@@ -3139,7 +3435,7 @@ const exportBackup = async () => {
     const payload = {
         app: 'vela', version: APP_VERSION, exportedAt: new Date().toISOString(),
         config,
-        transactions: state.transactions, savings: state.savings, recurring: state.recurring, debts: state.debts,
+        transactions: state.transactions, savings: state.savings, recurring: state.recurring, debts: state.debts, accounts: state.accounts,
         categories: state.categories
     };
     try {
@@ -3166,13 +3462,13 @@ const importBackup = (file) => {
             confirmLabel: 'Replace',
             danger: false,
             onConfirm: () => {
-                ['transactions', 'savings', 'recurring', 'debts', 'categories'].forEach((k) => { state[k] = incoming[k]; });
+                ['transactions', 'savings', 'recurring', 'debts', 'categories', 'accounts'].forEach((k) => { state[k] = incoming[k]; });
                 state.config = { ...incoming.config, theme: state.config.theme, lock: state.config.lock, reminders: state.config.reminders, reminderIds: state.config.reminderIds };
                 if (canSync()) queueAllForUpload();
                 saveState();
                 flushSync();
                 updateCurrencyButtons();
-                setRateStatus(state.config.rateLocked ? 'manual' : rateStatus);
+                setRateStatus(rateStatus);
                 processRecurring();
                 scheduleReminders();
                 renderActive();
@@ -3235,17 +3531,18 @@ const initPwaInstall = () => {
    32. Events
    ========================================================================= */
 const updateCurrencyButtons = () => {
-    $('currency-usd').setAttribute('aria-pressed', String(dcur() === 'USD'));
-    $('currency-lkr').setAttribute('aria-pressed', String(dcur() === 'LKR'));
+    $('currency-code').textContent = dcur();
 };
 
 const setDisplayCurrency = (cur) => {
     if (cur === dcur()) return;
     state.config.currency = cur;
+    if (!state.config.currencies.includes(cur)) state.config.currencies.push(cur);
     state.syncSettings = true;
     saveState();
     flushSync();
     updateCurrencyButtons();
+    setRateStatus(rateStatus);
     renderActive();
 };
 
@@ -3290,11 +3587,19 @@ const initEvents = () => {
         if (d.fundsMode) { setFundsMode(d.fundsMode); return; }
         if (d.activityType) { activityType = d.activityType; activityCategory = 'all'; renderActivity(); return; }
         if (d.filterCategory) { activityCategory = d.filterCategory; renderActivity(); return; }
+        if (d.activityView) { activityView = d.activityView; activityDay = null; renderActivity(); return; }
+        if (d.calDay) { activityDay = activityDay === d.calDay ? null : d.calDay; renderActivity(); return; }
+        if (d.accountFilter) { activityAccount = d.accountFilter; activityType = 'all'; activityCategory = 'all'; activityView = 'list'; goToActivity('all', true); return; }
+        if (d.displayCurrency) { setDisplayCurrency(d.displayCurrency); closeSheet('modal-currency'); return; }
+        if (d.addCurrency) { addCurrency(d.addCurrency); return; }
+        if (d.removeCurrency) { removeCurrency(d.removeCurrency); return; }
+        if (d.editAccount) { openAccountEditor(d.editAccount); return; }
         if (d.themeChoice) { setTheme(d.themeChoice, e); return; }
         if (d.currency) { setDisplayCurrency(d.currency); return; }
         if (el.hasAttribute('data-clear-filters')) {
             activityType = 'all';
             activityCategory = 'all';
+            activityAccount = 'all';
             $('activity-search').value = '';
             renderActivity();
             return;
@@ -3313,6 +3618,13 @@ const initEvents = () => {
             case 'add-bill': openAddBill(); break;
             case 'add-debt': openAddDebt(); break;
             case 'add-budget': openBudget(); break;
+            case 'add-transfer': openTransfer(); break;
+            case 'add-account': openAccountEditor(); break;
+            case 'open-accounts': openAccountManager(); break;
+            case 'open-currencies': openCurrencySheet(); break;
+            case 'pick-receipt': $('tx-receipt-input').click(); break;
+            case 'remove-receipt': receiptDraft = { mode: 'remove', blob: null, url: null }; renderReceiptBox(); break;
+            case 'view-receipt': openReceiptViewer(); break;
             case 'new-category-inline': catReturnToTx = true; catReturnToManager = false; openCategoryEditor(null, txType); break;
             default: break;
         }
@@ -3339,6 +3651,7 @@ const initEvents = () => {
         if (isSheetOpen('modal-pin') && /^[0-9]$/.test(e.key)) { onPinKey(e.key); return; }
         if (isSheetOpen('modal-pin') && e.key === 'Backspace') { onPinKey('del'); return; }
         if (e.key !== 'Escape') return;
+        if (!$('receipt-viewer').hidden) { closeReceiptViewer(); return; }
         if (isConfirmOpen()) { closeConfirm(); return; }
         const top = openSheets[openSheets.length - 1];
         if (top) closeSheet(top);
@@ -3385,7 +3698,7 @@ const initEvents = () => {
     $('bill-auto').addEventListener('click', (e) => setSwitch(e.currentTarget, !isOn(e.currentTarget)));
     $('funds-goal').addEventListener('change', () => {
         const goal = state.savings.find((g) => g.id === $('funds-goal').value);
-        if (goal) $('funds-currency').value = goal.currency;
+        if (goal) fillCurrencySelect($('funds-currency'), goal.currency);
         updateFundsHint();
     });
     $('funds-currency').addEventListener('change', updateFundsHint);
@@ -3417,15 +3730,35 @@ const initEvents = () => {
     }));
 
     $('btn-save-rate').addEventListener('click', () => {
+        const cur = $('setting-rate-currency').value;
         const value = toNumber($('setting-rate').value, NaN);
-        if (!(value > 0)) { fieldError($('setting-rate'), 'Enter a rate greater than zero, like 300.50.'); return; }
-        state.config.rate = value;
-        state.config.rateLocked = true;
+        if (!(value > 0)) { fieldError($('setting-rate'), `Enter how many ${cur} one US dollar buys, like ${formatRate(rateFor(cur))}.`); return; }
+        state.config.rateOverrides[cur] = value;
         saveState();
-        setRateStatus('manual');
+        setRateStatus(rateStatus);
         renderActive();
-        showToast(`Using your rate: 1 USD = ${value.toFixed(2)} LKR`, 'success');
+        showToast(`Using your rate: 1 USD = ${formatRate(value)} ${cur}`, 'success');
     });
+    $('setting-rate-currency').addEventListener('change', () => { $('setting-rate').value = formatRate(rateFor($('setting-rate-currency').value)); renderRateSetting(); });
+    $('currency-btn').addEventListener('click', openCurrencySheet);
+    $('activity-account').addEventListener('change', (e) => { activityAccount = e.target.value; renderActivity(); });
+    $('account-form').addEventListener('submit', (e) => { e.preventDefault(); submitAccount(); });
+    $('btn-delete-account').addEventListener('click', () => deleteAccount($('account-id').value));
+    $('transfer-form').addEventListener('submit', (e) => { e.preventDefault(); submitTransfer(); });
+    $('btn-delete-transfer').addEventListener('click', () => deleteTransfer($('transfer-id').value));
+    ['transfer-from', 'transfer-to'].forEach((id) => $(id).addEventListener('change', updateTransferFields));
+    $('transfer-amount').addEventListener('input', () => updateTransferFields(true));
+    $('tx-account').addEventListener('change', () => {
+        if (!$('tx-id').value) fillCurrencySelect($('tx-currency'), accountById($('tx-account').value).currency);
+    });
+    $('tx-receipt-input').addEventListener('change', (e) => {
+        const file = e.target.files && e.target.files[0];
+        if (file) pickReceipt(file);
+        e.target.value = '';
+    });
+    $('btn-close-viewer').addEventListener('click', closeReceiptViewer);
+    $('receipt-viewer').addEventListener('click', (e) => { if (e.target === e.currentTarget) closeReceiptViewer(); });
+    $('btn-resend-email').addEventListener('click', (e) => withBusy(e.currentTarget, resendConfirmation));
     $('btn-sync-rate').addEventListener('click', (e) => withBusy(e.currentTarget, () => fetchLiveExchangeRate({ manual: true })));
 
     $('switch-lock').addEventListener('click', () => openPinFlow(state.config.lock.enabled ? 'disable' : 'set'));
@@ -3488,7 +3821,7 @@ const initEvents = () => {
 
     window.addEventListener('online', () => { flushSync().then(updateUserProfileUI); fetchLiveExchangeRate(); });
     window.addEventListener('offline', () => {
-        if (!state.config.rateLocked) setRateStatus('offline');
+        setRateStatus('offline');
         showToast("You're offline. Changes are saved on this device.", 'info');
     });
     document.addEventListener('visibilitychange', () => {
@@ -3499,7 +3832,395 @@ const initEvents = () => {
 };
 
 /* =========================================================================
-   33. Start-up
+   33. Currencies sheet
+   ========================================================================= */
+const renderCurrencySheet = () => {
+    const mine = myCurrencies();
+    const others = Object.keys(CURRENCIES).filter((c) => !mine.includes(c));
+    const row = (c) => `<li class="cur-row">
+        <button type="button" class="row-btn" data-display-currency="${c}" aria-pressed="${c === dcur()}">
+            <span class="cur-code">${c}</span>
+            <span class="row-label"><span>${escapeHtml(CURRENCIES[c].name)}</span><span>${c === 'USD' ? 'Base currency for rates' : `1 USD = ${formatRate(rateFor(c))} ${c}`}</span></span>
+            ${c === dcur() ? `<span class="cur-check">${icon('i-check')}</span>` : ''}
+        </button>
+        ${mine.length > 1 && c !== dcur() ? `<button type="button" class="icon-btn" data-remove-currency="${c}" aria-label="Stop using ${escapeHtml(CURRENCIES[c].name)}">${icon('i-x')}</button>` : ''}
+    </li>`;
+    $('currency-body').innerHTML = `
+        <p class="card-sub">Tap a currency to show all amounts in it. Entries keep the currency you logged them in.</p>
+        <ul class="cat-manage">${mine.map(row).join('')}</ul>
+        ${others.length ? `<div class="section-head"><h2>Add a currency</h2></div>
+        <ul class="cat-manage">${others.map((c) => `<li><button type="button" class="row-btn" data-add-currency="${c}"><span class="cur-code">${c}</span><span class="row-label"><span>${escapeHtml(CURRENCIES[c].name)}</span></span>${icon('i-plus', 'ic chev')}</button></li>`).join('')}</ul>` : ''}`;
+};
+
+const openCurrencySheet = () => {
+    renderCurrencySheet();
+    openOrSwap('modal-currency');
+};
+
+const addCurrency = (c) => {
+    if (!isCurrency(c) || state.config.currencies.includes(c)) return;
+    state.config.currencies.push(c);
+    state.syncSettings = true;
+    saveState();
+    flushSync();
+    renderCurrencySheet();
+    showToast(`${CURRENCIES[c].name} added. You can now log entries in ${c}.`, 'success');
+    if (!state.config.rates[c]) fetchLiveExchangeRate();
+    renderActive();
+};
+
+const removeCurrency = (c) => {
+    if (c === dcur() || myCurrencies().length < 2) return;
+    state.config.currencies = state.config.currencies.filter((x) => x !== c);
+    state.syncSettings = true;
+    saveState();
+    flushSync();
+    renderCurrencySheet();
+    showToast(`${c} removed from your list. Entries already in ${c} keep it.`, 'success');
+    renderActive();
+};
+
+/* =========================================================================
+   34. Accounts and transfers
+   ========================================================================= */
+const renderAccountManager = () => {
+    $('accounts-body').innerHTML = `<ul class="cat-manage">${state.accounts.map((a) => {
+        const bal = accountBalance(a);
+        return `<li><button type="button" class="row-btn" data-edit-account="${escapeHtml(a.id)}">
+            <span class="row-icon tint">${icon(accountIcon(a))}</span>
+            <span class="row-label"><span>${escapeHtml(a.name)}</span><span>${escapeHtml(ACCOUNT_KINDS[a.kind].label)}, ${a.currency}</span></span>
+            <span class="amount ${bal < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(bal, a.currency))}</span>
+        </button></li>`;
+    }).join('')}</ul>`;
+};
+
+const openAccountManager = () => {
+    renderAccountManager();
+    openOrSwap('modal-accounts');
+};
+
+let accountReturnToManager = false;
+
+const openAccountEditor = (id) => {
+    const a = id ? state.accounts.find((x) => x.id === id) : null;
+    accountReturnToManager = isSheetOpen('modal-accounts');
+    $('account-form').reset();
+    $('account-id').value = a ? a.id : '';
+    $('account-title').textContent = a ? `Edit ${a.name}` : 'New account';
+    $('account-name').value = a ? a.name : '';
+    $('account-kind').value = a ? a.kind : 'bank';
+    fillCurrencySelect($('account-currency'), a ? a.currency : dcur());
+    $('account-opening').value = a ? round2(accountBalance(a)) : '';
+    $('account-opening-label').textContent = 'Balance right now';
+    $('account-opening-hint').textContent = a
+        ? 'Change this to match your real balance. Vela adjusts the starting amount; your entries stay as they are.'
+        : 'What is in this account today. Use a minus sign for a card you owe on.';
+    $('btn-delete-account').hidden = !a || state.accounts.length < 2;
+    openOrSwap('modal-account');
+};
+
+const afterAccountChange = () => {
+    state.syncSettings = true;
+    saveState();
+    flushSync();
+    if (accountReturnToManager) {
+        accountReturnToManager = false;
+        hideSheet('modal-account');
+        history.replaceState({ vela: 'sheet', id: 'modal-accounts', tab: currentTab }, '');
+        renderAccountManager();
+        showSheetElement('modal-accounts');
+    } else {
+        closeSheet('modal-account');
+    }
+    renderActive();
+};
+
+const submitAccount = () => {
+    const id = $('account-id').value;
+    const name = $('account-name').value.trim();
+    const kind = ACCOUNT_KINDS[$('account-kind').value] ? $('account-kind').value : 'cash';
+    const currency = normCur($('account-currency').value);
+    const raw = $('account-opening').value.trim();
+    const balance = raw === '' ? 0 : toNumber(raw, NaN);
+    if (!name) return fieldError($('account-name'), 'Give the account a name, like "Cash" or "Commercial Bank".');
+    if (!Number.isFinite(balance)) return fieldError($('account-opening'), 'Enter the balance as a number, like 25000.');
+    if (state.accounts.some((a) => a.name.toLowerCase() === name.toLowerCase() && a.id !== id)) return fieldError($('account-name'), `You already have an account called "${name}".`);
+    if (id) {
+        const a = state.accounts.find((x) => x.id === id);
+        if (!a) return false;
+        a.name = name;
+        a.kind = kind;
+        a.currency = currency;
+        // Keep entries untouched: move the starting amount so today's balance matches.
+        a.opening = round2(a.opening + (balance - accountBalance(a)));
+        showToast('Account saved', 'success');
+    } else {
+        state.accounts.push({ id: generateId(), name, kind, currency, opening: round2(balance), createdAt: Date.now() });
+        showToast(`${name} added`, 'success');
+    }
+    afterAccountChange();
+    return true;
+};
+
+const deleteAccount = (id) => {
+    const a = state.accounts.find((x) => x.id === id);
+    if (!a || state.accounts.length < 2) return;
+    const other = state.accounts.find((x) => x.id !== id);
+    const used = state.transactions.filter((t) => t.accountId === id || t.toAccountId === id).length;
+    showConfirm({
+        title: `Delete ${a.name}?`,
+        message: used ? `${plural(used, 'entry', 'entries')} will move to ${other.name}.` : 'This account has no entries.',
+        onConfirm: () => {
+            state.transactions.forEach((t) => {
+                let changed = false;
+                if (t.accountId === id) { t.accountId = other.id; changed = true; }
+                if (t.toAccountId === id) { t.toAccountId = other.id; changed = true; }
+                if (changed) queueSync('transaction', t.id, 'upsert', false);
+            });
+            state.transactions = state.transactions.filter((t) => !(t.type === 'transfer' && t.accountId === t.toAccountId));
+            state.recurring.forEach((b) => { if (b.accountId === id) { b.accountId = other.id; queueSync('recurring', b.id, 'upsert', false); } });
+            state.accounts = state.accounts.filter((x) => x.id !== id);
+            if (activityAccount === id) activityAccount = 'all';
+            showToast(`${a.name} deleted`, 'success');
+            afterAccountChange();
+        }
+    });
+};
+
+const updateTransferFields = (fromAmount) => {
+    const from = accountById($('transfer-from').value);
+    const to = accountById($('transfer-to').value);
+    $('transfer-currency').textContent = from.currency;
+    $('transfer-received-currency').textContent = to.currency;
+    const differ = from.currency !== to.currency;
+    $('transfer-received-field').hidden = !differ;
+    if (differ && (fromAmount === true || !$('transfer-received').value)) {
+        const amt = toNumber($('transfer-amount').value, 0);
+        $('transfer-received').value = amt > 0 ? round2(convertAmount(amt, from.currency, to.currency)) : '';
+    }
+};
+
+const openTransfer = (id) => {
+    if (state.accounts.length < 2) {
+        showToast('Add a second account first, like a bank account or card, then move money between them.', 'info');
+        openAccountEditor();
+        return;
+    }
+    const t = id ? state.transactions.find((x) => x.id === id) : null;
+    $('transfer-form').reset();
+    $('transfer-id').value = t ? t.id : '';
+    $('transfer-title').textContent = t ? 'Edit transfer' : 'Move money';
+    $('btn-delete-transfer').hidden = !t;
+    fillAccountSelect($('transfer-from'), t ? t.accountId : state.accounts[0].id);
+    fillAccountSelect($('transfer-to'), t ? t.toAccountId : state.accounts[1].id);
+    $('transfer-amount').value = t ? t.amount : '';
+    $('transfer-received').value = t && t.toCurrency !== t.currency ? t.toAmount : '';
+    $('transfer-date').value = t ? t.date : todayISO();
+    $('transfer-note').value = t && t.desc !== 'Transfer' ? t.desc : '';
+    updateTransferFields();
+    openOrSwap('modal-transfer');
+};
+
+const submitTransfer = () => {
+    const id = $('transfer-id').value;
+    const from = accountById($('transfer-from').value);
+    const to = accountById($('transfer-to').value);
+    const amount = toNumber($('transfer-amount').value, NaN);
+    const date = $('transfer-date').value;
+    if (from.id === to.id) return fieldError($('transfer-to'), 'Pick two different accounts.');
+    if (!(amount > 0)) return fieldError($('transfer-amount'), 'Enter an amount greater than zero.');
+    if (!isISODate(date)) return fieldError($('transfer-date'), 'Pick a date.');
+    let toAmount = amount;
+    if (from.currency !== to.currency) {
+        toAmount = toNumber($('transfer-received').value, NaN);
+        if (!(toAmount > 0)) return fieldError($('transfer-received'), `Enter how much ${to.currency} arrived.`);
+    }
+    const data = {
+        type: 'transfer', desc: $('transfer-note').value.trim() || 'Transfer', amount, currency: from.currency,
+        accountId: from.id, toAccountId: to.id, toAmount, toCurrency: to.currency, date, category: 'Transfer', note: ''
+    };
+    let record;
+    if (id) {
+        const idx = state.transactions.findIndex((t) => t.id === id);
+        if (idx === -1) return false;
+        record = { ...state.transactions[idx], ...data };
+        state.transactions[idx] = record;
+    } else {
+        record = { id: generateId(), ...data, createdAt: Date.now(), recurringId: null, receipt: null };
+        state.transactions.push(record);
+    }
+    saveState();
+    haptic('MEDIUM');
+    queueSync('transaction', record.id, 'upsert');
+    closeSheet('modal-transfer');
+    showToast(`Moved ${formatCurrency(amount, from.currency)} from ${from.name} to ${to.name}`, 'success');
+    renderActive();
+    return true;
+};
+
+const deleteTransfer = (id) => {
+    const t = state.transactions.find((x) => x.id === id);
+    if (!t) return;
+    showConfirm({
+        title: 'Delete this transfer?',
+        message: `${formatCurrency(t.amount, t.currency)} from ${accountById(t.accountId).name} to ${accountById(t.toAccountId).name} will be removed, and both balances change back.`,
+        onConfirm: () => {
+            state.transactions = state.transactions.filter((x) => x.id !== id);
+            saveState();
+            queueSync('transaction', id, 'delete');
+            closeSheet('modal-transfer');
+            showToast('Transfer deleted', 'success');
+            renderActive();
+        }
+    });
+};
+
+/* =========================================================================
+   35. Receipt photos (kept on the device; uploaded to Supabase Storage when signed in)
+   ========================================================================= */
+const receiptStore = (() => {
+    let dbPromise = null;
+    const open = () => dbPromise || (dbPromise = new Promise((resolve, reject) => {
+        const req = indexedDB.open('vela', 1);
+        req.onupgradeneeded = () => req.result.createObjectStore('receipts');
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => { dbPromise = null; reject(req.error); };
+    }));
+    const run = async (mode, fn) => {
+        const db = await open();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction('receipts', mode);
+            const req = fn(tx.objectStore('receipts'));
+            tx.oncomplete = () => resolve(req ? req.result : undefined);
+            tx.onerror = () => reject(tx.error);
+            tx.onabort = () => reject(tx.error);
+        });
+    };
+    return {
+        get: (k) => run('readonly', (st) => st.get(k)),
+        put: (k, v) => run('readwrite', (st) => st.put(v, k)),
+        del: (k) => run('readwrite', (st) => st.delete(k))
+    };
+})();
+
+let receiptDraft = { mode: 'none', blob: null, url: null };
+
+const resizeToMax = (file, max = 1400, quality = 0.82) => new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+        const scale = Math.min(1, max / Math.max(img.width, img.height));
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(url);
+        canvas.toBlob((b) => (b ? resolve(b) : reject(new Error('Could not process photo'))), 'image/jpeg', quality);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Unsupported image')); };
+    img.src = url;
+});
+
+const receiptBlob = async (receipt) => {
+    if (!receipt) return null;
+    try {
+        const local = await receiptStore.get(receipt.id);
+        if (local) return local;
+    } catch (err) { /* fall through to the cloud copy */ }
+    if (receipt.path && canSync()) {
+        const { data, error } = await supabaseClient.storage.from('receipts').createSignedUrl(receipt.path, 600);
+        if (error) throw error;
+        const res = await fetch(data.signedUrl);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const blob = await res.blob();
+        receiptStore.put(receipt.id, blob).catch(() => {});
+        return blob;
+    }
+    return null;
+};
+
+const setReceiptDraft = (t) => {
+    if (receiptDraft.url) URL.revokeObjectURL(receiptDraft.url);
+    receiptDraft = { mode: t && t.receipt ? 'keep' : 'none', blob: null, url: null, receipt: t ? t.receipt : null };
+    renderReceiptBox();
+    if (t && t.receipt) {
+        receiptBlob(t.receipt).then((blob) => {
+            if (blob && receiptDraft.mode === 'keep' && receiptDraft.receipt === t.receipt) {
+                receiptDraft.url = URL.createObjectURL(blob);
+                renderReceiptBox();
+            }
+        }).catch(() => {
+            if (receiptDraft.receipt === t.receipt) { receiptDraft.missing = true; renderReceiptBox(); }
+        });
+    }
+};
+
+const renderReceiptBox = () => {
+    const box = $('receipt-box');
+    const has = receiptDraft.mode === 'new' || receiptDraft.mode === 'keep';
+    if (!has) {
+        box.innerHTML = `<button type="button" class="receipt-add" data-action="pick-receipt">${icon('i-camera')}<span>Add a photo of the receipt</span></button>`;
+        return;
+    }
+    const thumb = receiptDraft.url
+        ? `<button type="button" class="receipt-thumb" data-action="view-receipt" aria-label="View receipt photo"><img src="${receiptDraft.url}" alt=""></button>`
+        : `<span class="receipt-thumb is-loading">${receiptDraft.missing ? 'Photo not on this device' : 'Loading…'}</span>`;
+    box.innerHTML = `${thumb}<div class="receipt-actions">
+        <button type="button" class="btn btn-secondary btn-sm" data-action="pick-receipt">${icon('i-camera', 'ic ic-sm')} Replace</button>
+        <button type="button" class="btn btn-danger btn-sm" data-action="remove-receipt">${icon('i-trash', 'ic ic-sm')} Remove</button>
+    </div>`;
+};
+
+const pickReceipt = async (file) => {
+    if (!/^image\//.test(file.type)) { showToast('Choose a photo (JPG, PNG or similar).', 'error'); return; }
+    try {
+        const blob = await resizeToMax(file);
+        if (receiptDraft.url) URL.revokeObjectURL(receiptDraft.url);
+        receiptDraft = { mode: 'new', blob, url: URL.createObjectURL(blob), receipt: receiptDraft.receipt };
+        renderReceiptBox();
+    } catch (err) {
+        showToast("That photo couldn't be read. Try another one.", 'error');
+    }
+};
+
+const uploadReceipt = async (record) => {
+    if (!canSync() || !record.receipt) return;
+    try {
+        const blob = await receiptStore.get(record.receipt.id);
+        if (!blob) return;
+        const path = `${state.auth.user.id}/${record.receipt.id}.jpg`;
+        const { error } = await supabaseClient.storage.from('receipts').upload(path, blob, { upsert: true, contentType: 'image/jpeg' });
+        if (error) throw error;
+        const t = state.transactions.find((x) => x.id === record.id);
+        if (t && t.receipt && t.receipt.id === record.receipt.id) {
+            t.receipt = { ...t.receipt, path };
+            saveState();
+            queueSync('transaction', t.id, 'upsert');
+        }
+    } catch (err) {
+        console.warn('Receipt upload failed; it stays on this device.', err);
+    }
+};
+
+const removeReceipt = (receipt) => {
+    receiptStore.del(receipt.id).catch(() => {});
+    if (receipt.path && canSync()) supabaseClient.storage.from('receipts').remove([receipt.path]).catch(() => {});
+};
+
+const openReceiptViewer = () => {
+    if (!receiptDraft.url) return;
+    $('receipt-viewer-img').src = receiptDraft.url;
+    $('receipt-viewer').hidden = false;
+    $('btn-close-viewer').focus();
+};
+
+const closeReceiptViewer = () => {
+    $('receipt-viewer').hidden = true;
+    $('receipt-viewer-img').removeAttribute('src');
+};
+
+/* =========================================================================
+   36. Start-up
    ========================================================================= */
 const initSupabase = () => {
     if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return;
@@ -3545,8 +4266,9 @@ const init = () => {
 
     updateThemeChrome();
     updateCurrencyButtons();
-    setRateStatus(state.config.rateLocked ? 'manual' : 'offline');
+    setRateStatus('offline');
     updateUserProfileUI();
+    reportAuthErrorInUrl();
 
     if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
     history.replaceState({ vela: 'tab', tab: 'dashboard' }, '');

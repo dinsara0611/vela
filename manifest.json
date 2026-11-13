@@ -2,7 +2,7 @@
   "id": "./",
   "name": "Vela – Expenses & Savings",
   "short_name": "Vela",
-  "description": "Track spending and savings goals in USD and LKR.",
+  "description": "Track spending, income, budgets, bills, savings and accounts in any currency.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

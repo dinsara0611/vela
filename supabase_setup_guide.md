@@ -4,6 +4,22 @@ This guide explains how to set up your Supabase project step-by-step to enable a
 
 ---
 
+## If sign-in sends people to "localhost:3000"
+
+This is the most common problem. Supabase's **Site URL** is still its default, `http://localhost:3000`, so after Google sign-in or an email confirmation link, Supabase sends people there instead of back to Vela.
+
+1. Supabase dashboard → **Authentication** → **URL Configuration**.
+2. **Site URL:** `https://dinsara0611.github.io/vela/`
+3. **Redirect URLs**, add each of these:
+   - `https://dinsara0611.github.io/vela/`
+   - `io.github.dinsara0611.vela://auth-callback` (the Android app)
+   - `http://localhost:5510/` (testing on your computer)
+4. Click **Save**.
+
+**Email sign-up:** by default Supabase only emails people in your own Supabase team, and only a few emails per hour. Either set up an email provider (Authentication → Emails → SMTP settings), or turn off **Confirm email** (Authentication → Sign In / Providers → Email) so people can sign in straight away.
+
+---
+
 ## Step 1: Create a Supabase Project
 
 1. Go to [database.new](https://database.new) or sign in to your [Supabase Dashboard](https://supabase.com).
@@ -163,6 +179,28 @@ To enable Google sign-in:
      - `https://dinsara0611.github.io/vela/` (website)
      - `io.github.dinsara0611.vela://auth-callback` (Android app — without it, Google sign-in in the app returns to the website instead of the app)
      - `http://localhost:5510/` (local testing)
+
+---
+
+## Step 6b: Receipt photos (optional)
+
+Vela keeps receipt photos on the phone. To also back them up to your account, create a private bucket and allow each person to use only their own folder. Run in the **SQL Editor**:
+
+```sql
+insert into storage.buckets (id, name, public) values ('receipts', 'receipts', false)
+on conflict (id) do nothing;
+
+create policy "Users read own receipts" on storage.objects for select
+  using (bucket_id = 'receipts' and auth.uid()::text = (storage.foldername(name))[1]);
+create policy "Users add own receipts" on storage.objects for insert
+  with check (bucket_id = 'receipts' and auth.uid()::text = (storage.foldername(name))[1]);
+create policy "Users update own receipts" on storage.objects for update
+  using (bucket_id = 'receipts' and auth.uid()::text = (storage.foldername(name))[1]);
+create policy "Users delete own receipts" on storage.objects for delete
+  using (bucket_id = 'receipts' and auth.uid()::text = (storage.foldername(name))[1]);
+```
+
+Accounts, currencies and budgets sync through `vela_settings`; no new tables are needed.
 
 ---
 

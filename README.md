@@ -5,13 +5,17 @@ A phone-first expense and savings tracker that works in USD and LKR. It is a sta
 **https://dinsara0611.github.io/vela/**
 
 - **Income & balance:** log expenses and income, see what's left this month.
+- **Accounts:** cash, bank, card and mobile wallets with live balances, and transfers between them (even across currencies).
+- **Any currency:** 17 currencies with live rates; show everything in the one you choose.
+- **Receipt photos** on any expense, kept on the phone and backed up when signed in.
+- **Calendar view** of a month's spending, day by day.
 - **Activity:** every entry by month, with search and category filters.
 - **Plan:** budgets per category, bills and subscriptions that log themselves (with reminders on Android), savings goals with target dates, and money you lent or borrowed.
 - **Insights:** income vs spending, savings rate, daily average, where money went and came from.
 - **Reports:** monthly PDF report and CSV export of every entry; JSON backup and restore.
 - **Your own categories** with icons and colours.
 - **App lock:** 4-digit PIN, plus fingerprint on Android.
-- Live USD → LKR rate (open.er-api.com), or set your own.
+- Live exchange rates (open.er-api.com), or set your own per currency.
 - Works offline and installs to the home screen.
 - Optional sign-in and cloud sync with Supabase (see `supabase_setup_guide.md`).
 
