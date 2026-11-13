@@ -8,14 +8,14 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '3.0.0';
+const APP_VERSION = '3.1.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
 
 // Supabase project (the publishable key is safe in client code; access is enforced by RLS).
-const SUPABASE_URL = 'https://kxtpcswywdvtasxanccz.supabase.co';
-const SUPABASE_ANON_KEY = 'sb_publishable_TVtBSlap2TpS9mtyZv455Q_0pc-TNYH';
+const SUPABASE_URL = 'https://qtgkbpfqrcczrdmhglhq.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_6douRkevjI23Thss5TjhnQ_thm-qkHt';
 
 // Deep link the Android app registers; Supabase returns here after Google sign-in.
 const NATIVE_AUTH_REDIRECT = 'io.github.dinsara0611.vela://auth-callback';
@@ -199,6 +199,17 @@ const formatSigned = (amount, cur) => `${amount > 0 ? '+' : amount < 0 ? '−' :
 const formatCompact = (amount, cur) => `${amount < 0 ? '-' : ''}${symbolFor(cur).trim()}${cur === 'LKR' ? ' ' : ''}${moneyCompact.format(Math.abs(amount))}`;
 const formatDisplay = (amount, cur) => formatCurrency(toDisplay(amount, cur), state.config.currency);
 const dcur = () => state.config.currency;
+// Small boxes on phones: full amount when it fits, "Rs. 599.3K" when it doesn't (full value in the tooltip).
+const fitMoney = (v, cur, max = 11) => {
+    const full = formatCurrency(v, cur);
+    return full.length > max ? formatCompact(v, cur) : full;
+};
+const setMoney = (el, v, cur, max = 11, signed = false) => {
+    if (!el) return;
+    const full = signed ? formatSigned(v, cur) : formatCurrency(v, cur);
+    el.textContent = full.length > max ? `${signed && v > 0 ? '+' : ''}${formatCompact(v, cur)}` : full;
+    el.title = full;
+};
 
 /* ---- Categories ---- */
 const catById = (id, type = 'expense') => state.categories.find((c) => c.id === id)
@@ -466,12 +477,38 @@ const withBusy = async (btn, task) => {
 
 const fieldError = (input, message) => {
     showToast(message, 'error');
-    if (input) {
-        input.setAttribute('aria-invalid', 'true');
-        input.focus();
-        input.addEventListener('input', () => input.removeAttribute('aria-invalid'), { once: true });
+    if (!input) return false;
+    input.setAttribute('aria-invalid', 'true');
+    const field = input.closest('.field');
+    if (field) {
+        let err = field.querySelector('.field-error.js-error');
+        if (!err) {
+            err = document.createElement('span');
+            err.className = 'field-error js-error';
+            err.id = `${input.id || 'field'}-error-msg`;
+            err.setAttribute('role', 'alert');
+            field.appendChild(err);
+        }
+        err.hidden = false;
+        err.innerHTML = `${icon('i-alert')}<span></span>`;
+        err.querySelector('span').textContent = message;
+        input.setAttribute('aria-describedby', err.id);
     }
+    input.focus();
+    const clear = () => {
+        input.removeAttribute('aria-invalid');
+        const e = field && field.querySelector('.field-error.js-error');
+        if (e) e.hidden = true;
+    };
+    input.addEventListener('input', clear, { once: true });
+    input.addEventListener('change', clear, { once: true });
     return false;
+};
+
+// Forms are reused, so stale inline errors must go when a sheet opens.
+const clearFieldErrors = (root) => {
+    root.querySelectorAll('.field-error.js-error').forEach((e) => { e.hidden = true; });
+    root.querySelectorAll('[aria-invalid="true"]').forEach((e) => e.removeAttribute('aria-invalid'));
 };
 
 const setPressed = (selector, matchFn) => {
@@ -489,6 +526,7 @@ const finePointer = () => !!(window.matchMedia && window.matchMedia('(hover: hov
 
 const showSheetElement = (id) => {
     const overlay = $(id);
+    clearFieldErrors(overlay);
     overlay.classList.add('active');
     overlay.setAttribute('aria-hidden', 'false');
     openSheets.push(id);
@@ -885,7 +923,7 @@ const scheduleReminders = async () => {
             notifications.push({
                 id: hashToInt(bill.id),
                 title: `${bill.name} is due ${at === dayBefore ? 'tomorrow' : 'today'}`,
-                body: `${formatCurrency(bill.amount, bill.currency)}${bill.autoLog ? ' · Vela will log it automatically.' : ' · Open Vela to mark it paid.'}`,
+                body: `${formatCurrency(bill.amount, bill.currency)}${bill.autoLog ? '. Vela will log it automatically.' : '. Open Vela to mark it paid.'}`,
                 schedule: { at, allowWhileIdle: true }
             });
         });
@@ -929,14 +967,14 @@ const enableReminders = async (on) => {
    ========================================================================= */
 const txRow = (t, { showDate = true } = {}) => {
     const cat = catById(t.category, t.type);
-    const sub = showDate ? `${cat.name} · ${relativeDayLabel(t.date)}` : (t.note || cat.name);
     const value = toDisplay(t.amount, t.currency);
     const signed = formatSigned(t.type === 'income' ? value : -value, dcur());
-    const orig = t.currency !== dcur() ? `<span class="tx-orig">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>` : '';
+    const orig = t.currency !== dcur() ? `<span class="tx-orig-inline">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>` : '';
+    const label = showDate ? cat.name : (t.note || cat.name);
     return `<li><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}">
         ${catBadge(t.category, t.type)}
-        <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub">${t.recurringId ? icon('i-repeat') : ''}${escapeHtml(sub)}</span></span>
-        <span class="tx-amt"><span class="amount ${t.type === 'income' ? 'is-income' : ''}">${escapeHtml(signed)}</span>${orig}</span>
+        <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub">${t.recurringId ? icon('i-repeat') : ''}<span>${escapeHtml(label)}</span>${orig}</span></span>
+        <span class="tx-amt"><span class="amount ${t.type === 'income' ? 'is-income' : ''}">${escapeHtml(signed)}</span>${showDate ? `<span class="tx-when">${escapeHtml(relativeDayLabel(t.date))}</span>` : ''}</span>
     </button></li>`;
 };
 
@@ -977,22 +1015,23 @@ const renderDashboard = () => {
     const now = new Date();
     const s = monthStats();
 
-    $('dash-month-label').textContent = `Balance · ${now.toLocaleDateString('en-US', { month: 'long' })}`;
+    $('dash-month-label').textContent = `${now.toLocaleDateString('en-US', { month: 'long' })} balance`;
     $('dash-balance').textContent = formatCurrency(s.net, cur);
     $('dash-balance-sub').textContent = s.income > 0
         ? `${Math.max(0, Math.round((s.net / s.income) * 100))}% of this month's income left`
         : (s.spent > 0 ? "Add your income to see what's left" : 'Income minus spending this month');
-    $('dash-income').textContent = formatCurrency(s.income, cur);
-    $('dash-spent').textContent = formatCurrency(s.spent, cur);
+    setMoney($('dash-income'), s.income, cur, 12);
+    setMoney($('dash-spent'), s.spent, cur, 12);
 
     const pill = $('dash-spend-trend');
     const pillText = $('dash-spend-trend-text');
     if (s.prevSpent > 0) {
-        const diff = ((s.spent - s.prevSpent) / s.prevSpent) * 100;
-        const r = Math.round(Math.abs(diff));
-        pill.dataset.trend = r === 0 ? 'flat' : (diff > 0 ? 'up' : 'down');
-        pillText.textContent = r === 0 ? 'Same as last month' : `${r}% ${diff > 0 ? 'more' : 'less'} spent`;
-        pill.title = 'Compared with the same days last month';
+        // Money, not a percentage: "730% more" says little when last month was quiet.
+        const diff = s.spent - s.prevSpent;
+        const flat = Math.abs(diff) < Math.max(1, s.prevSpent * 0.02);
+        pill.dataset.trend = flat ? 'flat' : (diff > 0 ? 'up' : 'down');
+        pillText.textContent = flat ? 'Same as last month' : `${formatCompact(Math.abs(diff), cur)} ${diff > 0 ? 'more' : 'less'} than last month`;
+        pill.title = `Spending so far compared with the same days of last month (${formatCurrency(s.prevSpent, cur)})`;
     } else {
         pill.dataset.trend = 'flat';
         pillText.textContent = s.spent > 0 ? 'First month tracked' : 'Nothing spent yet';
@@ -1000,22 +1039,22 @@ const renderDashboard = () => {
 
     setMeter($('dash-budget-fill'), s.budgetPct, budgetState(s.budgetPct));
     $('dash-budget-meter').setAttribute('aria-valuenow', String(Math.round(Math.min(100, s.budgetPct))));
-    $('dash-budget-desc').textContent = `${Math.round(s.budgetPct)}% of ${formatCurrency(s.budget, cur)} budget`;
+    $('dash-budget-desc').textContent = `${Math.round(s.budgetPct)}% of ${fitMoney(s.budget, cur, 11)} budget`;
     const left = s.budget - s.spent;
     $('dash-budget-left').innerHTML = left >= 0
-        ? `<strong>${escapeHtml(formatCurrency(left, cur))}</strong> left`
-        : `<strong>${escapeHtml(formatCurrency(-left, cur))}</strong> over`;
+        ? `<strong>${escapeHtml(fitMoney(left, cur, 12))}</strong> left`
+        : `<strong>${escapeHtml(fitMoney(-left, cur, 12))}</strong> over`;
 
     const savedTotal = state.savings.reduce((sum, g) => sum + toDisplay(g.saved, g.currency), 0);
-    $('dash-total-savings').textContent = formatCurrency(savedTotal, cur);
+    setMoney($('dash-total-savings'), savedTotal, cur, 12);
     $('dash-savings-status').textContent = state.savings.length ? `across ${plural(state.savings.length, 'goal')}` : 'Tap to create a goal';
 
     const { owedToYou, youOwe } = debtTotals();
     const netDebt = owedToYou - youOwe;
-    $('dash-debts').textContent = formatSigned(netDebt, cur);
+    setMoney($('dash-debts'), netDebt, cur, 12, true);
     $('dash-debts').className = `tile-value ${netDebt > 0 ? 'text-income' : netDebt < 0 ? 'text-expense' : ''}`;
     $('dash-debts-meta').textContent = owedToYou || youOwe
-        ? `Owed ${formatCompact(owedToYou, cur)} · Owe ${formatCompact(youOwe, cur)}`
+        ? (owedToYou && youOwe ? `Owed ${formatCompact(owedToYou, cur)}, you owe ${formatCompact(youOwe, cur)}` : owedToYou ? `${formatCompact(owedToYou, cur)} owed to you` : `You owe ${formatCompact(youOwe, cur)}`)
         : 'Nothing owed';
 
     // Bills due in the next 7 days (or overdue).
@@ -1079,9 +1118,9 @@ const renderActivity = () => {
     const summarySrc = query ? list : base;
     const inc = sumDisplay(summarySrc.filter((t) => t.type === 'income'));
     const out = sumDisplay(summarySrc.filter((t) => t.type === 'expense'));
-    $('act-income').textContent = formatCurrency(inc, cur);
-    $('act-spent').textContent = formatCurrency(out, cur);
-    $('act-net').textContent = formatSigned(inc - out, cur);
+    setMoney($('act-income'), inc, cur, 11);
+    setMoney($('act-spent'), out, cur, 11);
+    setMoney($('act-net'), inc - out, cur, 11, true);
     $('act-net').className = `amount ${inc - out >= 0 ? 'text-income' : 'text-expense'}`;
 
     const container = $('activity-list');
@@ -1137,7 +1176,7 @@ const planBudgetsHtml = () => {
         const spent = s.byCat[id] || 0;
         const pct = limit > 0 ? (spent / limit) * 100 : 0;
         const rem = limit - spent;
-        return `<button type="button" class="card row-card" data-edit-budget="${escapeHtml(id)}">
+        return `<button type="button" class="plan-row" data-edit-budget="${escapeHtml(id)}" aria-label="Edit ${escapeHtml(cat.name)} budget">
             <span class="row-top">${catBadge(id, 'expense')}<span class="row-main"><span class="row-title">${escapeHtml(cat.name)}</span><span class="row-sub">${escapeHtml(formatCurrency(spent, cur))} of ${escapeHtml(formatCurrency(limit, cur))}</span></span>
             <span class="row-end"><span class="amount ${rem < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(Math.abs(rem), cur))}</span><span class="row-sub">${rem < 0 ? 'over' : 'left'}</span></span></span>
             ${meterHtml(pct, budgetState(pct), `${cat.name} budget used`)}
@@ -1150,28 +1189,30 @@ const planBudgetsHtml = () => {
     <article class="card glow" style="--glow:var(--pal-violet)">
         <div class="card-head"><h2 class="card-title">Monthly budget</h2><button type="button" class="btn btn-secondary btn-xs" data-edit-budget="__overall">${icon('i-edit', 'ic ic-sm')} Edit</button></div>
         <div class="big-number ${left < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(Math.abs(left), cur))}</div>
-        <div class="card-sub" style="margin-bottom:var(--sp-3)">${left >= 0 ? `left of ${escapeHtml(formatCurrency(s.budget, cur))} · about ${escapeHtml(formatCurrency(perDay, cur))} a day for ${plural(daysLeft, 'day')}` : `over your ${escapeHtml(formatCurrency(s.budget, cur))} budget`}</div>
+        <div class="card-sub" style="margin-bottom:var(--sp-3)">${left >= 0 ? `left of ${escapeHtml(formatCurrency(s.budget, cur))}. That's about ${escapeHtml(formatCurrency(perDay, cur))} a day for the next ${plural(daysLeft, 'day')}.` : `over your ${escapeHtml(formatCurrency(s.budget, cur))} budget`}</div>
         ${meterHtml(s.budgetPct, budgetState(s.budgetPct), 'Monthly budget used')}
         <div class="meter-row" style="margin-top:var(--sp-2)"><span>${Math.round(s.budgetPct)}% used</span><span>Spent <strong>${escapeHtml(formatCurrency(s.spent, cur))}</strong></span></div>
     </article>
     <div class="section-head"><h2>By category</h2><button type="button" class="btn btn-primary btn-xs" data-action="add-budget">${icon('i-plus', 'ic ic-sm')} Add</button></div>
-    ${rows ? `<div class="stack plan-grid">${rows}</div>` : `<div class="card">${emptyState({ iconId: 'i-target', title: 'No category budgets', text: 'Set a monthly limit for food, transport or anything else. Vela warns you at 80%.', actionLabel: 'Add a budget', action: 'add-budget' })}</div>`}
+    ${rows ? `<div class="card plan-list">${rows}</div>` : `<div class="card">${emptyState({ iconId: 'i-target', title: 'No category budgets', text: 'Set a monthly limit for food, transport or anything else. Vela warns you at 80%.', actionLabel: 'Add a budget', action: 'add-budget' })}</div>`}
     ${unbudgeted.length ? `<div class="section-head"><h2>Spending without a budget</h2></div>
     <div class="card card-list"><ul class="tx-list">${unbudgeted.map(([id, v]) => `<li><button type="button" class="tx" data-new-budget="${escapeHtml(id)}">${catBadge(id, 'expense')}<span class="tx-main"><span class="tx-title">${escapeHtml(catById(id).name)}</span><span class="tx-sub">Tap to set a budget</span></span><span class="tx-amt"><span class="amount">${escapeHtml(formatCurrency(v, cur))}</span></span></button></li>`).join('')}</ul></div>` : ''}`;
 };
 
-const billCard = (b) => {
+const FREQ_PHRASE = { weekly: 'Every week', monthly: 'Every month', yearly: 'Every year' };
+
+const billRow = (b) => {
     const dl = dueLabel(b.nextDate);
-    const cat = catById(b.category, b.type);
     const label = b.type === 'income' ? dl.text.replace('Due', 'Expected').replace('overdue', 'late') : dl.text;
-    return `<article class="card row-card">
-        <div class="row-top">${catBadge(b.category, b.type)}<div class="row-main"><span class="row-title">${escapeHtml(b.name)}</span><span class="row-sub">${escapeHtml(FREQ_LABELS[b.frequency])} · ${escapeHtml(cat.name)}</span></div>
-        <div class="row-end"><span class="amount ${b.type === 'income' ? 'text-income' : ''}">${escapeHtml(formatDisplay(b.amount, b.currency))}</span><span class="badge-due" data-tone="${dl.tone}">${escapeHtml(label)}</span></div></div>
-        <div class="row-actions">
-            ${b.autoLog ? `<span class="badge-due" data-tone="auto" style="align-self:center;flex:1;justify-content:center;min-height:38px">${icon('i-repeat', 'ic ic-sm')} Logs automatically</span>` : `<button type="button" class="btn btn-primary btn-sm" data-bill-paid="${escapeHtml(b.id)}">${icon('i-check', 'ic ic-sm')} ${b.type === 'income' ? 'Received' : 'Mark paid'}</button>`}
-            <button type="button" class="btn btn-secondary btn-sm" data-edit-bill="${escapeHtml(b.id)}">${icon('i-edit', 'ic ic-sm')} Edit</button>
-        </div>
-    </article>`;
+    const how = b.autoLog ? 'logs itself' : (b.type === 'income' ? 'you confirm it' : 'you mark it paid');
+    return `<div class="plan-row">
+        <button type="button" class="plan-row-main" data-edit-bill="${escapeHtml(b.id)}" aria-label="Edit ${escapeHtml(b.name)}">
+            ${catBadge(b.category, b.type)}
+            <span class="row-main"><span class="row-title">${escapeHtml(b.name)}</span><span class="row-sub">${FREQ_PHRASE[b.frequency]}, ${how}</span></span>
+            <span class="row-end"><span class="amount ${b.type === 'income' ? 'text-income' : ''}">${escapeHtml(formatDisplay(b.amount, b.currency))}</span><span class="badge-due" data-tone="${dl.tone}">${escapeHtml(label)}</span></span>
+        </button>
+        ${b.autoLog ? '' : `<button type="button" class="btn btn-secondary btn-sm paid-btn" data-bill-paid="${escapeHtml(b.id)}">${icon('i-check', 'ic ic-sm')} ${b.type === 'income' ? 'Mark received' : 'Mark paid'}</button>`}
+    </div>`;
 };
 
 const planBillsHtml = () => {
@@ -1186,12 +1227,12 @@ const planBillsHtml = () => {
     const monthlyIn = inc.reduce((s, b) => s + monthlyEquivalent(b), 0);
     return `
     <div class="duo">
-        <div class="card glow metric" style="--glow:var(--pal-pink)"><span class="metric-label">Bills per month</span><span class="metric-value text-expense">${escapeHtml(formatCurrency(monthlyOut, cur))}</span><span class="metric-sub">${plural(bills.length, 'bill')}</span></div>
-        <div class="card glow metric" style="--glow:var(--pal-green)"><span class="metric-label">Regular income</span><span class="metric-value text-income">${escapeHtml(formatCurrency(monthlyIn, cur))}</span><span class="metric-sub">per month</span></div>
+        <div class="card glow metric" style="--glow:var(--pal-pink)"><span class="metric-label">Bills per month</span><span class="metric-value text-expense" title="${escapeHtml(formatCurrency(monthlyOut, cur))}">${escapeHtml(fitMoney(monthlyOut, cur, 13))}</span><span class="metric-sub">${plural(bills.length, 'bill')}</span></div>
+        <div class="card glow metric" style="--glow:var(--pal-green)"><span class="metric-label">Regular income</span><span class="metric-value text-income" title="${escapeHtml(formatCurrency(monthlyIn, cur))}">${escapeHtml(fitMoney(monthlyIn, cur, 13))}</span><span class="metric-sub">per month</span></div>
     </div>
-    <div class="section-head"><h2>Bills &amp; subscriptions</h2><button type="button" class="btn btn-primary btn-xs" data-action="add-bill">${icon('i-plus', 'ic ic-sm')} Add</button></div>
-    ${bills.length ? `<div class="stack plan-grid">${bills.map(billCard).join('')}</div>` : '<p class="card-sub" style="padding:0 4px">No bills yet.</p>'}
-    ${inc.length ? `<div class="section-head"><h2>Regular income</h2></div><div class="stack plan-grid">${inc.map(billCard).join('')}</div>` : ''}`;
+    <div class="section-head"><h2>Bills and subscriptions</h2><button type="button" class="btn btn-primary btn-xs" data-action="add-bill">${icon('i-plus', 'ic ic-sm')} Add</button></div>
+    <div class="plan-half stack">${bills.length ? `<div class="card plan-list">${bills.map(billRow).join('')}</div>` : '<p class="card-sub" style="padding:0 4px">No bills yet.</p>'}</div>
+    ${inc.length ? `<div class="plan-half stack"><div class="section-head"><h2>Regular income</h2></div><div class="card plan-list">${inc.map(billRow).join('')}</div></div>` : ''}`;
 };
 
 const planGoalsHtml = () => {
@@ -1216,7 +1257,7 @@ const planGoalsHtml = () => {
             else if (daysBetween(now, end) >= 0) hint = `${icon('i-calendar')} Due ${escapeHtml(shortDate(g.deadline))}: ${escapeHtml(formatDisplay(remaining, g.currency))} to go`;
             else hint = `${icon('i-alert')} Target date passed`;
         } else hint = `${icon('i-target')} ${escapeHtml(formatDisplay(remaining, g.currency))} to go`;
-        return `<article class="card row-card">
+        return `<article class="card row-card plan-half">
             <div class="row-top"><span class="cat-badge" style="--cat:var(--pal-${done ? 'green' : 'violet'})">${icon('i-target')}</span><div class="row-main"><span class="row-title">${escapeHtml(g.name)}</span><span class="row-sub">${g.currency !== cur ? `Saving in ${g.currency}` : 'Savings goal'}</span></div><span class="goal-pct" data-done="${done}">${Math.floor(Math.min(p, 999))}%</span></div>
             <div class="goal-figures"><span class="amount">${escapeHtml(formatDisplay(g.saved, g.currency))}</span><span>of ${escapeHtml(formatDisplay(g.target, g.currency))}</span></div>
             ${meterHtml(p, done ? 'done' : null, `${g.name} progress`)}
@@ -1234,7 +1275,7 @@ const planGoalsHtml = () => {
         <div style="margin-top:var(--sp-3)">${meterHtml(pct, pct >= 100 ? 'done' : null, 'All goals progress')}</div>
         <div class="meter-row" style="margin-top:var(--sp-2)"><span>${Math.round(pct)}% of all targets</span><span>Target <strong>${escapeHtml(formatCurrency(target, cur))}</strong></span></div>
     </article>
-    <div class="stack plan-grid">${cards}</div>`;
+    ${cards}`;
 };
 
 const planDebtsHtml = () => {
@@ -1250,9 +1291,9 @@ const planDebtsHtml = () => {
         const p = (d.repaid / d.amount) * 100;
         const lent = d.direction === 'lent';
         const due = d.dueDate && left > 0 ? dueLabel(d.dueDate) : null;
-        return `<article class="card row-card">
+        return `<article class="card row-card plan-half">
             <div class="row-top"><span class="cat-badge" style="--cat:var(--pal-${lent ? 'green' : 'pink'})">${icon('i-users')}</span>
-            <div class="row-main"><span class="row-title">${escapeHtml(d.person)}</span><span class="row-sub">${lent ? 'Owes you' : 'You owe'}${d.note ? ` · ${escapeHtml(d.note)}` : ''}</span></div>
+            <div class="row-main"><span class="row-title">${escapeHtml(d.person)}</span><span class="row-sub">${lent ? 'Owes you' : 'You owe'}${d.note ? ` for ${escapeHtml(d.note)}` : ''}</span></div>
             <div class="row-end"><span class="amount ${lent ? 'text-income' : 'text-expense'}">${escapeHtml(formatDisplay(left, d.currency))}</span>${left <= 0 ? '<span class="badge-due" data-tone="ok">Settled</span>' : due ? `<span class="badge-due" data-tone="${due.tone}">${escapeHtml(due.text)}</span>` : `<span class="row-sub">of ${escapeHtml(formatDisplay(d.amount, d.currency))}</span>`}</div></div>
             ${meterHtml(p, p >= 100 ? 'done' : null, `${d.person} repaid`)}
             <div class="meter-row"><span>${escapeHtml(formatDisplay(d.repaid, d.currency))} paid back</span><span>${Math.round(p)}%</span></div>
@@ -1264,12 +1305,12 @@ const planDebtsHtml = () => {
     };
     return `
     <div class="duo">
-        <div class="card glow metric" style="--glow:var(--pal-green)"><span class="metric-label">Owed to you</span><span class="metric-value text-income">${escapeHtml(formatCurrency(owedToYou, cur))}</span><span class="metric-sub">${plural(open.filter((d) => d.direction === 'lent').length, 'person', 'people')}</span></div>
-        <div class="card glow metric" style="--glow:var(--pal-pink)"><span class="metric-label">You owe</span><span class="metric-value text-expense">${escapeHtml(formatCurrency(youOwe, cur))}</span><span class="metric-sub">${plural(open.filter((d) => d.direction === 'borrowed').length, 'person', 'people')}</span></div>
+        <div class="card glow metric" style="--glow:var(--pal-green)"><span class="metric-label">Owed to you</span><span class="metric-value text-income" title="${escapeHtml(formatCurrency(owedToYou, cur))}">${escapeHtml(fitMoney(owedToYou, cur, 13))}</span><span class="metric-sub">${plural(open.filter((d) => d.direction === 'lent').length, 'person', 'people')}</span></div>
+        <div class="card glow metric" style="--glow:var(--pal-pink)"><span class="metric-label">You owe</span><span class="metric-value text-expense" title="${escapeHtml(formatCurrency(youOwe, cur))}">${escapeHtml(fitMoney(youOwe, cur, 13))}</span><span class="metric-sub">${plural(open.filter((d) => d.direction === 'borrowed').length, 'person', 'people')}</span></div>
     </div>
     <div class="section-head"><h2>Open</h2><button type="button" class="btn btn-primary btn-xs" data-action="add-debt">${icon('i-plus', 'ic ic-sm')} Add</button></div>
-    ${open.length ? `<div class="stack plan-grid">${open.map(card).join('')}</div>` : '<p class="card-sub" style="padding:0 4px">Everything is settled.</p>'}
-    ${settled.length ? `<div class="section-head"><h2>Settled</h2></div><div class="stack plan-grid">${settled.map(card).join('')}</div>` : ''}`;
+    ${open.length ? open.map(card).join('') : '<p class="card-sub" style="padding:0 4px">Everything is settled.</p>'}
+    ${settled.length ? `<div class="section-head"><h2>Settled</h2></div>${settled.map(card).join('')}` : ''}`;
 };
 
 /* =========================================================================
@@ -1289,19 +1330,19 @@ const renderAnalytics = () => {
     const income = sumDisplay(inc);
     const net = income - spent;
 
-    $('metric-income').textContent = formatCurrency(income, cur);
+    setMoney($('metric-income'), income, cur, 13);
     $('metric-income-sub').textContent = plural(inc.length, 'entry', 'entries');
-    $('metric-total').textContent = formatCurrency(spent, cur);
+    setMoney($('metric-total'), spent, cur, 13);
     $('metric-total-items').textContent = plural(out.length, 'expense');
-    $('metric-net').textContent = formatCurrency(net, cur);
+    setMoney($('metric-net'), net, cur, 13);
     $('metric-net').className = `metric-value ${net >= 0 ? 'text-income' : 'text-expense'}`;
     $('metric-rate').textContent = income > 0 ? `Savings rate ${Math.round((net / income) * 100)}%` : 'Add income to see your savings rate';
-    $('metric-avg-daily').textContent = formatCurrency(spent / days, cur);
+    setMoney($('metric-avg-daily'), spent / days, cur, 13);
     $('metric-avg-days').textContent = `over ${plural(days, 'day')}`;
 
     let biggest = null;
     out.forEach((e) => { const v = toDisplay(e.amount, e.currency); if (!biggest || v > biggest.v) biggest = { v, e }; });
-    $('metric-max-spend').textContent = formatCurrency(biggest ? biggest.v : 0, cur);
+    setMoney($('metric-max-spend'), biggest ? biggest.v : 0, cur, 13);
     $('metric-max-spend-title').textContent = biggest ? biggest.e.desc : '—';
 
     const ms = monthStats();
@@ -1349,7 +1390,7 @@ const renderSettings = () => {
         ? 'A notification the day before each bill is due.'
         : 'Works in the Android app. Here, bills due soon show on Home.';
     $('report-month-desc').textContent = `Income, spending and categories for ${monthName(activityMonth.y, activityMonth.m)}`;
-    $('app-version').textContent = `Vela ${APP_VERSION}${isNative() ? ' for Android' : ''} · Rates from open.er-api.com`;
+    $('app-version').textContent = `Vela ${APP_VERSION}${isNative() ? ' for Android' : ''}. Exchange rates from open.er-api.com`;
 };
 
 /* =========================================================================
@@ -2021,6 +2062,16 @@ let catEditType = 'expense';
 let catEditColor = 'pink';
 let catEditIcon = 'c-Other';
 let catReturnToTx = false;
+let catReturnToManager = false;
+
+// After editing from the category list, show the list again instead of closing everything.
+const backToCategoryManager = () => {
+    catReturnToManager = false;
+    hideSheet('modal-category');
+    history.replaceState({ vela: 'sheet', id: 'modal-categories', tab: currentTab }, '');
+    renderCategoryManager();
+    showSheetElement('modal-categories');
+};
 
 const renderCategoryManager = () => {
     const section = (type, title) => `
@@ -2028,7 +2079,7 @@ const renderCategoryManager = () => {
         <ul class="cat-manage">${catsOfType(type).map((c) => `
             <li><button type="button" class="row-btn" data-edit-category="${escapeHtml(c.id)}">
                 ${catBadge(c.id, type)}
-                <span class="row-label"><span>${escapeHtml(c.name)}</span><span>${c.builtIn ? 'Built in · change name, colour or icon' : 'Your category'}</span></span>
+                <span class="row-label"><span>${escapeHtml(c.name)}</span><span>${c.builtIn ? 'Built in. You can rename it or change its look.' : 'Added by you'}</span></span>
                 ${icon('i-chevron', 'ic chev')}
             </button></li>`).join('')}</ul>`;
     $('categories-body').innerHTML = section('expense', 'Expenses') + section('income', 'Income');
@@ -2087,6 +2138,8 @@ const submitCategory = () => {
         history.replaceState({ vela: 'sheet', id: 'modal-tx', tab: currentTab }, '');
         showSheetElement('modal-tx');
         buildCategoryPicker(txType, record.id);
+    } else if (catReturnToManager) {
+        backToCategoryManager();
     } else {
         closeSheet('modal-category');
     }
@@ -2109,7 +2162,8 @@ const deleteCategory = (id) => {
             state.categories = state.categories.filter((x) => x.id !== id);
             saveState();
             queueSync('category', id, 'delete');
-            closeSheet('modal-category');
+            if (catReturnToManager) backToCategoryManager();
+            else closeSheet('modal-category');
             showToast('Category deleted', 'success');
             renderActive();
         }
@@ -3226,7 +3280,7 @@ const initEvents = () => {
         if (d.billPaid) { markBillPaid(d.billPaid); return; }
         if (d.editDebt) { openEditDebt(d.editDebt); return; }
         if (d.repayDebt) { openRepay(d.repayDebt); return; }
-        if (d.editCategory) { catReturnToTx = false; openCategoryEditor(d.editCategory); return; }
+        if (d.editCategory) { catReturnToTx = false; catReturnToManager = true; openCategoryEditor(d.editCategory); return; }
         if (d.catColor) { catEditColor = d.catColor; renderCategoryEditor(); return; }
         if (d.catIcon) { catEditIcon = d.catIcon; renderCategoryEditor(); return; }
         if (d.catType) { catEditType = d.catType; if (!$('category-id').value) catEditIcon = catEditType === 'income' ? 'c-OtherIncome' : 'c-Other'; renderCategoryEditor(); return; }
@@ -3259,7 +3313,7 @@ const initEvents = () => {
             case 'add-bill': openAddBill(); break;
             case 'add-debt': openAddDebt(); break;
             case 'add-budget': openBudget(); break;
-            case 'new-category-inline': catReturnToTx = true; openCategoryEditor(null, txType); break;
+            case 'new-category-inline': catReturnToTx = true; catReturnToManager = false; openCategoryEditor(null, txType); break;
             default: break;
         }
     });
@@ -3336,7 +3390,7 @@ const initEvents = () => {
     });
     $('funds-currency').addEventListener('change', updateFundsHint);
     $('btn-manage-categories').addEventListener('click', openCategoryManager);
-    $('btn-add-category').addEventListener('click', () => { catReturnToTx = false; openCategoryEditor(); });
+    $('btn-add-category').addEventListener('click', () => { catReturnToTx = false; catReturnToManager = true; openCategoryEditor(); });
 
     let searchTimer = null;
     $('activity-search').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(renderActivity, 140); });

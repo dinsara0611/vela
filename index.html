@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=3.0.0">
+    <link rel="stylesheet" href="style.css?v=3.1.0">
 </head>
 <body data-view="dashboard">
 
@@ -177,7 +177,7 @@
                     <article class="hero">
                         <svg class="hero-sail" aria-hidden="true"><use href="#sail-outline"/></svg>
                         <div class="hero-top">
-                            <span class="hero-label" id="dash-month-label">Balance this month</span>
+                            <span class="hero-label" id="dash-month-label">This month's balance</span>
                             <span class="pill" id="dash-spend-trend" data-trend="flat"><svg class="ic"><use href="#i-arrow-up"/></svg><span id="dash-spend-trend-text">—</span></span>
                         </div>
                         <div class="hero-amount amount" id="dash-balance">$0.00</div>
@@ -219,7 +219,7 @@
                         <div class="h-scroller" id="due-list"></div>
                     </section>
 
-                    <section class="card">
+                    <section class="card cashflow-card">
                         <div class="card-head">
                             <h2 class="card-title">Cash flow</h2>
                             <div class="segmented" role="group" aria-label="Chart range">
@@ -236,7 +236,7 @@
                         </div>
                     </section>
 
-                    <section class="card card-list">
+                    <section class="card card-list recent-card">
                         <div class="card-head" style="margin-bottom:0">
                             <h2 class="card-title">Recent</h2>
                             <button class="link-btn" type="button" data-goto="activity">See all <svg class="ic ic-sm"><use href="#i-chevron"/></svg></button>
@@ -373,7 +373,7 @@
                     </div>
 
                     <div class="settings-group">
-                        <h2 class="section-label">Security &amp; reminders</h2>
+                        <h2 class="section-label">Security and reminders</h2>
                         <div class="card list-card">
                             <div class="setting">
                                 <div class="setting-row">
@@ -473,7 +473,7 @@
                         </div>
                     </div>
 
-                    <p class="app-version" id="app-version">Vela 3.0 · Rates from open.er-api.com</p>
+                    <p class="app-version" id="app-version">Vela. Exchange rates from open.er-api.com</p>
                 </section>
             </main>
         </div>
@@ -983,7 +983,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=3.0.0"></script>
+    <script src="app.js?v=3.1.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
