@@ -9,7 +9,7 @@ A phone-first expense and savings tracker that works in USD and LKR. It is a sta
 - **Any currency:** 17 currencies with live rates; show everything in the one you choose.
 - **Receipt photos** on any expense, kept on the phone and backed up when signed in.
 - **Quick picks** with typical local prices (Sri Lanka, India, US, and scaled for other currencies), your own usual items learnt from history, ordered for the time of day (breakfast, lunch, tea, dinner), and auto-picked categories as you type.
-- **Vela bot**: a built-in assistant that works offline. Type “kottu 1200” or “bus 100 yesterday” to add entries, or ask “spent on food this week?”, “budget left?”, “can I afford 5000?” and “saving tips”.
+- **Vela bot**: an AI money assistant powered by Claude (through the `vela-ai` Supabase Edge Function, so the API key stays on the server). Tell it what you spent (“kottu 1200 and bus 100”) and it prepares entries to add; ask it anything about your spending, budget and saving. Signed-out or offline, it falls back to built-in answers. Setup: see `supabase_setup_guide.md`.
 - **Price check**: a gentle warning when an amount is far above or below what you usually pay.
 - **Calendar view** of a month's spending, day by day.
 - **Activity:** every entry by month, with search and category filters.

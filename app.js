@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.2.0';
+const APP_VERSION = '4.3.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2208,10 +2208,15 @@ const botUser = (text) => {
 const money = (v) => escapeHtml(formatCurrency(v, dcur()));
 
 const openBot = () => {
+    const uid = state.auth.user ? state.auth.user.id : null;
+    if (uid !== aiUserId) { aiUserId = uid; aiHistory = []; botStarted = false; $('bot-log').innerHTML = ''; }
+    setBotMode();
     if (!botStarted) {
         botStarted = true;
         const name = state.auth.user && state.auth.user.full_name ? `, ${escapeHtml(state.auth.user.full_name.split(' ')[0])}` : '';
-        botSay(`Hi${name}! I'm <strong>Vela bot</strong>. Tell me what you spent, like <em>“kottu 1200”</em> or <em>“bus 100 yesterday”</em>, and I'll add it. Ask me things like <em>“how much on food this month?”</em> or tap a button below.`);
+        botSay(aiAvailable()
+            ? `Hi${name}! I'm <strong>Vela bot</strong>, your AI money helper. Tell me what you spent, like <em>“kottu 1200 and bus 100”</em>, and I'll set it up for you to add. Or ask me anything: <em>“why did I spend more this month?”</em>, <em>“how can I save 20,000 by December?”</em>`
+            : `Hi${name}! I'm <strong>Vela bot</strong>. Tell me what you spent, like <em>“kottu 1200”</em> or <em>“bus 100 yesterday”</em>, and I'll add it. Ask me things like <em>“how much on food this month?”</em> or tap a button below.${canSync() ? '' : ' <strong>Sign in</strong> to chat with the full AI.'}`);
     }
     openOrSwap('modal-bot');
     botScroll();
@@ -2453,9 +2458,15 @@ const answerHelp = () => botSay(`I can:<ol class="bot-list">
     <li><strong>Show totals</strong>: “my balance”, “income this month”, “bills due”</li></ol>`);
 
 const botHandle = (raw) => {
-    const text = raw.trim();
-    if (!text) return;
+    const text = String(raw || '').trim().slice(0, 1000);
+    if (!text || aiBusy) return;
     botUser(text);
+    if (aiAvailable()) aiAsk(text);
+    else botHandleOffline(text);
+};
+
+// Answers worked out on the phone, used when the AI isn't available.
+const botHandleOffline = (text) => {
     const t = text.toLowerCase();
     const isQuestion = /\?|\b(how|what|where|when|which|show|tell|can i|could i|do i|am i)\b/.test(t);
     const hasNumber = /\d/.test(t);
@@ -2477,6 +2488,128 @@ const botHandle = (raw) => {
         if (d.desc && !hasNumber) return botSay(`How much was <strong>${escapeHtml(d.desc)}</strong>? Type it like <em>“${escapeHtml(d.desc.toLowerCase())} 500”</em>.`);
         botSay("I didn't quite get that. Try <em>“kottu 1200”</em> to add something, or tap a button below.");
     }, 250);
+};
+
+/* ---- Real AI: Claude, through the vela-ai Supabase Edge Function ---- */
+let aiHistory = [];     // the conversation in API format; only ever appended to
+let aiUserId = null;
+let aiBusy = false;
+let aiDown = false;     // the function isn't set up: use offline answers for this session
+const aiAvailable = () => canSync() && !aiDown && navigator.onLine !== false && !!(supabaseClient && supabaseClient.functions);
+
+// A compact picture of the user's money for the AI, in their display currency.
+const aiSnapshot = () => {
+    const cur = dcur();
+    const now = new Date();
+    const r2 = (v) => Math.round(v * 100) / 100;
+    const cats = (o) => Object.fromEntries(Object.entries(o).map(([k, v]) => [k, r2(v)]));
+    const s = monthStats();
+    const months = [];
+    for (let i = 5; i >= 0; i--) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const m = monthStats(d.getFullYear(), d.getMonth());
+        months.push({ month: monthName(d.getFullYear(), d.getMonth()), income: r2(m.income), spent: r2(m.spent), byCategory: cats(m.byCat) });
+    }
+    return {
+        today: todayISO(),
+        weekday: now.toLocaleDateString('en-US', { weekday: 'long' }),
+        time: `${pad2(now.getHours())}:${pad2(now.getMinutes())}`,
+        name: state.auth.user && state.auth.user.full_name ? state.auth.user.full_name : null,
+        displayCurrency: cur,
+        homeCurrency: homeCurrency(),
+        categories: state.categories.map((c) => ({ id: c.id, name: c.name, type: c.type })),
+        thisMonth: { income: r2(s.income), spent: r2(s.spent), budget: r2(s.budget), spentSameDaysLastMonth: r2(s.prevSpent), daysLeft: daysLeftInMonth(), byCategory: cats(s.byCat) },
+        categoryBudgets: Object.fromEntries(Object.entries(state.config.categoryBudgets).map(([k, v]) => [k, r2(convertAmount(v, 'USD', cur))])),
+        lastSixMonths: months,
+        accounts: state.accounts.map((a) => ({ name: a.name, kind: a.kind, currency: a.currency, balance: r2(accountBalance(a)) })),
+        netWorth: r2(netWorth()),
+        savingsGoals: state.savings.map((g) => ({ name: g.name, target: g.target, saved: g.saved, currency: g.currency, deadline: g.deadline || null })),
+        bills: state.recurring.map((b) => ({ name: b.name, type: b.type, amount: b.amount, currency: b.currency, frequency: b.frequency, next: b.nextDate })),
+        debts: state.debts.map((d) => ({ direction: d.direction, person: d.person, amount: d.amount, repaid: d.repaid, currency: d.currency, due: d.dueDate || null })),
+        usualAndLocalPrices: smartPicks(homeCurrency(), 40).map((p) => ({ name: p.name, price: p.price, currency: homeCurrency(), category: p.category, usual: p.kind === 'usual' })),
+        recentEntriesFormat: 'date, type, description, amount, currency, categoryId (newest first)',
+        recentEntries: sortByNewest(state.transactions).filter((t) => t.type !== 'transfer').slice(0, 150).map((t) => [t.date, t.type, t.desc, t.amount, t.currency, t.category])
+    };
+};
+
+// What the AI suggests adding, checked before it becomes a card.
+const draftFromAi = (x) => {
+    if (!x || typeof x !== 'object') return null;
+    const type = x.type === 'income' ? 'income' : 'expense';
+    const amount = toNumber(x.amount, NaN);
+    if (!(amount > 0) || amount > 1e12) return null;
+    const currency = isCurrency(x.currency) ? x.currency : homeCurrency();
+    const category = state.categories.some((c) => c.id === x.category && c.type === type) ? x.category : FALLBACK_CATEGORY[type];
+    const date = isISODate(x.date) && x.date <= toISODate(addDays(new Date(), 1)) ? x.date : todayISO();
+    const desc = String(x.description || '').trim().slice(0, 80) || catById(category, type).name;
+    return { type, desc, amount, currency, category, date };
+};
+
+const aiText = (t) => escapeHtml(t)
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n/g, '<br>');
+
+const botTyping = () => {
+    const li = document.createElement('li');
+    li.className = 'bot-msg bot-msg-bot';
+    li.innerHTML = '<div class="bot-bubble bot-typing" aria-label="Vela bot is typing"><span></span><span></span><span></span></div>';
+    $('bot-log').appendChild(li);
+    botScroll();
+    return li;
+};
+
+const setBotMode = () => {
+    const ai = aiAvailable();
+    $('bot-status').textContent = ai ? 'AI by Claude · sees a summary of your Vela data' : (canSync() ? 'Offline answers · AI needs internet' : 'Offline answers · sign in to use AI');
+    $('bot-new').hidden = !ai;
+};
+
+const aiAsk = async (text) => {
+    aiBusy = true;
+    $('bot-send').disabled = true;
+    const typing = botTyping();
+    aiHistory.push({ role: 'user', content: text });
+    try {
+        const { data, error } = await supabaseClient.functions.invoke('vela-ai', { body: { messages: aiHistory, data: aiSnapshot() } });
+        if (error) {
+            let message = '';
+            let status = 0;
+            if (error.context && typeof error.context.json === 'function') {
+                status = error.context.status;
+                try { message = (await error.context.json()).error || ''; } catch (e) { /* not JSON */ }
+            }
+            const err = new Error(message || error.message || 'AI error');
+            err.status = status;
+            err.notSetUp = status === 404 || error.name === 'FunctionsRelayError' || error.name === 'FunctionsFetchError';
+            throw err;
+        }
+        aiHistory.push(...(Array.isArray(data.added) ? data.added : []));
+        const drafts = (Array.isArray(data.drafts) ? data.drafts : []).map(draftFromAi).filter(Boolean);
+        typing.remove();
+        const html = (data.text ? aiText(data.text) : (drafts.length ? 'Here you go. Tap Add to save.' : 'Sorry, I have no answer for that.'))
+            + drafts.map((d) => draftCard(d)).join('');
+        botSay(html, drafts.length ? ['Budget left', 'Saving tips'] : BOT_CHIPS);
+    } catch (err) {
+        typing.remove();
+        aiHistory.pop(); // the server never answered this one
+        if (err.notSetUp) {
+            aiDown = true;
+            setBotMode();
+            botSay("The AI isn't switched on for this app yet, so I'll answer offline for now.");
+            botHandleOffline(text);
+        } else {
+            botSay(escapeHtml(err.message || "Couldn't reach the AI. Try again."));
+        }
+    } finally {
+        aiBusy = false;
+        $('bot-send').disabled = false;
+    }
+};
+
+const newAiChat = () => {
+    aiHistory = [];
+    $('bot-log').innerHTML = '';
+    botSay('New chat. What would you like to know?');
 };
 
 /* ---- First-run card on Home ---- */
@@ -4230,6 +4363,7 @@ const initEvents = () => {
             case 'add-transfer': openTransfer(); break;
             case 'add-account': openAccountEditor(); break;
             case 'open-bot': haptic(); openBot(); break;
+            case 'bot-new': newAiChat(); break;
             case 'open-accounts': openAccountManager(); break;
             case 'open-currencies': openCurrencySheet(); break;
             case 'pick-receipt': $('tx-receipt-input').click(); break;

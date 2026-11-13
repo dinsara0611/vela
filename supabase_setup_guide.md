@@ -215,3 +215,19 @@ Accounts, currencies and budgets sync through `vela_settings`; no new tables are
    const SUPABASE_ANON_KEY = "your-anon-public-key";
    ```
 5. Commit and push to `main` so the website updates, and rebuild the Android app (`cd mobile && npm run apk`) so the APK uses the new project too.
+
+## Turn on the AI bot (Vela bot)
+
+Vela bot uses Claude for its answers. The Claude key stays on Supabase's servers, never in the app, and only signed-in users can use it. Until you do these steps, the bot gives simpler offline answers.
+
+1. **Get a Claude API key.** Go to https://console.anthropic.com, sign in, add a payment method under **Billing**, then create a key under **API keys**. Each chat message costs a small amount, billed to that account.
+2. **Deploy the function.** In a terminal, from the Vela folder, run these one at a time (your project ref is `qtgkbpfqrcczrdmhglhq`):
+   ```bash
+   npx supabase login
+   npx supabase functions deploy vela-ai --project-ref qtgkbpfqrcczrdmhglhq
+   npx supabase secrets set ANTHROPIC_API_KEY=paste-your-key-here --project-ref qtgkbpfqrcczrdmhglhq
+   ```
+   Or do it in the dashboard: **Edge Functions → Deploy a new function → Via editor**, name it `vela-ai`, paste the contents of `supabase/functions/vela-ai/index.ts`, deploy, then add the secret `ANTHROPIC_API_KEY` under **Edge Functions → Secrets**.
+3. **Try it.** Sign in to Vela, tap the robot icon at the top of Home. The line under "Vela bot" should say "AI by Claude".
+
+The bot sends your question and a summary of your Vela data (totals, budgets, recent entries) to Claude to answer it. Nothing is saved until you tap **Add** on a card.
