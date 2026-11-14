@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.8.1';
+const APP_VERSION = '4.9.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -402,6 +402,23 @@ const normalizeAccount = (a) => {
 };
 
 // Every entry belongs to an account; older data gets a "Cash" account.
+const fixAccountCurrencies = () => {
+    let changed = false;
+    state.accounts.forEach((a) => {
+        if (toNumber(a.opening, 0) !== 0) return;
+        const curs = new Set();
+        state.transactions.forEach((t) => {
+            if (t.accountId === a.id) curs.add(t.currency);
+            if (t.type === 'transfer' && t.toAccountId === a.id) curs.add(t.toCurrency || t.currency);
+        });
+        state.recurring.forEach((b) => { if (b.accountId === a.id) curs.add(b.currency); });
+        const target = curs.size === 0 ? (a.id === 'acc-cash' ? dcur() : null) : curs.size === 1 ? [...curs][0] : null;
+        if (target && isCurrency(target) && target !== a.currency) { a.currency = target; changed = true; }
+    });
+    if (changed) saveState();
+    return changed;
+};
+
 const ensureAccounts = (st) => {
     if (!st.accounts.length) st.accounts = [{ id: 'acc-cash', name: 'Cash', kind: 'cash', currency: st.config.currency || 'USD', opening: 0, createdAt: 0 }];
     const ids = new Set(st.accounts.map((a) => a.id));
@@ -603,9 +620,45 @@ const saveState = () => {
     }
 };
 
+/* ---- Region: a new install starts in the local currency ---- */
+const TZ_CURRENCY = {
+    'Asia/Colombo': 'LKR', 'Asia/Kolkata': 'INR', 'Asia/Calcutta': 'INR', 'Asia/Dubai': 'AED', 'Asia/Riyadh': 'SAR', 'Asia/Qatar': 'QAR',
+    'Asia/Kuwait': 'KWD', 'Asia/Muscat': 'OMR', 'Asia/Singapore': 'SGD', 'Asia/Kuala_Lumpur': 'MYR', 'Asia/Tokyo': 'JPY',
+    'Asia/Shanghai': 'CNY', 'Asia/Chongqing': 'CNY', 'Indian/Maldives': 'MVR', 'Europe/London': 'GBP'
+};
+const COUNTRY_CURRENCY = {
+    LK: 'LKR', IN: 'INR', AE: 'AED', SA: 'SAR', QA: 'QAR', KW: 'KWD', OM: 'OMR', SG: 'SGD', MY: 'MYR', JP: 'JPY', CN: 'CNY', MV: 'MVR',
+    GB: 'GBP', AU: 'AUD', CA: 'CAD', US: 'USD', DE: 'EUR', FR: 'EUR', IT: 'EUR', ES: 'EUR', NL: 'EUR', IE: 'EUR', PT: 'EUR', BE: 'EUR',
+    AT: 'EUR', FI: 'EUR', GR: 'EUR'
+};
+const regionCurrency = () => {
+    try {
+        const tz = Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        if (TZ_CURRENCY[tz]) return TZ_CURRENCY[tz];
+        if (tz.startsWith('Australia/')) return 'AUD';
+        const langs = (navigator.languages && navigator.languages.length ? navigator.languages : [navigator.language || '']);
+        for (const l of langs) {
+            const m = /[-_]([A-Za-z]{2})$/.exec(l || '');
+            if (m && COUNTRY_CURRENCY[m[1].toUpperCase()]) return COUNTRY_CURRENCY[m[1].toUpperCase()];
+        }
+        if (tz.startsWith('Europe/')) return 'EUR';
+    } catch (e) { /* no Intl */ }
+    return 'USD';
+};
+const applyRegionDefaults = (st) => {
+    const cur = regionCurrency();
+    st.config.currency = cur;
+    st.config.currencies = [...new Set([cur, 'USD', cur === 'LKR' ? 'INR' : 'LKR'])];
+    st.config.budgetCurrency = cur;
+    const b = 1000 * (FALLBACK_RATES[cur] || 1);
+    st.config.budget = b >= 10000 ? Math.round(b / 1000) * 1000 : Math.round(b / 10) * 10;
+    st.accounts = [];
+    ensureAccounts(st);
+};
+
 const loadState = () => {
     const raw = storage.get(STORAGE_KEY);
-    if (!raw) { state = createDefaultState(); return; }
+    if (!raw) { state = createDefaultState(); applyRegionDefaults(state); return; }
     try {
         state = normalizeState(JSON.parse(raw));
     } catch (e) {
@@ -1930,7 +1983,7 @@ const openAddTx = (type = 'expense') => {
     fillAccountSelect($('tx-account'), activityAccount !== 'all' ? activityAccount : state.config.lastAccount);
     $('tx-account-field').hidden = state.accounts.length < 2;
     setReceiptDraft(null);
-    fillCurrencySelect($('tx-currency'), accountById($('tx-account').value).currency);
+    fillCurrencySelect($('tx-currency'), dcur());
     $('tx-date').value = todayISO();
     setTxType(type);
     openOrSwap('modal-tx');
@@ -3225,6 +3278,7 @@ const pullFromCloud = async () => {
             state.syncSettings = true; // the account has no settings yet: save this phone's
         }
         migrateBudgets();
+        fixAccountCurrencies();
         applyTheme(state.config.theme);
         saveState();
         if (state.syncSettings) flushSync();
@@ -3763,6 +3817,13 @@ const seedData = () => {
     state.transactions.push({ id: generateId(), type: 'transfer', desc: 'ATM withdrawal', amount: 20000, currency: 'LKR', accountId: bank.id, toAccountId: cash.id, toAmount: 20000, toCurrency: 'LKR', category: 'Transfer', date: ago(5), note: '', createdAt: now, recurringId: null, receipt: null });
     state.config.budget = 1500;
     state.config.budgetCurrency = 'USD';
+    // Sample budgets are written in dollars; show them as round numbers in the main currency.
+    const to = dcur();
+    if (to !== 'USD') {
+        state.config.budget = tidyBudget(convertAmount(state.config.budget, 'USD', to));
+        Object.keys(state.config.categoryBudgets).forEach((k) => { state.config.categoryBudgets[k] = tidyBudget(convertAmount(state.config.categoryBudgets[k], 'USD', to)); });
+        state.config.budgetCurrency = to;
+    }
 };
 
 const completeOnboarding = async () => {
@@ -4393,10 +4454,10 @@ const setDisplayCurrency = (cur) => {
     if (cur === dcur()) return;
     state.config.currency = cur;
     if (!state.config.currencies.includes(cur)) state.config.currencies.push(cur);
-    state.syncSettings = true;
+    fixAccountCurrencies();
     saveState();
-    flushSync();
     updateCurrencyButtons();
+    showToast(`Showing everything in ${cur}. New entries start in ${cur}.`, 'success');
     setRateStatus(rateStatus);
     renderActive();
 };
@@ -4635,7 +4696,6 @@ const initEvents = () => {
     ['transfer-from', 'transfer-to'].forEach((id) => $(id).addEventListener('change', updateTransferFields));
     $('transfer-amount').addEventListener('input', () => updateTransferFields(true));
     $('tx-account').addEventListener('change', () => {
-        if (!$('tx-id').value) fillCurrencySelect($('tx-currency'), accountById($('tx-account').value).currency);
         renderTxSuggest();
         updatePriceHint();
     });
@@ -5186,6 +5246,7 @@ const init = () => {
     runSplash();
     loadState();
     migrateBudgets();
+    fixAccountCurrencies();
     document.documentElement.setAttribute('data-theme', state.config.theme);
 
     initEvents();
