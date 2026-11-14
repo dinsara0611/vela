@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.6.1';
+const APP_VERSION = '4.7.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -3764,6 +3764,8 @@ const tryBiometricUnlock = async () => {
     const bio = nativePlugin('NativeBiometric');
     if (!bio || bioBusy || !isLocked()) return;
     bioBusy = true;
+    await splashDone;
+    if (!isLocked()) { bioBusy = false; return; }
     setScanner('scanning', 'Scanning…');
     const started = Date.now();
     try {
@@ -5026,7 +5028,32 @@ const initNative = () => {
     if (splash) setTimeout(() => splash.hide({ fadeOutDuration: 250 }).catch(() => {}), 150);
 };
 
+/* ---- Splash: plays its drawing animation from the first paint, then lifts away ---- */
+const SPLASH_MS = 2500;
+let splashEnded = false;
+let splashResolve;
+const splashDone = new Promise((r) => { splashResolve = r; });
+const endSplash = () => {
+    if (splashEnded) return;
+    splashEnded = true;
+    const el = $('splash');
+    try { sessionStorage.setItem('vela-splash', '1'); } catch (e) { /* storage blocked */ }
+    if (!el) { splashResolve(); return; }
+    el.classList.add('out');
+    document.documentElement.classList.add('app-reveal');
+    setTimeout(() => { el.remove(); splashResolve(); }, 760);
+    setTimeout(() => document.documentElement.classList.remove('app-reveal'), 1500);
+};
+const runSplash = () => {
+    const el = $('splash');
+    if (!el) { splashEnded = true; splashResolve(); return; }
+    el.addEventListener('click', endSplash, { once: true });
+    const elapsed = performance.now();
+    setTimeout(endSplash, Math.max(300, (reduceMotion() ? 900 : SPLASH_MS) - elapsed));
+};
+
 const init = () => {
+    runSplash();
     loadState();
     migrateBudgets();
     document.documentElement.setAttribute('data-theme', state.config.theme);
