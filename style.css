@@ -3869,6 +3869,14 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 /* Progress bars grow in */
 .meter-fill { transition: width 0.9s cubic-bezier(0.22, 1, 0.36, 1); }
 
+/* Cloud backup row in Settings */
+.sync-row { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); padding: var(--sp-3); border-radius: var(--r-md); background: var(--surface-2); border: 1px solid var(--border); }
+.sync-row[hidden] { display: none; }
+.sync-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sync-detail { font-size: var(--fs-xs); color: var(--text-2); overflow-wrap: anywhere; }
+.sync-detail[data-error="true"] { color: var(--warning); font-weight: 600; }
+#profile-badge[data-error="true"] .status-dot { background: var(--warning); }
+
 /* ---------- 17. Motion preferences ---------- */
 @media (prefers-reduced-motion: reduce) {
     *,

@@ -215,3 +215,20 @@ Accounts, currencies and budgets sync through `vela_settings`; no new tables are
    const SUPABASE_ANON_KEY = "your-anon-public-key";
    ```
 5. Commit and push to `main` so the website updates, and rebuild the Android app (`cd mobile && npm run apk`) so the APK uses the new project too.
+
+## Turn on Vela AI (free, Google Gemini)
+
+Vela AI answers with Google Gemini's free tier. The key stays on Supabase's server, never inside the app, and only signed-in users can use it. Until you do this once, the bot says "Vela AI isn't switched on yet".
+
+1. **Get a free Gemini key.** Go to https://aistudio.google.com/apikey, sign in with Google, click **Create API key**. No card needed.
+2. **Deploy the function and add the key.** In a terminal in the Vela folder, run these one at a time (project ref `qtgkbpfqrcczrdmhglhq`):
+   ```bash
+   npx supabase login
+   npx supabase functions deploy vela-ai --project-ref qtgkbpfqrcczrdmhglhq
+   npx supabase secrets set GEMINI_API_KEY=paste-your-key-here --project-ref qtgkbpfqrcczrdmhglhq
+   ```
+   Or in the dashboard: **Edge Functions → Deploy a new function → Via editor**, name it `vela-ai`, paste `supabase/functions/vela-ai/index.ts`, deploy, then add the secret `GEMINI_API_KEY` under **Edge Functions → Secrets**.
+3. **Try it.** Sign in to Vela and tap the robot at the top of Home.
+
+Free-tier limits are generous for personal use; if many people use the app at once, some messages may say "busy, try again". On Gemini's free tier Google may use messages to improve its products, so the bot sends a summary of totals and recent entries, never passwords or card numbers.
+

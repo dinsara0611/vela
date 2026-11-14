@@ -9,7 +9,7 @@ A phone-first expense and savings tracker that works in USD and LKR. It is a sta
 - **Any currency:** 17 currencies with live rates; show everything in the one you choose.
 - **Receipt photos** on any expense, kept on the phone and backed up when signed in.
 - **Quick picks** with typical local prices (Sri Lanka, India, US, and scaled for other currencies), your own usual items learnt from history, ordered for the time of day (breakfast, lunch, tea, dinner), and auto-picked categories as you type.
-- **Vela bot**: a money assistant. Type “kottu 1200” or “bus 100 yesterday” to add entries; ask “spent on food this week?”, “budget left?”, “saving tips”. Tap **✦ Free AI** to download a free open AI model (Qwen 2.5, via WebLLM) that runs on the phone itself: no API key, no cost, private, works offline. Needs WebGPU (Chrome/Edge 121+).
+- **Vela AI**: a real AI money assistant (Google Gemini, free tier) behind the `vela-ai` Supabase Edge Function, so the key stays on the server. Tell it “kottu 1200 and bus 100” and it prepares entries to add; ask anything about spending, budgets and saving, in English or Sinhala. Needs sign-in. Setup: `supabase_setup_guide.md`.
 - **Price check**: a gentle warning when an amount is far above or below what you usually pay.
 - **Calendar view** of a month's spending, day by day.
 - **Activity:** every entry by month, with search and category filters.
