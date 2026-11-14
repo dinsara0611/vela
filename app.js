@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.6.0';
+const APP_VERSION = '4.6.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -79,8 +79,9 @@ const createDefaultState = () => ({
         currency: 'USD',           // amounts are shown in this currency
         currencies: ['USD', 'LKR'],
         theme: prefersLight() ? 'light' : 'dark',
-        budget: 1000,              // overall monthly budget, USD
-        categoryBudgets: {},       // categoryId -> monthly limit, USD
+        budget: 1000,              // overall monthly budget, in budgetCurrency
+        categoryBudgets: {},       // categoryId -> monthly limit, in budgetCurrency
+        budgetCurrency: null,      // currency the budgets were typed in (null = old data, US dollars)
         lastCategory: { expense: 'Food', income: 'Salary' },
         priceBook: {},             // currency -> item name -> { price, added?, category? } (your own prices)
         lock: { enabled: false, hash: null, salt: null, biometric: false },
@@ -460,6 +461,7 @@ const normalizeState = (raw) => {
     if (cfg.theme === 'light' || cfg.theme === 'dark') base.config.theme = cfg.theme;
     const budget = toNumber(cfg.budget, 1000);
     base.config.budget = budget > 0 ? budget : 1000;
+    base.config.budgetCurrency = isCurrency(cfg.budgetCurrency) ? cfg.budgetCurrency : null;
     if (cfg.categoryBudgets && typeof cfg.categoryBudgets === 'object') {
         Object.keys(cfg.categoryBudgets).forEach((k) => {
             const v = toNumber(cfg.categoryBudgets[k], 0);
@@ -914,6 +916,31 @@ const sortByNewest = (list) => [...list].sort((a, b) => (b.date > a.date ? 1 : b
 const sumDisplay = (list) => list.reduce((s, e) => s + toDisplay(e.amount, e.currency), 0);
 const inMonth = (t, y, m) => { const d = parseDate(t.date); return d.getFullYear() === y && d.getMonth() === m; };
 
+/* ---- Budgets keep the currency you typed them in ---- */
+const budgetCur = () => state.config.budgetCurrency || 'USD';
+const budgetIn = (value, cur) => convertAmount(value, budgetCur(), cur);
+// Old versions stored budgets in US dollars. Move them to the display currency once,
+// rounding away the exchange-rate drift (Rs. 30,012.37 -> Rs. 30,000).
+const tidyBudget = (v) => (v >= 10000 ? Math.round(v / 100) * 100 : v >= 1000 ? Math.round(v / 10) * 10 : round2(v));
+const migrateBudgets = () => {
+    if (state.config.budgetCurrency) return false;
+    const to = dcur();
+    state.config.budget = tidyBudget(convertAmount(state.config.budget, 'USD', to));
+    Object.keys(state.config.categoryBudgets).forEach((k) => { state.config.categoryBudgets[k] = tidyBudget(convertAmount(state.config.categoryBudgets[k], 'USD', to)); });
+    state.config.budgetCurrency = to;
+    state.syncSettings = true;
+    saveState();
+    return true;
+};
+// Before saving a budget in another currency, move the others to it so all stay in one currency.
+const setBudgetCurrency = (to) => {
+    const from = budgetCur();
+    if (state.config.budgetCurrency === to) return;
+    state.config.budget = round2(convertAmount(state.config.budget, from, to));
+    Object.keys(state.config.categoryBudgets).forEach((k) => { state.config.categoryBudgets[k] = round2(convertAmount(state.config.categoryBudgets[k], from, to)); });
+    state.config.budgetCurrency = to;
+};
+
 const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => {
     const list = state.transactions.filter((t) => inMonth(t, y, m));
     const spentList = list.filter((t) => t.type === 'expense');
@@ -926,7 +953,7 @@ const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => 
     const prevEnd = new Date(y, m - 1, Math.min(ref.getDate(), daysInMonth(y, m - 1)));
     const prevSpent = sumDisplay(expenses().filter((e) => { const d = parseDate(e.date); return d >= prevStart && d <= prevEnd; }));
 
-    const budget = convertAmount(state.config.budget, 'USD', dcur());
+    const budget = budgetIn(state.config.budget, dcur());
     const byCat = {};
     spentList.forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + toDisplay(e.amount, e.currency); });
     return { list, spentList, incomeList, spent, income, net: income - spent, prevSpent, budget, budgetPct: budget > 0 ? (spent / budget) * 100 : 0, byCat };
@@ -1415,7 +1442,7 @@ const planBudgetsHtml = () => {
     const budgeted = Object.keys(state.config.categoryBudgets).filter((id) => state.categories.some((c) => c.id === id && c.type === 'expense'));
     const rows = budgeted.map((id) => {
         const cat = catById(id);
-        const limit = convertAmount(state.config.categoryBudgets[id], 'USD', cur);
+        const limit = budgetIn(state.config.categoryBudgets[id], cur);
         const spent = s.byCat[id] || 0;
         const pct = limit > 0 ? (spent / limit) * 100 : 0;
         const rem = limit - spent;
@@ -1873,7 +1900,7 @@ const budgetAlert = (categoryId) => {
     const s = monthStats();
     const limitUsd = state.config.categoryBudgets[categoryId];
     if (limitUsd) {
-        const limit = convertAmount(limitUsd, 'USD', dcur());
+        const limit = budgetIn(limitUsd, dcur());
         const pct = ((s.byCat[categoryId] || 0) / limit) * 100;
         const name = catById(categoryId).name;
         if (pct >= 100) { showToast(`You're over your ${name} budget this month (${Math.round(pct)}%).`, 'warning'); return; }
@@ -2303,7 +2330,7 @@ const aiFacts = () => {
         const ms = monthStats(d.getFullYear(), d.getMonth());
         if (ms.spent || ms.income) lines.push(`${monthName(d.getFullYear(), d.getMonth())}: spent ${m(ms.spent)}, income ${m(ms.income)}; by category: ${catLine(ms.byCat)}.`);
     }
-    const caps = Object.entries(state.config.categoryBudgets).map(([id, usd]) => `${catById(id).name} ${m(s.byCat[id] || 0)} of ${m(convertAmount(usd, 'USD', cur))}`);
+    const caps = Object.entries(state.config.categoryBudgets).map(([id, usd]) => `${catById(id).name} ${m(s.byCat[id] || 0)} of ${m(budgetIn(usd, cur))}`);
     if (caps.length) lines.push(`Category budgets this month: ${caps.join(', ')}.`);
     lines.push(`Accounts: ${state.accounts.map((a) => `${a.name} ${formatCurrency(accountBalance(a), a.currency)}`).join(', ')}; total ${m(netWorth())}.`);
     if (state.savings.length) lines.push(`Savings goals: ${state.savings.map((g) => `${g.name} ${formatCurrency(g.saved, g.currency)} of ${formatCurrency(g.target, g.currency)}${g.deadline ? ` by ${g.deadline}` : ''}`).join('; ')}.`);
@@ -2622,7 +2649,7 @@ const openBudget = (catId) => {
     const firstFree = catsOfType('expense').find((c) => !state.config.categoryBudgets[c.id]);
     sel.value = catId || (firstFree ? firstFree.id : 'Food');
     sel.disabled = !!catId && (isOverall || !!existing);
-    $('budget-amount').value = existing ? round2(convertAmount(existing, 'USD', dcur())) : '';
+    $('budget-amount').value = existing ? round2(budgetIn(existing, dcur())) : '';
     $('budget-currency').textContent = dcur();
     $('budget-title').textContent = existing ? 'Edit budget' : 'Set a budget';
     $('btn-delete-budget').hidden = !(existing && !isOverall);
@@ -2633,9 +2660,9 @@ const submitBudget = () => {
     const catId = $('budget-category').value;
     const value = toNumber($('budget-amount').value, NaN);
     if (!(value > 0)) return fieldError($('budget-amount'), 'Enter a monthly limit greater than zero.');
-    const usd = convertAmount(value, dcur(), 'USD');
-    if (catId === '__overall') state.config.budget = usd;
-    else state.config.categoryBudgets[catId] = usd;
+    setBudgetCurrency(dcur());
+    if (catId === '__overall') state.config.budget = value;
+    else state.config.categoryBudgets[catId] = value;
     state.syncSettings = true;
     saveState();
     flushSync();
@@ -3040,7 +3067,7 @@ const flushSync = () => {
             if (state.syncSettings) {
                 const { error } = await supabaseClient.from('vela_settings').upsert({
                     user_id: state.auth.user.id,
-                    data: { budget: state.config.budget, categoryBudgets: state.config.categoryBudgets, currency: state.config.currency, currencies: state.config.currencies, accounts: state.accounts },
+                    data: { budget: state.config.budget, categoryBudgets: state.config.categoryBudgets, budgetCurrency: state.config.budgetCurrency, currency: state.config.currency, currencies: state.config.currencies, accounts: state.accounts },
                     updated_at: now
                 });
                 if (error) throw error;
@@ -3109,10 +3136,12 @@ const pullFromCloud = async () => {
             const d = set.data.data;
             if (toNumber(d.budget, 0) > 0) state.config.budget = toNumber(d.budget, 1000);
             if (d.categoryBudgets && typeof d.categoryBudgets === 'object') state.config.categoryBudgets = { ...d.categoryBudgets };
+            state.config.budgetCurrency = isCurrency(d.budgetCurrency) ? d.budgetCurrency : null;
             if (Array.isArray(d.currencies) && d.currencies.some(isCurrency)) state.config.currencies = [...new Set(d.currencies.filter(isCurrency).concat(dcur()))];
             if (Array.isArray(d.accounts)) state.accounts = d.accounts.map(normalizeAccount).filter(Boolean);
         }
         ensureAccounts(state);
+        if (migrateBudgets()) flushSync();
         saveState();
         return true;
     } catch (err) {
@@ -3606,6 +3635,7 @@ const seedData = () => {
     state.recurring.forEach((b) => { b.accountId = b.type === 'income' ? bank.id : b.currency === 'USD' ? card.id : bank.id; });
     state.transactions.push({ id: generateId(), type: 'transfer', desc: 'ATM withdrawal', amount: 20000, currency: 'LKR', accountId: bank.id, toAccountId: cash.id, toAmount: 20000, toCurrency: 'LKR', category: 'Transfer', date: ago(5), note: '', createdAt: now, recurringId: null, receipt: null });
     state.config.budget = 1500;
+    state.config.budgetCurrency = 'USD';
 };
 
 const completeOnboarding = async () => {
@@ -4085,7 +4115,7 @@ const exportPdf = async () => {
         sectionTitle('Budgets');
         tableRow(['Category', 'Spent', 'Limit', 'Used'], [80, 36, 36, 26], { header: true, alignRight: [1, 2, 3] });
         budgets.forEach((id) => {
-            const limit = convertAmount(state.config.categoryBudgets[id], 'USD', cur);
+            const limit = budgetIn(state.config.categoryBudgets[id], cur);
             const spent = s.byCat[id] || 0;
             tableRow([catById(id).name, money(spent), money(limit), `${Math.round((spent / limit) * 100)}%`], [80, 36, 36, 26], { alignRight: [1, 2, 3] });
         });
@@ -4998,6 +5028,7 @@ const initNative = () => {
 
 const init = () => {
     loadState();
+    migrateBudgets();
     document.documentElement.setAttribute('data-theme', state.config.theme);
 
     initEvents();
