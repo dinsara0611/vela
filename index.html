@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.9.0">
+    <link rel="stylesheet" href="style.css?v=4.10.0">
 </head>
 <body data-view="dashboard">
 
@@ -475,10 +475,15 @@
                             </button>
                             <div class="setting">
                                 <div class="setting-row">
-                                    <div class="setting-text"><span class="setting-title">Bill reminders</span><span class="setting-desc" id="reminders-desc">A notification the day before each bill is due.</span></div>
+                                    <div class="setting-text"><span class="setting-title">Reminders</span><span class="setting-desc" id="reminders-desc">A notification the day before each bill is due.</span></div>
                                     <button class="switch" type="button" role="switch" aria-checked="false" id="switch-reminders" aria-label="Bill reminders"></button>
                                 </div>
                             </div>
+                            <button class="row-btn" type="button" id="btn-test-notif" hidden>
+                                <span class="row-icon"><svg class="ic"><use href="#i-bell"/></svg></span>
+                                <span class="row-label"><span>Send a test notification</span></span>
+                                <svg class="ic chev"><use href="#i-chevron"/></svg>
+                            </button>
                         </div>
                     </div>
 
@@ -1259,7 +1264,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.9.0"></script>
+    <script src="app.js?v=4.10.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

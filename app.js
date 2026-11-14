@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.9.0';
+const APP_VERSION = '4.10.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1193,7 +1193,35 @@ const hashToInt = (s) => {
     return 1000 + (Math.abs(h) % 1000000);
 };
 
-const scheduleReminders = async () => {
+/* ---- Notifications: bill reminders and a daily nudge to log spending ---- */
+const NOTIF_CHANNEL = 'vela-reminders';
+const DAILY_ID = 900001;
+const notifStyle = { channelId: NOTIF_CHANNEL, smallIcon: 'ic_stat_vela', largeIcon: 'ic_notif_large', iconColor: '#9B51E0' };
+let notifPermission = 'unknown'; // granted | denied | prompt | unknown
+let channelReady = false;
+
+const ensureChannel = async (ln) => {
+    if (channelReady || typeof ln.createChannel !== 'function') return;
+    try {
+        // High importance: shows as a banner with sound, not silently in the tray.
+        await ln.createChannel({ id: NOTIF_CHANNEL, name: 'Bills and reminders', description: 'Bills due soon and a daily reminder to log spending', importance: 4, visibility: 1, vibration: true, lights: true, lightColor: '#9B51E0' });
+        channelReady = true;
+    } catch (e) { /* older Android: the default channel is used */ }
+};
+
+// Asks Android for permission when needed (Android 13+ blocks notifications until allowed).
+const ensureNotifPermission = async (ln, ask) => {
+    try {
+        let p = await ln.checkPermissions();
+        if (p.display !== 'granted' && ask) p = await ln.requestPermissions();
+        notifPermission = p.display;
+    } catch (e) {
+        notifPermission = 'unknown';
+    }
+    return notifPermission === 'granted';
+};
+
+const scheduleReminders = async ({ ask = false } = {}) => {
     const ln = nativePlugin('LocalNotifications');
     if (!ln) return;
     try {
@@ -1202,6 +1230,8 @@ const scheduleReminders = async () => {
         }
         state.config.reminderIds = [];
         if (!state.config.reminders) { saveState(); return; }
+        if (!(await ensureNotifPermission(ln, ask))) { saveState(); if (currentTab === 'settings') renderSettings(); return; }
+        await ensureChannel(ln);
         const now = Date.now();
         const notifications = [];
         state.recurring.filter((b) => b.type === 'expense').forEach((bill) => {
@@ -1211,18 +1241,28 @@ const scheduleReminders = async () => {
             const at = dayBefore.getTime() > now ? dayBefore : (dueDay.getTime() > now ? dueDay : null);
             if (!at) return;
             notifications.push({
+                ...notifStyle,
                 id: hashToInt(bill.id),
                 title: `${bill.name} is due ${at === dayBefore ? 'tomorrow' : 'today'}`,
                 body: `${formatCurrency(bill.amount, bill.currency)}${bill.autoLog ? '. Vela will log it automatically.' : '. Open Vela to mark it paid.'}`,
                 schedule: { at, allowWhileIdle: true }
             });
         });
-        if (notifications.length) await ln.schedule({ notifications });
+        // Every evening at 8 pm.
+        notifications.push({
+            ...notifStyle,
+            id: DAILY_ID,
+            title: 'Log today’s spending',
+            body: 'Take 10 seconds to add what you spent today. Tell Vela AI, like “kottu 1200”.',
+            schedule: { on: { hour: 20, minute: 0 }, allowWhileIdle: true }
+        });
+        await ln.schedule({ notifications });
         state.config.reminderIds = notifications.map((n) => n.id);
         saveState();
     } catch (err) {
         console.warn('Could not schedule reminders:', err);
     }
+    if (currentTab === 'settings') renderSettings();
 };
 
 const enableReminders = async (on) => {
@@ -1232,24 +1272,34 @@ const enableReminders = async (on) => {
         setSwitch($('switch-reminders'), false);
         return;
     }
-    if (on) {
-        try {
-            const perm = await ln.requestPermissions();
-            if (perm.display !== 'granted') {
-                setSwitch($('switch-reminders'), false);
-                showToast('Notifications are blocked. Allow them for Vela in Android settings.', 'warning');
-                return;
-            }
-        } catch (err) {
-            setSwitch($('switch-reminders'), false);
-            return;
-        }
+    if (on && !(await ensureNotifPermission(ln, true))) {
+        setSwitch($('switch-reminders'), false);
+        showToast('Notifications are blocked. Open Android Settings > Apps > Vela > Notifications and allow them.', 'warning');
+        renderSettings();
+        return;
     }
     state.config.reminders = on;
     saveState();
     await scheduleReminders();
-    showToast(on ? "Reminders on. You'll get a notification the day before each bill." : 'Reminders off', 'success');
+    showToast(on ? "Reminders on: the day before each bill, and every evening at 8 pm." : 'Reminders off', 'success');
     renderSettings();
+};
+
+const sendTestNotification = async () => {
+    const ln = nativePlugin('LocalNotifications');
+    if (!ln) { showToast('Notifications work in the Android app.', 'info'); return; }
+    if (!(await ensureNotifPermission(ln, true))) {
+        showToast('Notifications are blocked. Open Android Settings > Apps > Vela > Notifications and allow them.', 'warning');
+        renderSettings();
+        return;
+    }
+    await ensureChannel(ln);
+    try {
+        await ln.schedule({ notifications: [{ ...notifStyle, id: 900002, title: 'Vela notifications work', body: 'You’ll get bill reminders like this one.', schedule: { at: new Date(Date.now() + 3000), allowWhileIdle: true } }] });
+        showToast('Test notification coming in 3 seconds', 'success');
+    } catch (err) {
+        showToast(`Couldn't send it: ${err.message || err}`, 'error');
+    }
 };
 
 /* =========================================================================
@@ -1779,10 +1829,13 @@ const renderSettings = () => {
     $('biometric-row').hidden = !(lock.enabled && biometricAvailable);
     setSwitch($('switch-biometric'), lock.biometric);
     const native = !!nativePlugin('LocalNotifications');
-    setSwitch($('switch-reminders'), native && state.config.reminders);
-    $('reminders-desc').textContent = native
-        ? 'A notification the day before each bill is due.'
-        : 'Works in the Android app. Here, bills due soon show on Home.';
+    setSwitch($('switch-reminders'), native && state.config.reminders && notifPermission !== 'denied');
+    $('reminders-desc').textContent = !native
+        ? 'Works in the Android app. Here, bills due soon show on Home.'
+        : state.config.reminders && notifPermission === 'denied'
+            ? 'Blocked by Android. Allow notifications for Vela in Android settings, then turn this on.'
+            : 'The day before each bill, and every evening at 8 pm.';
+    $('btn-test-notif').hidden = !native;
     $('report-month-desc').textContent = `Income, spending and categories for ${monthName(activityMonth.y, activityMonth.m)}`;
     $('app-version').textContent = `Vela ${APP_VERSION}${isNative() ? ' for Android' : ''}. Exchange rates from open.er-api.com`;
 };
@@ -4723,6 +4776,7 @@ const initEvents = () => {
     $('btn-change-pin').addEventListener('click', () => openPinFlow('change'));
     $('switch-biometric').addEventListener('click', toggleBiometric);
     $('switch-reminders').addEventListener('click', (e) => enableReminders(!isOn(e.currentTarget)));
+    $('btn-test-notif').addEventListener('click', sendTestNotification);
     $('btn-forgot-pin').addEventListener('click', forgotPin);
 
     $('btn-report-pdf').addEventListener('click', (e) => withBusy(e.currentTarget, exportPdf));
@@ -5211,6 +5265,7 @@ const initNative = () => {
     const ln = nativePlugin('LocalNotifications');
     if (ln) ln.addListener('localNotificationActionPerformed', () => goToPlan('bills'));
     checkBiometric();
+    if (state.config.reminders) setTimeout(() => scheduleReminders({ ask: true }), 2500);
     const splash = nativePlugin('SplashScreen');
     if (splash) setTimeout(() => splash.hide({ fadeOutDuration: 250 }).catch(() => {}), 150);
 };
