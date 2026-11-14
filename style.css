@@ -3877,108 +3877,87 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 .sync-detail[data-error="true"] { color: var(--warning); font-weight: 600; }
 #profile-badge[data-error="true"] .status-dot { background: var(--warning); }
 
-/* ---------- Splash: the sail draws itself, then the screen lifts away ---------- */
+/* ---------- Splash: the sail draws on in three quick strokes, then the screen slides up ---------- */
 .splash {
     position: fixed;
     inset: 0;
     z-index: 2000;
-    display: grid;
-    place-items: center;
-    background:
-        radial-gradient(60% 40% at 50% 42%, rgba(155, 81, 224, 0.22), transparent 70%),
-        radial-gradient(50% 35% at 70% 70%, rgba(255, 42, 95, 0.1), transparent 70%),
-        #07070b;
-    color: #fff;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 32px;
+    background: #07070b;
+    color: #faf9ff;
+    overflow: hidden;
     cursor: pointer;
+    user-select: none;
     -webkit-tap-highlight-color: transparent;
+    transform: translateY(0);
+    opacity: 1;
+    transition: transform 0.5s cubic-bezier(0.77, 0, 0.175, 1), opacity 0.5s cubic-bezier(0.77, 0, 0.175, 1);
+    will-change: transform;
 }
-.splash-center { display: flex; flex-direction: column; align-items: center; transform: translateY(-4vh); }
-.splash-logo {
-    width: 124px;
-    height: 124px;
-    overflow: visible;
-    filter: drop-shadow(0 4px 22px rgba(177, 122, 255, 0.45));
-    animation: spFloat 2.6s ease-in-out 1.6s infinite alternate;
+.splash.out { transform: translateY(-100%); opacity: 0; pointer-events: none; }
+.splash-center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 28px; text-align: center; pointer-events: none; }
+.splash-mark { width: 128px; height: 128px; display: flex; align-items: center; justify-content: center; }
+.splash-mark svg { width: 100%; height: 100%; filter: drop-shadow(0 4px 25px rgba(177, 122, 255, 0.45)); }
+.splash-mark path { stroke-dasharray: 700; stroke-dashoffset: 700px; opacity: 0; }
+.play .sp-a { animation: spStroke 0.68s cubic-bezier(0.65, 0, 0.35, 1) 40ms forwards; }
+.play .sp-b { animation: spStroke 0.68s cubic-bezier(0.65, 0, 0.35, 1) 0.15s forwards; }
+.play .sp-c { animation: spStroke 0.68s cubic-bezier(0.65, 0, 0.35, 1) 0.26s forwards; }
+@keyframes spStroke {
+    0% { stroke-dashoffset: 700px; opacity: 0; }
+    15% { opacity: 1; }
+    100% { stroke-dashoffset: 0; opacity: 1; }
 }
-.splash-logo path {
-    stroke: url(#splash-grad);
-    stroke-width: 0.85;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    stroke-dasharray: 1;
-    stroke-dashoffset: 1;
-    fill-opacity: 0;
-}
-.sp-dot { fill: #fff; opacity: 0; transform-origin: 9.5px 4px; animation: spDot 0.5s ease-out 0.05s forwards; }
-.sp-mast { animation: spDraw 0.5s cubic-bezier(0.65, 0, 0.35, 1) 0.25s forwards; }
-.sp-back { fill: #9b51e0; animation: spDraw 0.6s cubic-bezier(0.65, 0, 0.35, 1) 0.55s forwards, spFill 0.6s ease 1.35s forwards; }
-.sp-main { fill: #ff2a5f; animation: spDraw 0.8s cubic-bezier(0.65, 0, 0.35, 1) 0.7s forwards, spFillMain 0.6s ease 1.4s forwards; }
-.sp-wave { stroke-width: 0.6 !important; opacity: 0.7; animation: spDraw 0.7s cubic-bezier(0.65, 0, 0.35, 1) 1.05s forwards; }
-@keyframes spDot { 0% { opacity: 0; transform: scale(0); } 60% { opacity: 1; transform: scale(1.6); } 100% { opacity: 0; transform: scale(1); } }
-@keyframes spDraw { to { stroke-dashoffset: 0; } }
-@keyframes spFill { to { fill-opacity: 0.4; } }
-@keyframes spFillMain { to { fill-opacity: 1; } }
-@keyframes spFloat { from { transform: translateY(0); } to { transform: translateY(-5px); } }
-
+.splash-text { display: flex; flex-direction: column; align-items: center; gap: 8px; }
 .splash-title {
-    margin-top: 26px;
+    margin: 0;
     font-family: var(--font-display);
-    font-size: 30px;
-    font-weight: 600;
-    letter-spacing: 0.9em;
-    padding-left: 0.9em; /* keeps spaced letters centred */
-    opacity: 0;
-    filter: blur(8px);
-    background: linear-gradient(90deg, #fff, #d6b8ff 60%, #ff8eaa);
-    -webkit-background-clip: text;
-    background-clip: text;
-    color: transparent;
-    animation: spTitle 1s cubic-bezier(0.22, 1, 0.36, 1) 1.15s forwards;
-}
-@keyframes spTitle { to { opacity: 1; filter: blur(0); letter-spacing: 0.42em; padding-left: 0.42em; } }
-.splash-sub {
-    margin-top: 12px;
-    font-size: 10px;
-    font-weight: 600;
+    font-size: 28px;
+    font-weight: 500;
+    line-height: 1.1;
+    text-transform: uppercase;
     letter-spacing: 0.35em;
     padding-left: 0.35em;
-    text-transform: uppercase;
-    color: rgba(255, 255, 255, 0.5);
+    color: #ffffff;
     opacity: 0;
-    transform: translateY(6px);
-    animation: spSub 0.7s ease 1.55s forwards;
 }
-@keyframes spSub { to { opacity: 1; transform: none; } }
-
+.play .splash-title { animation: spUp 0.42s ease-out 0.22s both; }
+.splash-sub {
+    font-size: 10px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.35em;
+    padding-left: 0.35em;
+    color: #d6b8ff;
+    opacity: 0;
+}
+.play .splash-sub { animation: spUp 0.42s ease-out 0.34s both; }
+@keyframes spUp {
+    0% { opacity: 0; filter: blur(4px); transform: translateY(12px); }
+    100% { opacity: 1; filter: blur(0); transform: translateY(0); }
+}
 .splash-line {
     position: absolute;
     left: 0;
     right: 0;
     bottom: 0;
     height: 2px;
-    background: linear-gradient(90deg, transparent, #9b51e0 20%, #b17aff 50%, #ff2a5f 80%, transparent);
-    box-shadow: 0 0 14px rgba(177, 122, 255, 0.7);
-    transform: scaleX(0);
-    transform-origin: left;
-    animation: spLine 2.1s cubic-bezier(0.65, 0, 0.35, 1) 0.1s forwards;
+    background: linear-gradient(90deg, transparent, #b17aff 35%, #ff2a5f 65%, transparent);
+    box-shadow: 0 0 20px rgba(177, 122, 255, 0.8);
+    pointer-events: none;
 }
-@keyframes spLine { to { transform: scaleX(1); } }
-
-/* Leaving: the mark lifts, the screen pulls up like a curtain */
-.splash.out { pointer-events: none; animation: spOut 0.75s cubic-bezier(0.76, 0, 0.24, 1) forwards; }
-.splash.out .splash-center { animation: spCenterOut 0.6s cubic-bezier(0.76, 0, 0.24, 1) forwards; }
-@keyframes spOut { 0% { clip-path: inset(0 0 0 0); } 100% { clip-path: inset(0 0 100% 0); } }
-@keyframes spCenterOut { to { opacity: 0; transform: translateY(-10vh) scale(0.94); } }
-
+@media (min-width: 640px) {
+    .splash-mark { width: 144px; height: 144px; }
+    .splash-title { font-size: 32px; }
+    .splash-sub { font-size: 11px; }
+}
 @media (prefers-reduced-motion: reduce) {
-    .splash-logo path { stroke-dashoffset: 0; animation: none !important; }
-    .sp-back { fill-opacity: 0.4; }
-    .sp-main { fill-opacity: 1; }
-    .splash-title, .splash-sub { opacity: 1; filter: none; transform: none; letter-spacing: 0.42em; animation: none; }
-    .splash-line { transform: none; animation: none; }
-    .splash.out { animation: spFade 0.3s ease forwards !important; }
+    .splash-mark path { stroke-dashoffset: 0; opacity: 1; animation: none; }
+    .splash-title, .splash-sub { animation: none !important; opacity: 1; }
 }
-@keyframes spFade { to { opacity: 0; } }
 
 /* ---------- 17. Motion preferences ---------- */
 @media (prefers-reduced-motion: reduce) {

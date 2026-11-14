@@ -37,34 +37,44 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.7.0">
+    <link rel="stylesheet" href="style.css?v=4.7.1">
 </head>
 <body data-view="dashboard">
 
     <!-- ================= SPLASH ================= -->
-    <div class="splash" id="splash" aria-hidden="true">
+    <div class="splash" id="splash" aria-label="Welcome to Vela (tap to enter)">
         <div class="splash-center">
-            <svg class="splash-logo" viewBox="0 0 24 24" fill="none">
-                <defs>
-                    <linearGradient id="splash-grad" x1="0" y1="0" x2="1" y2="1">
-                        <stop offset="0" stop-color="#ffffff"/>
-                        <stop offset="0.35" stop-color="#d6b8ff"/>
-                        <stop offset="0.65" stop-color="#b17aff"/>
-                        <stop offset="1" stop-color="#ff2a5f"/>
-                    </linearGradient>
-                </defs>
-                <circle class="sp-dot" cx="9.5" cy="4" r="0.7"/>
-                <path class="sp-mast" pathLength="1" d="M9.5 4 L9.5 20"/>
-                <path class="sp-back" pathLength="1" d="M8.5 6 L8.5 18 L4 17 Z"/>
-                <path class="sp-main" pathLength="1" d="M10.5 5 Q17 11 19 16 L10.5 19 Z"/>
-                <path class="sp-wave" pathLength="1" d="M3.5 21.6 Q6.6 20.4 9.6 21.6 T15.6 21.6 T20.5 21.4"/>
-            </svg>
-            <div class="splash-title">VELA</div>
-            <div class="splash-sub">Money · Savings · Budgets</div>
+            <div class="splash-mark">
+                <svg viewBox="0 0 120 120" fill="none" aria-hidden="true">
+                    <defs>
+                        <linearGradient id="splash-grad" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#FFFFFF"/>
+                            <stop offset="35%" stop-color="#D6B8FF"/>
+                            <stop offset="70%" stop-color="#B17AFF"/>
+                            <stop offset="100%" stop-color="#FF2A5F"/>
+                        </linearGradient>
+                    </defs>
+                    <path class="sp-a" pathLength="700" d="M 50 14 L 50 100 M 42 26 L 42 90 L 16 85 Z" stroke="url(#splash-grad)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path class="sp-b" pathLength="700" d="M 58 20 C 80 40, 92 62, 98 80 L 58 96 Z" stroke="url(#splash-grad)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path class="sp-c" pathLength="700" d="M 14 108 C 30 101, 44 101, 60 108 S 90 115, 106 107" stroke="url(#splash-grad)" stroke-width="4" stroke-linecap="round"/>
+                </svg>
+            </div>
+            <div class="splash-text">
+                <h1 class="splash-title">Vela</h1>
+                <span class="splash-sub">Money · Savings · Budgets</span>
+            </div>
         </div>
         <div class="splash-line"></div>
     </div>
-    <script>try { if (sessionStorage.getItem('vela-splash')) document.getElementById('splash').remove(); } catch (e) { /* storage blocked */ }</script>
+    <script>
+        (function () {
+            var el = document.getElementById('splash');
+            if (!el) return;
+            try { if (sessionStorage.getItem('vela-splash')) { el.remove(); return; } } catch (e) { /* storage blocked */ }
+            // In the Android app, Android's own launch screen is on top for a moment; the app starts the animation once it's gone.
+            if (!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform())) el.classList.add('play');
+        })();
+    </script>
 
     <!-- ================= ICON SPRITE ================= -->
     <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
@@ -1249,7 +1259,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.7.0"></script>
+    <script src="app.js?v=4.7.1"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

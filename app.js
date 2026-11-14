@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.7.0';
+const APP_VERSION = '4.7.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -5028,28 +5028,31 @@ const initNative = () => {
     if (splash) setTimeout(() => splash.hide({ fadeOutDuration: 250 }).catch(() => {}), 150);
 };
 
-/* ---- Splash: plays its drawing animation from the first paint, then lifts away ---- */
-const SPLASH_MS = 2500;
+/* ---- Splash: the mark draws on, then the screen slides up after ~1.1 s ---- */
+const SPLASH_MS = 1080;
 let splashEnded = false;
 let splashResolve;
 const splashDone = new Promise((r) => { splashResolve = r; });
+const splashKey = (e) => { if (e.key === 'Escape' || e.key === ' ' || e.key === 'Enter') endSplash(); };
 const endSplash = () => {
     if (splashEnded) return;
     splashEnded = true;
+    window.removeEventListener('keydown', splashKey);
     const el = $('splash');
     try { sessionStorage.setItem('vela-splash', '1'); } catch (e) { /* storage blocked */ }
     if (!el) { splashResolve(); return; }
     el.classList.add('out');
-    document.documentElement.classList.add('app-reveal');
-    setTimeout(() => { el.remove(); splashResolve(); }, 760);
-    setTimeout(() => document.documentElement.classList.remove('app-reveal'), 1500);
+    setTimeout(() => { el.remove(); document.body.style.overflow = ''; splashResolve(); }, 500);
 };
 const runSplash = () => {
     const el = $('splash');
     if (!el) { splashEnded = true; splashResolve(); return; }
+    document.body.style.overflow = 'hidden';
     el.addEventListener('click', endSplash, { once: true });
-    const elapsed = performance.now();
-    setTimeout(endSplash, Math.max(300, (reduceMotion() ? 900 : SPLASH_MS) - elapsed));
+    window.addEventListener('keydown', splashKey);
+    if (el.classList.contains('play')) { setTimeout(endSplash, Math.max(200, SPLASH_MS - performance.now())); return; }
+    // Android app: start once Android's launch screen has faded (it hides shortly after start-up).
+    setTimeout(() => { el.classList.add('play'); setTimeout(endSplash, SPLASH_MS); }, 420);
 };
 
 const init = () => {
