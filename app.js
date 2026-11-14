@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.10.0';
+const APP_VERSION = '4.10.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2614,7 +2614,7 @@ const aiError = async (error) => {
         } catch (e) { /* really offline */ }
         return "Couldn't reach Vela AI. Check your internet and try again.";
     }
-    return code && code.length < 160 ? code : 'Vela AI had a problem. Try again.';
+    return code && code.length < 320 ? code : 'Vela AI had a problem. Try again.';
 };
 
 const aiAsk = async (text) => {

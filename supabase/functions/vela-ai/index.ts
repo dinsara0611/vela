@@ -8,7 +8,8 @@
 //   3. npx supabase secrets set GEMINI_API_KEY=<key> --project-ref <project-ref>
 // Optional: GEMINI_MODEL to pick another model (default: gemini-flash-latest).
 
-const KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
+// Tolerate common paste mistakes: spaces, quotes, or "GEMINI_API_KEY=" typed into the value.
+const KEY = (Deno.env.get("GEMINI_API_KEY") ?? "").trim().replace(/^GEMINI_API_KEY=/, "").replace(/^["']|["']$/g, "").trim();
 const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-flash-latest";
 
 const CORS = {
@@ -88,31 +89,41 @@ ${cats}
 ${String(d.facts ?? "").slice(0, 40000)}
 </vela_data>`;
 
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(MODEL)}:generateContent`;
+  const payload = JSON.stringify({
+    systemInstruction: { parts: [{ text: `${RULES}\n\n${dataText}` }] },
+    contents: messages,
+    tools: [{ functionDeclarations: [ADD_ENTRY] }],
+    generationConfig: { temperature: 0.4, maxOutputTokens: 4096 },
+  });
+  const call = (headers: Record<string, string>) =>
+    fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: payload });
+
   let res: Response;
   try {
-    res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(MODEL)}:generateContent`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": KEY },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: `${RULES}\n\n${dataText}` }] },
-        contents: messages,
-        tools: [{ functionDeclarations: [ADD_ENTRY] }],
-        generationConfig: { temperature: 0.4, maxOutputTokens: 4096 },
-      }),
-    });
+    res = await call({ "x-goog-api-key": KEY });
+    // Newer AI Studio keys ("AQ." auth keys): if the key header is refused, try it as a bearer token.
+    if ((res.status === 401 || res.status === 403) && KEY.startsWith("AQ.")) {
+      const retry = await call({ Authorization: `Bearer ${KEY}` });
+      if (retry.ok || retry.status === 429) res = retry;
+    }
   } catch {
     return json({ error: "Couldn't reach the AI service. Try again." }, 502);
   }
 
   if (res.status === 429) return json({ error: "Vela AI is busy right now. Try again in a minute." }, 429);
-  if (res.status === 400 || res.status === 403) {
-    const detail = await res.text();
-    console.error("Gemini rejected the request", res.status, detail.slice(0, 500));
-    return json({ error: /API key|PERMISSION|API_KEY/i.test(detail) ? "The AI key on the server isn't valid." : "The AI couldn't read that. Start a new chat." }, 502);
-  }
   if (!res.ok) {
-    console.error("Gemini error", res.status, (await res.text()).slice(0, 500));
-    return json({ error: "The AI service had a problem. Try again." }, 502);
+    const detail = await res.text();
+    console.error("Gemini error", res.status, detail.slice(0, 800));
+    let reason = "";
+    try { reason = String(JSON.parse(detail)?.error?.message ?? ""); } catch { /* not JSON */ }
+    reason = reason.replace(/\s+/g, " ").slice(0, 220);
+    const keyProblem = res.status === 401 || res.status === 403 || /API key|API_KEY|PERMISSION|credential|unauthenticated/i.test(detail);
+    return json({
+      error: keyProblem
+        ? `Google refused the AI key (${res.status}): ${reason || "check GEMINI_API_KEY"}`
+        : `The AI service had a problem (${res.status}): ${reason || "try again"}`,
+    }, 502);
   }
 
   const out = await res.json();
