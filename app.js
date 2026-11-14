@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.7.2';
+const APP_VERSION = '4.8.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -90,7 +90,9 @@ const createDefaultState = () => ({
     },
     auth: { user: null, isMock: true, completedOnboarding: false },
     sync: {},            // id -> { kind, op: 'upsert' | 'delete' }
-    syncSettings: false  // budgets / currency changed and not yet sent
+    syncSettings: false, // settings changed and not yet sent
+    settingsUser: null,  // account whose cloud settings are loaded on this phone (before that, nothing is sent)
+    settingsSig: null    // the settings as last sent or loaded, to spot changes
 });
 
 let state = createDefaultState();
@@ -533,10 +535,67 @@ const normalizeState = (raw) => {
         });
     }
     base.syncSettings = !!raw.syncSettings;
+    base.settingsUser = raw.settingsUser ? String(raw.settingsUser) : null;
+    base.settingsSig = typeof raw.settingsSig === 'string' ? raw.settingsSig : null;
     return base;
 };
 
+/* ---- Account settings: everything below is saved to the signed-in account ---- */
+const settingsPayload = () => {
+    const c = state.config;
+    return {
+        budget: c.budget,
+        categoryBudgets: c.categoryBudgets,
+        budgetCurrency: c.budgetCurrency,
+        currency: c.currency,
+        currencies: c.currencies,
+        rateOverrides: c.rateOverrides,
+        theme: c.theme,
+        priceBook: c.priceBook,
+        lastCategory: c.lastCategory,
+        lastAccount: c.lastAccount,
+        reminders: !!c.reminders,
+        // The PIN goes with the account; fingerprint stays per phone.
+        lock: c.lock && c.lock.enabled ? { enabled: true, hash: c.lock.hash, salt: c.lock.salt } : { enabled: false },
+        accounts: state.accounts
+    };
+};
+const settingsSigNow = () => JSON.stringify(settingsPayload());
+let settingsTimer = null;
+// Called on every save: once this phone has the account's settings, any change is queued for upload.
+const watchSettings = () => {
+    if (!canSync() || state.settingsUser !== state.auth.user.id || state.syncSettings) return;
+    if (settingsSigNow() === state.settingsSig) return;
+    state.syncSettings = true;
+    clearTimeout(settingsTimer);
+    settingsTimer = setTimeout(() => flushSync(), 800);
+};
+const applyCloudSettings = (d) => {
+    const c = state.config;
+    if (toNumber(d.budget, 0) > 0) c.budget = toNumber(d.budget, 1000);
+    if (d.categoryBudgets && typeof d.categoryBudgets === 'object') c.categoryBudgets = { ...d.categoryBudgets };
+    c.budgetCurrency = isCurrency(d.budgetCurrency) ? d.budgetCurrency : null;
+    if (isCurrency(d.currency)) c.currency = d.currency;
+    if (Array.isArray(d.currencies) && d.currencies.some(isCurrency)) c.currencies = [...new Set(d.currencies.filter(isCurrency).concat(dcur()))];
+    if (d.rateOverrides && typeof d.rateOverrides === 'object') {
+        c.rateOverrides = {};
+        Object.keys(d.rateOverrides).forEach((k) => { const v = toNumber(d.rateOverrides[k], 0); if (isCurrency(k) && v > 0) c.rateOverrides[k] = v; });
+    }
+    if (d.theme === 'light' || d.theme === 'dark') c.theme = d.theme;
+    if (d.priceBook && typeof d.priceBook === 'object') c.priceBook = normalizeState({ config: { priceBook: d.priceBook } }).config.priceBook;
+    if (d.lastCategory && typeof d.lastCategory === 'object') c.lastCategory = { ...c.lastCategory, ...d.lastCategory };
+    if (typeof d.lastAccount === 'string') c.lastAccount = d.lastAccount;
+    if (typeof d.reminders === 'boolean') c.reminders = d.reminders;
+    if (d.lock && typeof d.lock === 'object') {
+        c.lock = d.lock.enabled && d.lock.hash && d.lock.salt
+            ? { enabled: true, hash: String(d.lock.hash), salt: String(d.lock.salt), biometric: !!(c.lock && c.lock.biometric) }
+            : { enabled: false, hash: null, salt: null, biometric: false };
+    }
+    if (Array.isArray(d.accounts)) state.accounts = d.accounts.map(normalizeAccount).filter(Boolean);
+};
+
 const saveState = () => {
+    watchSettings();
     const ok = storage.set(STORAGE_KEY, JSON.stringify(state));
     if (!ok && !storageWarningShown) {
         storageWarningShown = true;
@@ -931,7 +990,6 @@ const migrateBudgets = () => {
     state.config.budget = tidyBudget(convertAmount(state.config.budget, 'USD', to));
     Object.keys(state.config.categoryBudgets).forEach((k) => { state.config.categoryBudgets[k] = tidyBudget(convertAmount(state.config.categoryBudgets[k], 'USD', to)); });
     state.config.budgetCurrency = to;
-    if (canSync()) state.syncSettings = true;
     saveState();
     return true;
 };
@@ -3070,13 +3128,16 @@ const flushSync = () => {
                 deletes.forEach(([id, v]) => { if (state.sync[id] === v) delete state.sync[id]; });
             }
             if (state.syncSettings) {
+                const payload = settingsPayload();
                 const { error } = await supabaseClient.from('vela_settings').upsert({
                     user_id: state.auth.user.id,
-                    data: { budget: state.config.budget, categoryBudgets: state.config.categoryBudgets, budgetCurrency: state.config.budgetCurrency, currency: state.config.currency, currencies: state.config.currencies, accounts: state.accounts },
+                    data: payload,
                     updated_at: now
                 });
                 if (error) throw error;
-                state.syncSettings = false;
+                state.settingsSig = JSON.stringify(payload);
+                state.settingsUser = state.auth.user.id;
+                state.syncSettings = settingsSigNow() !== state.settingsSig; // changed again while sending
             }
             lastSyncError = null;
             lastSyncedAt = Date.now();
@@ -3143,19 +3204,22 @@ const pullFromCloud = async () => {
         state.recurring = by.recurring.map(normalizeBill).filter(Boolean);
         state.debts = by.debt.map(normalizeDebt).filter(Boolean);
         state.categories = mergeCategories(by.category);
-        if (!set.error && set.data && set.data.data) {
-            const d = set.data.data;
-            if (toNumber(d.budget, 0) > 0) state.config.budget = toNumber(d.budget, 1000);
-            if (d.categoryBudgets && typeof d.categoryBudgets === 'object') state.config.categoryBudgets = { ...d.categoryBudgets };
-            state.config.budgetCurrency = isCurrency(d.budgetCurrency) ? d.budgetCurrency : null;
-            if (isCurrency(d.currency)) state.config.currency = d.currency;
-            if (Array.isArray(d.currencies) && d.currencies.some(isCurrency)) state.config.currencies = [...new Set(d.currencies.filter(isCurrency).concat(dcur()))];
-            if (Array.isArray(d.accounts)) state.accounts = d.accounts.map(normalizeAccount).filter(Boolean);
-        }
+        const hadSettings = !set.error && set.data && set.data.data;
+        if (hadSettings) applyCloudSettings(set.data.data);
         recoverAccounts();
         ensureAccounts(state);
-        if (migrateBudgets()) flushSync();
+        state.settingsUser = state.auth.user.id;
+        if (hadSettings) {
+            // In step with the account; only real changes from here on are sent.
+            state.settingsSig = settingsSigNow();
+            state.syncSettings = false;
+        } else if (!set.error) {
+            state.syncSettings = true; // the account has no settings yet: save this phone's
+        }
+        migrateBudgets();
+        applyTheme(state.config.theme);
         saveState();
+        if (state.syncSettings) flushSync();
         return true;
     } catch (err) {
         console.error('Could not load your data from the cloud:', err);
@@ -3183,7 +3247,6 @@ const recoverAccounts = () => {
         n += 1;
         state.accounts.push(normalizeAccount({ id, name: id === 'acc-cash' ? 'Cash' : `Account ${n}`, kind: id === 'acc-cash' ? 'cash' : 'bank', currency, opening: 0 }));
     });
-    if (missing.size) state.syncSettings = true;
 };
 
 const syncNow = async (btn) => {
@@ -3432,7 +3495,7 @@ const handleSession = async (session) => {
     state.auth.isMock = false;
     // A phone that wasn't signed in to this account has nothing of its own to push except entries made as a guest.
     // Never let its default settings (budget, currency, accounts) overwrite what the account already has.
-    if (!sameUserAgain) { state.sync = {}; state.syncSettings = false; }
+    if (!sameUserAgain) { state.sync = {}; state.syncSettings = false; state.settingsUser = null; state.settingsSig = null; }
     saveState();
 
     const hasRemote = await remoteHasData();
@@ -3471,6 +3534,8 @@ const resetToSignedOut = () => {
     ensureAccounts(state);
     state.sync = {};
     state.syncSettings = false;
+    state.settingsUser = null;
+    state.settingsSig = null;
     state.auth = { user: null, isMock: true, completedOnboarding: false };
     saveState();
     scheduleReminders();
