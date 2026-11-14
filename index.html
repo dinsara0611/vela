@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.11.1">
+    <link rel="stylesheet" href="style.css?v=4.12.0">
 </head>
 <body data-view="dashboard">
 
@@ -783,7 +783,24 @@
                         <label class="field-label" for="budget-category">Budget for</label>
                         <div class="select"><select id="budget-category" class="input"></select></div>
                     </div>
-                    <div class="field amount-field">
+                    <div class="field" id="budget-mode-field" hidden>
+                        <span class="field-label">How to set it</span>
+                        <div class="segmented segmented-full" role="group" aria-label="How to set the monthly budget">
+                            <button type="button" data-budget-mode="income" aria-pressed="false">From my income</button>
+                            <button type="button" data-budget-mode="fixed" aria-pressed="true">Fixed amount</button>
+                        </div>
+                    </div>
+                    <div class="field" id="budget-income-field" hidden>
+                        <span class="field-label">Keep aside for saving</span>
+                        <div class="segmented segmented-full" role="group" aria-label="Part of income kept for saving">
+                            <button type="button" data-budget-save="0" aria-pressed="true">None</button>
+                            <button type="button" data-budget-save="10" aria-pressed="false">10%</button>
+                            <button type="button" data-budget-save="20" aria-pressed="false">20%</button>
+                            <button type="button" data-budget-save="30" aria-pressed="false">30%</button>
+                        </div>
+                        <span class="field-hint" id="budget-income-hint"></span>
+                    </div>
+                    <div class="field amount-field" id="budget-amount-field">
                         <label class="field-label" for="budget-amount">Monthly limit</label>
                         <div class="input-group">
                             <input type="number" id="budget-amount" class="input" step="1" min="1" placeholder="0" inputmode="decimal" required>
@@ -1265,7 +1282,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.11.1"></script>
+    <script src="app.js?v=4.12.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

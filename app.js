@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.11.1';
+const APP_VERSION = '4.12.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -82,6 +82,8 @@ const createDefaultState = () => ({
         budget: 1000,              // overall monthly budget, in budgetCurrency
         categoryBudgets: {},       // categoryId -> monthly limit, in budgetCurrency
         budgetCurrency: null,      // currency the budgets were typed in (null = old data, US dollars)
+        budgetMode: 'fixed',       // 'fixed' = the amount typed in; 'income' = this month's income
+        budgetSavePct: 0,          // with 'income': the part of income kept aside for saving
         lastCategory: { expense: 'Food', income: 'Salary' },
         priceBook: {},             // currency -> item name -> { price, added?, category? } (your own prices)
         lock: { enabled: false, hash: null, salt: null, biometric: false },
@@ -495,6 +497,8 @@ const normalizeState = (raw) => {
     const budget = toNumber(cfg.budget, 1000);
     base.config.budget = budget > 0 ? budget : 1000;
     base.config.budgetCurrency = isCurrency(cfg.budgetCurrency) ? cfg.budgetCurrency : null;
+    base.config.budgetMode = cfg.budgetMode === 'income' ? 'income' : 'fixed';
+    base.config.budgetSavePct = Math.min(90, Math.max(0, Math.round(toNumber(cfg.budgetSavePct, 0))));
     if (cfg.categoryBudgets && typeof cfg.categoryBudgets === 'object') {
         Object.keys(cfg.categoryBudgets).forEach((k) => {
             const v = toNumber(cfg.categoryBudgets[k], 0);
@@ -578,6 +582,8 @@ const settingsPayload = () => {
         budget: c.budget,
         categoryBudgets: c.categoryBudgets,
         budgetCurrency: c.budgetCurrency,
+        budgetMode: c.budgetMode,
+        budgetSavePct: c.budgetSavePct,
         currency: c.currency,
         currencies: c.currencies,
         rateOverrides: c.rateOverrides,
@@ -606,6 +612,8 @@ const applyCloudSettings = (d) => {
     if (toNumber(d.budget, 0) > 0) c.budget = toNumber(d.budget, 1000);
     if (d.categoryBudgets && typeof d.categoryBudgets === 'object') c.categoryBudgets = { ...d.categoryBudgets };
     c.budgetCurrency = isCurrency(d.budgetCurrency) ? d.budgetCurrency : null;
+    if (d.budgetMode === 'income' || d.budgetMode === 'fixed') c.budgetMode = d.budgetMode;
+    if (d.budgetSavePct !== undefined) c.budgetSavePct = Math.min(90, Math.max(0, Math.round(toNumber(d.budgetSavePct, 0))));
     if (isCurrency(d.currency)) c.currency = d.currency;
     if (Array.isArray(d.currencies) && d.currencies.some(isCurrency)) c.currencies = [...new Set(d.currencies.filter(isCurrency).concat(dcur()))];
     if (d.rateOverrides && typeof d.rateOverrides === 'object') {
@@ -1081,10 +1089,14 @@ const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => 
     const prevEnd = new Date(y, m - 1, Math.min(ref.getDate(), daysInMonth(y, m - 1)));
     const prevSpent = sumDisplay(expenses().filter((e) => { const d = parseDate(e.date); return d >= prevStart && d <= prevEnd; }));
 
-    const budget = budgetIn(state.config.budget, dcur());
+    // From income: every income of this month counts, including income dated later this month
+    // (rent on the 17th), because you plan the month's spending with it.
+    const plannedIncome = sumDisplay(state.transactions.filter((t) => t.type === 'income' && inMonth(t, y, m)));
+    const fromIncome = state.config.budgetMode === 'income';
+    const budget = fromIncome ? plannedIncome * (1 - state.config.budgetSavePct / 100) : budgetIn(state.config.budget, dcur());
     const byCat = {};
     spentList.forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + toDisplay(e.amount, e.currency); });
-    return { list, spentList, incomeList, spent, income, net: income - spent, prevSpent, budget, budgetPct: budget > 0 ? (spent / budget) * 100 : 0, byCat };
+    return { list, spentList, incomeList, spent, income, net: income - spent, prevSpent, budget, budgetPct: budget > 0 ? (spent / budget) * 100 : (spent > 0 && fromIncome ? 100 : 0), byCat, fromIncome, plannedIncome };
 };
 
 const rangeBounds = (range) => {
@@ -1432,7 +1444,7 @@ const renderDashboard = () => {
 
     setMeter($('dash-budget-fill'), s.budgetPct, budgetState(s.budgetPct));
     $('dash-budget-meter').setAttribute('aria-valuenow', String(Math.round(Math.min(100, s.budgetPct))));
-    $('dash-budget-desc').textContent = `${Math.round(s.budgetPct)}% of ${fitMoney(s.budget, cur, 11)} budget`;
+    $('dash-budget-desc').textContent = s.fromIncome && s.plannedIncome <= 0 ? 'Add income to set your budget' : `${Math.round(s.budgetPct)}% of ${fitMoney(s.budget, cur, 11)} budget${s.fromIncome ? ' (from income)' : ''}`;
     const left = s.budget - s.spent;
     $('dash-budget-left').innerHTML = left >= 0
         ? `<strong>${escapeHtml(fitMoney(left, cur, 12))}</strong> left`
@@ -1643,7 +1655,11 @@ const planBudgetsHtml = () => {
     <article class="card glow" style="--glow:var(--pal-violet)">
         <div class="card-head"><h2 class="card-title">Monthly budget</h2><button type="button" class="btn btn-secondary btn-xs" data-edit-budget="__overall">${icon('i-edit', 'ic ic-sm')} Edit</button></div>
         <div class="big-number ${left < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(Math.abs(left), cur))}</div>
-        <div class="card-sub" style="margin-bottom:var(--sp-3)">${left >= 0 ? `left of ${escapeHtml(formatCurrency(s.budget, cur))}. That's about ${escapeHtml(formatCurrency(perDay, cur))} a day for the next ${plural(daysLeft, 'day')}.` : `over your ${escapeHtml(formatCurrency(s.budget, cur))} budget`}</div>
+        <div class="card-sub" style="margin-bottom:var(--sp-3)">${s.fromIncome && s.plannedIncome <= 0
+            ? 'Your budget follows your income. Add this month\u2019s salary or rent and it fills in by itself.'
+            : left >= 0 ? `left of ${escapeHtml(formatCurrency(s.budget, cur))}. That's about ${escapeHtml(formatCurrency(perDay, cur))} a day for the next ${plural(daysLeft, 'day')}.` : `over your ${escapeHtml(formatCurrency(s.budget, cur))} budget`}</div>
+        ${s.fromIncome ? `<div class="budget-source">${icon('i-arrow-down', 'ic ic-sm')}<span>From your income: ${escapeHtml(formatCurrency(s.plannedIncome, cur))} this month${state.config.budgetSavePct ? `, keeping ${state.config.budgetSavePct}% (${escapeHtml(formatCurrency(s.plannedIncome - s.budget, cur))}) for saving` : ''}</span></div>`
+            : (s.plannedIncome > 0 ? `<button type="button" class="link-btn budget-switch" data-action="budget-from-income">${icon('i-arrow-down', 'ic ic-sm')} Use my income (${escapeHtml(formatCurrency(s.plannedIncome, cur))}) as the budget</button>` : '')}
         ${meterHtml(s.budgetPct, budgetState(s.budgetPct), 'Monthly budget used')}
         <div class="meter-row" style="margin-top:var(--sp-2)"><span>${Math.round(s.budgetPct)}% used</span><span>Spent <strong>${escapeHtml(formatCurrency(s.spent, cur))}</strong></span></div>
     </article>
@@ -2522,7 +2538,7 @@ const aiFacts = () => {
     const lines = [
         `Today: ${now.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} (${todayISO()}), ${SLOT_NAMES[daySlot()]} time.`,
         `Display currency: ${cur}. Home currency for new entries: ${homeCurrency()}.`,
-        `This month: spent ${m(s.spent)}, income ${m(s.income)}, budget ${m(s.budget)}, ${left >= 0 ? `${m(left)} left (${m(left / daysLeftInMonth())} a day for ${daysLeftInMonth()} days)` : `${m(-left)} over budget`}. Spent on the same days last month: ${m(s.prevSpent)}.`,
+        `This month: spent ${m(s.spent)}, income ${m(s.income)}, budget ${m(s.budget)}${s.fromIncome ? ` (set from this month's income of ${m(s.plannedIncome)}${state.config.budgetSavePct ? `, keeping ${state.config.budgetSavePct}% for saving` : ''})` : ''}, ${left >= 0 ? `${m(left)} left (${m(left / daysLeftInMonth())} a day for ${daysLeftInMonth()} days)` : `${m(-left)} over budget`}. Spent on the same days last month: ${m(s.prevSpent)}.`,
         `This month by category: ${catLine(s.byCat)}.`
     ];
     for (let i = 1; i <= 5; i++) {
@@ -2849,6 +2865,27 @@ const submitFunds = () => {
 /* =========================================================================
    23. Sheets: budgets, bills, debts
    ========================================================================= */
+let budgetModeDraft = 'fixed';
+let budgetSaveDraft = 0;
+const syncBudgetModeUi = () => {
+    const overall = $('budget-category').value === '__overall';
+    const income = overall && budgetModeDraft === 'income';
+    $('budget-mode-field').hidden = !overall;
+    $('budget-income-field').hidden = !income;
+    $('budget-amount-field').hidden = income;
+    setPressed('[data-budget-mode]', (b) => b.dataset.budgetMode === budgetModeDraft);
+    setPressed('[data-budget-save]', (b) => Number(b.dataset.budgetSave) === budgetSaveDraft);
+    if (income) {
+        const now = new Date();
+        const s = monthStats(now.getFullYear(), now.getMonth());
+        const cur = dcur();
+        const budget = s.plannedIncome * (1 - budgetSaveDraft / 100);
+        $('budget-income-hint').textContent = s.plannedIncome > 0
+            ? `This month's income is ${formatCurrency(s.plannedIncome, cur)}, so your budget is ${formatCurrency(budget, cur)}${budgetSaveDraft ? ` and ${formatCurrency(s.plannedIncome - budget, cur)} goes to saving` : ''}. It grows by itself when you add income.`
+            : 'No income added this month yet. Add your salary or rent and your budget fills in by itself.';
+    }
+};
+
 const openBudget = (catId) => {
     const sel = $('budget-category');
     sel.innerHTML = ['<option value="__overall">Whole month (all spending)</option>']
@@ -2862,13 +2899,30 @@ const openBudget = (catId) => {
     $('budget-currency').textContent = dcur();
     $('budget-title').textContent = existing ? 'Edit budget' : 'Set a budget';
     $('btn-delete-budget').hidden = !(existing && !isOverall);
+    budgetModeDraft = state.config.budgetMode;
+    budgetSaveDraft = state.config.budgetSavePct;
+    syncBudgetModeUi();
     openOrSwap('modal-budget');
 };
 
 const submitBudget = () => {
     const catId = $('budget-category').value;
+    if (catId === '__overall' && budgetModeDraft === 'income') {
+        state.config.budgetMode = 'income';
+        state.config.budgetSavePct = budgetSaveDraft;
+        saveState();
+        flushSync();
+        closeSheet('modal-budget');
+        const s = monthStats();
+        showToast(s.plannedIncome > 0
+            ? `Your budget now follows your income: ${formatCurrency(s.budget, dcur())} this month`
+            : 'Your budget now follows your income. Add this month\u2019s income to fill it in.', 'success');
+        renderActive();
+        return true;
+    }
     const value = toNumber($('budget-amount').value, NaN);
     if (!(value > 0)) return fieldError($('budget-amount'), 'Enter a monthly limit greater than zero.');
+    if (catId === '__overall') state.config.budgetMode = 'fixed';
     setBudgetCurrency(dcur());
     if (catId === '__overall') state.config.budget = value;
     else state.config.categoryBudgets[catId] = value;
@@ -4611,6 +4665,8 @@ const initEvents = () => {
         if (d.txType) { setTxType(d.txType); return; }
         if (d.pick) { const p = txPicks[Number(d.pick)]; if (p) applyPick(p); return; }
         if (d.starterPick) { starterPick(d.starterPick); return; }
+        if (d.budgetMode) { budgetModeDraft = d.budgetMode; syncBudgetModeUi(); return; }
+        if (d.budgetSave !== undefined) { budgetSaveDraft = Number(d.budgetSave); syncBudgetModeUi(); return; }
         if (d.botChip) { botHandle(d.botChip); return; }
         if (d.botSay) { botHandle(d.botSay); return; }
         if (d.botAdd) { botAdd(d.botAdd, el); return; }
@@ -4657,6 +4713,14 @@ const initEvents = () => {
             case 'open-bot': haptic(); openBot(); break;
             case 'bot-new': newAiChat(); break;
             case 'sync-now': syncNow(el); break;
+            case 'budget-from-income': {
+                state.config.budgetMode = 'income';
+                state.config.budgetSavePct = 0;
+                saveState();
+                showToast(`Your budget now follows your income: ${formatCurrency(monthStats().budget, dcur())} this month`, 'success');
+                renderActive();
+                break;
+            }
             case 'bot-signin': closeSheet('modal-bot'); setTimeout(() => showAuth(1), 250); break;
             case 'open-accounts': openAccountManager(); break;
             case 'open-currencies': openCurrencySheet(); break;
@@ -4793,6 +4857,7 @@ const initEvents = () => {
     $('tx-currency').addEventListener('change', () => { renderTxSuggest(); updatePriceHint(); });
     $('tx-desc').addEventListener('input', onTxDescInput);
     $('tx-date').addEventListener('input', updateDateHint);
+    $('budget-category').addEventListener('change', syncBudgetModeUi);
     $('tx-date').addEventListener('change', updateDateHint);
     $('tx-amount').addEventListener('input', updatePriceHint);
     $('tx-category-picker').addEventListener('change', () => { txCatTouched = true; });

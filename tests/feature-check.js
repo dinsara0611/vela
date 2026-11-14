@@ -134,6 +134,37 @@ export async function run() {
         return (s().config.budget === 30000 && s().config.budgetCurrency === 'LKR' && st.budget === 30000) || `budget ${s().config.budget} ${s().config.budgetCurrency}, shown ${st.budget}`;
     });
 
+    await T('Budget from income: follows income, keeps saving %, counts rent later this month', async () => {
+        g('openBudget')('__overall'); await wait(250);
+        document.querySelector('[data-budget-mode="income"]').click();
+        document.querySelector('[data-budget-save="20"]').click();
+        const amountHidden = $('budget-amount-field').hidden;
+        g('submitBudget')(); await wait(300);
+        const s1 = g('monthStats')();
+        // Rent 30,000 dated later this month (if the month has days left) also counts for planning.
+        const now = new Date();
+        const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+        const rentDate = lastDay.getDate() > now.getDate() ? iso(lastDay) : today;
+        await addTx({ type: 'income', amount: 30000, desc: 'Rent this month', category: 'OtherIncome', date: rentDate });
+        const s2 = g('monthStats')();
+        const expected1 = s1.plannedIncome * 0.8;
+        const grew = Math.abs(s2.budget - (s1.plannedIncome + 30000) * 0.8) < 0.01;
+        // Category budgets stay fixed amounts: the choice is hidden for them.
+        g('openBudget')(); await wait(250);
+        $('budget-category').value = 'Food'; $('budget-category').dispatchEvent(new Event('change'));
+        const hiddenForCategory = $('budget-mode-field').hidden && !$('budget-amount-field').hidden;
+        await close('modal-budget');
+        // Back to the fixed amount.
+        g('openBudget')('__overall'); await wait(250);
+        document.querySelector('[data-budget-mode="fixed"]').click();
+        $('budget-amount').value = '30000';
+        g('submitBudget')(); await wait(300);
+        const back = s().config.budgetMode === 'fixed' && g('monthStats')().budget === 30000;
+        s().transactions = s().transactions.filter((t) => t.desc !== 'Rent this month');
+        return (amountHidden && Math.abs(s1.budget - expected1) < 0.01 && s1.fromIncome && grew && hiddenForCategory && back)
+            || `hidden ${amountHidden}, budget ${s1.budget} vs ${expected1}, grew ${grew} (${s2.budget}), category ${hiddenForCategory}, back ${back}`;
+    });
+
     await T('Category budget set and removed', async () => {
         g('openBudget')(); await wait(250);
         $('budget-category').value = 'Food';
