@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.7.1';
+const APP_VERSION = '4.7.2';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -835,6 +835,7 @@ const fetchLiveExchangeRate = async ({ manual = false } = {}) => {
         if (manual) state.config.rateOverrides = {};
         state.config.ratesUpdatedAt = Date.now();
         saveState();
+        if (migrateBudgets()) flushSync();
         setRateStatus('live');
         renderActive();
         if (manual) showToast('Live exchange rates updated', 'success');
@@ -925,10 +926,12 @@ const tidyBudget = (v) => (v >= 10000 ? Math.round(v / 100) * 100 : v >= 1000 ? 
 const migrateBudgets = () => {
     if (state.config.budgetCurrency) return false;
     const to = dcur();
+    // Needs a real rate to turn old dollar budgets back into what was typed; wait for live rates if missing.
+    if (to !== 'USD' && !(state.config.rateOverrides[to] > 0) && !(state.config.rates[to] > 0)) return false;
     state.config.budget = tidyBudget(convertAmount(state.config.budget, 'USD', to));
     Object.keys(state.config.categoryBudgets).forEach((k) => { state.config.categoryBudgets[k] = tidyBudget(convertAmount(state.config.categoryBudgets[k], 'USD', to)); });
     state.config.budgetCurrency = to;
-    state.syncSettings = true;
+    if (canSync()) state.syncSettings = true;
     saveState();
     return true;
 };
@@ -3042,7 +3045,9 @@ const syncErrorText = (err) => {
 const flushSync = () => {
     if (!canSync() || (typeof navigator.onLine === 'boolean' && !navigator.onLine)) return Promise.resolve(pendingCount() === 0);
     if (flushPromise) { flushAgain = true; return flushPromise; }
-    flushPromise = (async () => {
+    let release;
+    const timeout = new Promise((r) => { release = setTimeout(() => r('timeout'), 30000); });
+    const work = (async () => {
         try {
             const entries = Object.entries(state.sync);
             const upserts = entries.filter(([, v]) => v.op === 'upsert');
@@ -3086,13 +3091,19 @@ const flushSync = () => {
             }
             saveState();
             return false;
-        } finally {
-            flushPromise = null;
-            if (flushAgain) { flushAgain = false; setTimeout(flushSync, 0); }
-            if (currentTab === 'settings') updateUserProfileUI();
         }
     })();
-    return flushPromise;
+    // A save that never answers must not block every later save.
+    const run = Promise.race([work, timeout]).then((r) => {
+        clearTimeout(release);
+        if (flushPromise === run) flushPromise = null;
+        if (r === 'timeout') lastSyncError = 'No connection to the cloud. It will retry automatically.';
+        if (flushAgain) { flushAgain = false; setTimeout(flushSync, 0); }
+        if (currentTab === 'settings') updateUserProfileUI();
+        return r === 'timeout' ? false : r;
+    });
+    flushPromise = run;
+    return run;
 };
 
 const queueSync = (kind, id, op, flush = true) => {
@@ -3137,9 +3148,11 @@ const pullFromCloud = async () => {
             if (toNumber(d.budget, 0) > 0) state.config.budget = toNumber(d.budget, 1000);
             if (d.categoryBudgets && typeof d.categoryBudgets === 'object') state.config.categoryBudgets = { ...d.categoryBudgets };
             state.config.budgetCurrency = isCurrency(d.budgetCurrency) ? d.budgetCurrency : null;
+            if (isCurrency(d.currency)) state.config.currency = d.currency;
             if (Array.isArray(d.currencies) && d.currencies.some(isCurrency)) state.config.currencies = [...new Set(d.currencies.filter(isCurrency).concat(dcur()))];
             if (Array.isArray(d.accounts)) state.accounts = d.accounts.map(normalizeAccount).filter(Boolean);
         }
+        recoverAccounts();
         ensureAccounts(state);
         if (migrateBudgets()) flushSync();
         saveState();
@@ -3151,12 +3164,35 @@ const pullFromCloud = async () => {
     }
 };
 
+// Entries that point to an account missing from the account list (for example after the list was
+// overwritten) get that account back, instead of being moved into Cash.
+const recoverAccounts = () => {
+    const known = new Set(state.accounts.map((a) => a.id));
+    const missing = new Map();
+    const note = (id, cur) => {
+        if (!id || known.has(id)) return;
+        const m = missing.get(id) || {};
+        m[cur] = (m[cur] || 0) + 1;
+        missing.set(id, m);
+    };
+    state.transactions.forEach((t) => { note(t.accountId, t.currency); if (t.type === 'transfer') note(t.toAccountId, t.toCurrency || t.currency); });
+    state.recurring.forEach((b) => note(b.accountId, b.currency));
+    let n = 0;
+    missing.forEach((curs, id) => {
+        const currency = Object.entries(curs).sort((a, b) => b[1] - a[1])[0][0];
+        n += 1;
+        state.accounts.push(normalizeAccount({ id, name: id === 'acc-cash' ? 'Cash' : `Account ${n}`, kind: id === 'acc-cash' ? 'cash' : 'bank', currency, opening: 0 }));
+    });
+    if (missing.size) state.syncSettings = true;
+};
+
 const syncNow = async (btn) => {
     if (!canSync()) { showAuth(1); return; }
     const run = async () => {
         queueAllForUpload();
         const ok = await flushSync();
         if (ok) await pullFromCloud();
+        updateCurrencyButtons();
         updateUserProfileUI();
         renderActive();
         if (ok) showToast(`Everything is saved to ${state.auth.user.email || 'your account'}`, 'success');
@@ -3164,6 +3200,15 @@ const syncNow = async (btn) => {
     };
     if (btn && typeof withBusy === 'function') await withBusy(btn, run);
     else await run();
+};
+
+const remoteSettingsExist = async () => {
+    try {
+        const { data, error } = await supabaseClient.from('vela_settings').select('user_id').maybeSingle();
+        return !error && !!data;
+    } catch (err) {
+        return true; // unsure: don't risk overwriting
+    }
 };
 
 const remoteHasData = async () => {
@@ -3382,16 +3427,25 @@ const handleSession = async (session) => {
         if (profile) { fullName = profile.full_name || profile.username || fullName; avatarUrl = profile.avatar_url || avatarUrl; }
     } catch (err) { /* profile is optional */ }
 
+    const sameUserAgain = previousCloudUser === user.id;
     state.auth.user = { id: user.id, email: user.email || null, full_name: fullName, avatar_url: avatarUrl };
     state.auth.isMock = false;
+    // A phone that wasn't signed in to this account has nothing of its own to push except entries made as a guest.
+    // Never let its default settings (budget, currency, accounts) overwrite what the account already has.
+    if (!sameUserAgain) { state.sync = {}; state.syncSettings = false; }
     saveState();
-    if (wasGuestWithData) queueAllForUpload();
 
     const hasRemote = await remoteHasData();
-    if (hasRemote || wasGuestWithData || state.auth.completedOnboarding) {
+    const remoteHasSettings = await remoteSettingsExist();
+    if (wasGuestWithData) {
+        queueAllForUpload();
+        if (remoteHasSettings) state.syncSettings = false; // keep the account's budgets and accounts; only add the guest entries
+    }
+    if (hasRemote || remoteHasSettings || wasGuestWithData || state.auth.completedOnboarding) {
         state.auth.completedOnboarding = true;
-        if (!hasRemote && hasLocal) queueAllForUpload();
+        if (!hasRemote && hasLocal) { queueAllForUpload(); if (remoteHasSettings) state.syncSettings = false; }
         await pullFromCloud();
+        updateCurrencyButtons();
         saveState();
         hideAuth();
         processRecurring();
