@@ -3959,6 +3959,23 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
     .splash-title, .splash-sub { animation: none !important; opacity: 1; }
 }
 
+/* Upcoming entries (dated after today): shown, not counted yet */
+.tx-upcoming {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 7px;
+    border-radius: var(--r-full);
+    background: var(--warning-soft);
+    color: var(--warning);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+.tx[data-upcoming="true"] { opacity: 0.72; }
+.tx[data-upcoming="true"] .amount { font-style: italic; }
+.date-hint { color: var(--warning); font-weight: 600; }
+
 /* ---------- 17. Motion preferences ---------- */
 @media (prefers-reduced-motion: reduce) {
     *,

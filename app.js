@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.10.1';
+const APP_VERSION = '4.11.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -162,6 +162,19 @@ const daysInMonth = (y, m) => new Date(y, m + 1, 0).getDate();
 const monthKey = (d) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}`;
 const monthName = (y, m, opts = { month: 'long', year: 'numeric' }) => new Date(y, m, 1).toLocaleDateString('en-US', opts);
 const todayISO = () => toISODate();
+// An entry dated after today hasn't happened yet: it's listed as Upcoming and counts from its date.
+let todayCache = '';
+let todayCacheUntil = 0;
+const todayFast = () => {
+    const now = Date.now();
+    if (now >= todayCacheUntil) {
+        const d = new Date();
+        todayCache = toISODate(d);
+        todayCacheUntil = new Date(d.getFullYear(), d.getMonth(), d.getDate() + 1).getTime();
+    }
+    return todayCache;
+};
+const isUpcoming = (t) => !!t && t.date > todayFast();
 
 const relativeDayLabel = (dateStr) => {
     const d = parseDate(dateStr);
@@ -286,6 +299,7 @@ const accountIcon = (a) => (ACCOUNT_KINDS[a && a.kind] || ACCOUNT_KINDS.cash).ic
 const accountBalance = (acc) => {
     let bal = acc.opening;
     state.transactions.forEach((t) => {
+        if (isUpcoming(t)) return;
         if (t.type === 'transfer') {
             if (t.accountId === acc.id) bal -= convertAmount(t.amount, t.currency, acc.currency);
             if (t.toAccountId === acc.id) bal += convertAmount(t.toAmount, t.toCurrency, acc.currency);
@@ -1023,7 +1037,7 @@ const goToActivity = (type, keepAccount = false) => {
 /* =========================================================================
    11. Calculations
    ========================================================================= */
-const expenses = () => state.transactions.filter((t) => t.type === 'expense');
+const expenses = () => state.transactions.filter((t) => t.type === 'expense' && !isUpcoming(t));
 const inAccount = (t, accId) => accId === 'all' || t.accountId === accId || (t.type === 'transfer' && t.toAccountId === accId);
 const sortByNewest = (list) => [...list].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
 const sumDisplay = (list) => list.reduce((s, e) => s + toDisplay(e.amount, e.currency), 0);
@@ -1056,7 +1070,7 @@ const setBudgetCurrency = (to) => {
 };
 
 const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => {
-    const list = state.transactions.filter((t) => inMonth(t, y, m));
+    const list = state.transactions.filter((t) => inMonth(t, y, m) && !isUpcoming(t));
     const spentList = list.filter((t) => t.type === 'expense');
     const incomeList = list.filter((t) => t.type === 'income');
     const spent = sumDisplay(spentList);
@@ -1310,7 +1324,7 @@ const transferLine = (t) => `${accountById(t.accountId).name} to ${accountById(t
 const txRow = (t, { showDate = true } = {}) => {
     const when = showDate ? `<span class="tx-when">${escapeHtml(relativeDayLabel(t.date))}</span>` : '';
     if (t.type === 'transfer') {
-        return `<li><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}">
+        return `<li><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
             <span class="cat-badge" style="--cat:var(--text-2)">${icon('i-swap')}</span>
             <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub"><span>${escapeHtml(transferLine(t))}</span></span></span>
             <span class="tx-amt"><span class="amount is-transfer">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>${when}</span>
@@ -1321,9 +1335,9 @@ const txRow = (t, { showDate = true } = {}) => {
     const signed = formatSigned(t.type === 'income' ? value : -value, dcur());
     const orig = t.currency !== dcur() ? `<span class="tx-orig-inline">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>` : '';
     const label = showDate ? cat.name : (t.note || cat.name);
-    return `<li><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}">
+    return `<li><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
         ${catBadge(t.category, t.type)}
-        <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub">${t.recurringId ? icon('i-repeat') : ''}${t.receipt ? icon('i-image') : ''}<span>${escapeHtml(label)}</span>${orig}</span></span>
+        <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub">${isUpcoming(t) ? '<span class="tx-upcoming">Upcoming</span>' : ''}${t.recurringId ? icon('i-repeat') : ''}${t.receipt ? icon('i-image') : ''}<span>${escapeHtml(label)}</span>${orig}</span></span>
         <span class="tx-amt"><span class="amount ${t.type === 'income' ? 'is-income' : ''}">${escapeHtml(signed)}</span>${when}</span>
     </button></li>`;
 };
@@ -1392,9 +1406,13 @@ const renderDashboard = () => {
 
     $('dash-month-label').textContent = `${now.toLocaleDateString('en-US', { month: 'long' })} balance`;
     countUp($('dash-balance'), s.net, cur);
-    $('dash-balance-sub').textContent = s.income > 0
+    const nowD = new Date();
+    const coming = state.transactions.filter((t) => isUpcoming(t) && t.type === 'income' && inMonth(t, nowD.getFullYear(), nowD.getMonth()))
+        .sort((a, b) => (a.date > b.date ? 1 : -1));
+    const comingNote = coming.length ? ` · ${formatCompact(sumDisplay(coming), cur)} coming ${shortDate(coming[0].date)}` : '';
+    $('dash-balance-sub').textContent = (s.income > 0
         ? `${Math.max(0, Math.round((s.net / s.income) * 100))}% of this month's income left`
-        : (s.spent > 0 ? "Add your income to see what's left" : 'Income minus spending this month');
+        : (s.spent > 0 ? "Add your income to see what's left" : 'Income minus spending this month')) + comingNote;
     setMoney($('dash-income'), s.income, cur, 12);
     setMoney($('dash-spent'), s.spent, cur, 12);
 
@@ -1504,7 +1522,7 @@ const renderActivity = () => {
     }
     list = sortByNewest(list);
 
-    const summarySrc = query ? list : base;
+    const summarySrc = (query ? list : base).filter((t) => !isUpcoming(t));
     const inc = sumDisplay(summarySrc.filter((t) => t.type === 'income'));
     const out = sumDisplay(summarySrc.filter((t) => t.type === 'expense'));
     setMoney($('act-income'), inc, cur, 11);
@@ -1541,9 +1559,11 @@ const renderActivity = () => {
         else groups.push({ date: t.date, items: [t] });
     });
     container.innerHTML = groups.map((g) => {
-        const net = sumDisplay(g.items.filter((t) => t.type === 'income')) - sumDisplay(g.items.filter((t) => t.type === 'expense'));
+        const counted = g.items.filter((t) => !isUpcoming(t));
+        const net = sumDisplay(counted.filter((t) => t.type === 'income')) - sumDisplay(counted.filter((t) => t.type === 'expense'));
+        const head = counted.length ? `<span class="amount">${escapeHtml(formatSigned(net, cur))}</span>` : '<span class="tx-upcoming">Upcoming</span>';
         return `<div class="day-group">
-            <div class="day-head"><span>${escapeHtml(relativeDayLabel(g.date))}</span><span class="amount">${escapeHtml(formatSigned(net, cur))}</span></div>
+            <div class="day-head"><span>${escapeHtml(relativeDayLabel(g.date))}</span>${head}</div>
             <div class="card card-list"><ul class="tx-list">${g.items.map((t) => txRow(t, { showDate: false })).join('')}</ul></div>
         </div>`;
     }).join('');
@@ -2025,6 +2045,15 @@ const setTxType = (type, keepCategory) => {
     buildCategoryPicker(type, keepCategory || state.config.lastCategory[type]);
     renderTxSuggest();
     updatePriceHint();
+    updateDateHint();
+};
+
+const updateDateHint = () => {
+    const el = $('tx-date-hint');
+    const d = $('tx-date').value;
+    const future = isISODate(d) && d > todayISO();
+    el.hidden = !future;
+    if (future) el.textContent = `This date is in the future. It shows as Upcoming and counts in your balance from ${relativeDayLabel(d).toLowerCase() === 'tomorrow' ? 'tomorrow' : shortDate(d)}.`;
 };
 
 const openAddTx = (type = 'expense') => {
@@ -2124,9 +2153,13 @@ const submitTx = async () => {
     queueSync('transaction', record.id, 'upsert');
     if (receipt && !receipt.path) uploadReceipt(record);
     closeSheet('modal-tx');
-    showToast(id ? 'Saved' : `${txType === 'income' ? 'Income' : 'Expense'} added: ${formatCurrency(amount, currency)}`, 'success');
-    const now = new Date();
-    if (txType === 'expense' && inMonth(record, now.getFullYear(), now.getMonth())) setTimeout(() => budgetAlert(category), 400);
+    if (isUpcoming(record)) {
+        showToast(`Upcoming ${txType}: ${formatCurrency(amount, currency)} on ${shortDate(date)}. It counts in your balance from that day.`, 'info');
+    } else {
+        showToast(id ? 'Saved' : `${txType === 'income' ? 'Income' : 'Expense'} added: ${formatCurrency(amount, currency)}`, 'success');
+        const now = new Date();
+        if (txType === 'expense' && inMonth(record, now.getFullYear(), now.getMonth())) setTimeout(() => budgetAlert(category), 400);
+    }
     renderActive();
     return true;
 };
@@ -2587,6 +2620,7 @@ const botEdit = (id) => {
     $('tx-desc').value = d.desc;
     if (d.amount > 0) $('tx-amount').value = d.amount;
     $('tx-date').value = d.date;
+    updateDateHint();
     selectTxCategory(d.category);
     txCatTouched = true;
     renderTxSuggest();
@@ -3194,7 +3228,9 @@ const deleteCategory = (id) => {
    ========================================================================= */
 const KIND_STORE = { transaction: 'transactions', goal: 'savings', recurring: 'recurring', debt: 'debts', category: 'categories' };
 const canSync = () => !!(supabaseClient && !state.auth.isMock && state.auth.user && state.auth.user.id);
-const pendingCount = () => Object.keys(state.sync).length + (state.syncSettings ? 1 : 0);
+// Settings can only be sent once this phone has loaded the account's settings; until then they wait.
+const settingsReady = () => !!(state.auth.user && state.settingsUser === state.auth.user.id);
+const pendingCount = () => Object.keys(state.sync).length + (state.syncSettings && settingsReady() ? 1 : 0);
 const findRecord = (kind, id) => (state[KIND_STORE[kind]] || []).find((r) => r.id === id);
 // Records are keyed per user, so ids that repeat across users (built-in categories) need a user prefix.
 const rowId = (kind, id) => (kind === 'category' ? `${state.auth.user.id}:${id}` : id);
@@ -3241,7 +3277,7 @@ const flushSync = () => {
                 if (error) throw error;
                 deletes.forEach(([id, v]) => { if (state.sync[id] === v) delete state.sync[id]; });
             }
-            if (state.syncSettings) {
+            if (state.syncSettings && settingsReady()) {
                 const payload = settingsPayload();
                 const { error } = await supabaseClient.from('vela_settings').upsert({
                     user_id: state.auth.user.id,
@@ -3304,7 +3340,7 @@ const queueAllForUpload = () => {
 const pullFromCloud = async () => {
     if (!canSync()) return false;
     const flushed = await flushSync();
-    if (!flushed || pendingCount() > 0) return false;
+    if (!flushed || Object.keys(state.sync).length > 0) return false;
     try {
         const [rec, set] = await Promise.all([
             supabaseClient.from('vela_records').select('kind,data'),
@@ -3367,6 +3403,8 @@ const recoverAccounts = () => {
 const syncNow = async (btn) => {
     if (!canSync()) { showAuth(1); return; }
     const run = async () => {
+        // This phone hasn't loaded the account's settings yet: load them first so nothing here overwrites them.
+        if (!settingsReady()) await pullFromCloud();
         queueAllForUpload();
         const ok = await flushSync();
         if (ok) await pullFromCloud();
@@ -4754,6 +4792,8 @@ const initEvents = () => {
     });
     $('tx-currency').addEventListener('change', () => { renderTxSuggest(); updatePriceHint(); });
     $('tx-desc').addEventListener('input', onTxDescInput);
+    $('tx-date').addEventListener('input', updateDateHint);
+    $('tx-date').addEventListener('change', updateDateHint);
     $('tx-amount').addEventListener('input', updatePriceHint);
     $('tx-category-picker').addEventListener('change', () => { txCatTouched = true; });
     $('bot-form').addEventListener('submit', (e) => {
