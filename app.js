@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.11.0';
+const APP_VERSION = '4.11.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -5030,7 +5030,13 @@ const deleteAccount = (id) => {
                 if (t.toAccountId === id) { t.toAccountId = other.id; changed = true; }
                 if (changed) queueSync('transaction', t.id, 'upsert', false);
             });
-            state.transactions = state.transactions.filter((t) => !(t.type === 'transfer' && t.accountId === t.toAccountId));
+            // Transfers between the deleted account and the one taking its entries now go nowhere:
+            // remove them here and in the account, or the next sync brings them back.
+            state.transactions = state.transactions.filter((t) => {
+                const selfTransfer = t.type === 'transfer' && t.accountId === t.toAccountId;
+                if (selfTransfer) queueSync('transaction', t.id, 'delete', false);
+                return !selfTransfer;
+            });
             state.recurring.forEach((b) => { if (b.accountId === id) { b.accountId = other.id; queueSync('recurring', b.id, 'upsert', false); } });
             state.accounts = state.accounts.filter((x) => x.id !== id);
             if (activityAccount === id) activityAccount = 'all';
