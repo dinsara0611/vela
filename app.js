@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.8.0';
+const APP_VERSION = '4.8.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2499,7 +2499,15 @@ const aiError = async (error) => {
     if (status === 404 || code === 'not_configured' || (error && (error.name === 'FunctionsRelayError'))) return "Vela AI isn't switched on yet. The app owner needs to finish its one-time setup.";
     if (status === 401) return 'Please sign in again to keep using Vela AI.';
     if (status === 429) return 'Vela AI is busy right now. Try again in a minute.';
-    if (error && error.name === 'FunctionsFetchError') return "Couldn't reach Vela AI. Check your internet and try again.";
+    if (error && error.name === 'FunctionsFetchError') {
+        // A function that isn't deployed answers without browser headers, so it looks like a network error.
+        // If Supabase itself answers, the internet is fine and the AI just isn't switched on.
+        try {
+            const res = await fetch(`${SUPABASE_URL}/auth/v1/health`, { headers: { apikey: SUPABASE_ANON_KEY }, cache: 'no-store' });
+            if (res.ok) return "Vela AI isn't switched on yet. The app owner needs to finish its one-time setup (deploy the vela-ai function and add a Gemini key).";
+        } catch (e) { /* really offline */ }
+        return "Couldn't reach Vela AI. Check your internet and try again.";
+    }
     return code && code.length < 160 ? code : 'Vela AI had a problem. Try again.';
 };
 
