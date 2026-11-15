@@ -3982,6 +3982,37 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 .budget-switch { min-height: 36px; margin: calc(-1 * var(--sp-2)) 0 var(--sp-2); padding: 0; gap: 6px; text-align: left; }
 #budget-mode-field[hidden], #budget-income-field[hidden], #budget-amount-field[hidden] { display: none; }
 
+/* Fixed expenses */
+.fx-rows { display: flex; flex-direction: column; gap: 8px; margin: var(--sp-2) 0 var(--sp-3); }
+.fx-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-3); font-size: var(--fs-md); color: var(--text-2); }
+.fx-row .amount { font-size: var(--fs-md); white-space: nowrap; }
+.fx-row.fx-total { padding-top: 8px; border-top: 1px dashed var(--border-strong); color: var(--text); font-weight: 600; }
+.fx-row.fx-total .amount { font-size: var(--fs-lg); }
+.fx-items { list-style: none; margin: var(--sp-3) 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.fx-items li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); padding: 6px 0; border-top: 1px solid var(--border); }
+.fx-item-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fx-item-when { font-size: var(--fs-xs); color: var(--warning); white-space: nowrap; display: inline-flex; align-items: center; gap: 3px; }
+.fx-item-when.is-paid { color: var(--income); }
+.tx-fixed {
+    display: inline-flex;
+    align-items: center;
+    padding: 1px 7px;
+    border-radius: var(--r-full);
+    background: var(--primary-soft);
+    color: var(--primary);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+#tx-kind-field[hidden] { display: none; }
+.tx-repeat-row { margin-top: var(--sp-2); padding: var(--sp-3); border-radius: var(--r-md); background: var(--input-bg, var(--surface-2)); border: 1px solid var(--border); }
+.tx-repeat-row[hidden] { display: none; }
+.segmented button:disabled { opacity: 0.55; }
+
+/* The balance stays on one line and scales with narrow screens */
+.hero-amount { white-space: nowrap; overflow: hidden; font-size: min(var(--fs-4xl), 11vw); }
+
 /* ---------- 17. Motion preferences ---------- */
 @media (prefers-reduced-motion: reduce) {
     *,

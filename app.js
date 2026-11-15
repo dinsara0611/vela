@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.12.0';
+const APP_VERSION = '4.13.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -130,7 +130,7 @@ const storage = {
 };
 
 const toNumber = (value, fallback = 0) => {
-    const n = typeof value === 'number' ? value : parseFloat(value);
+    const n = typeof value === 'number' ? value : parseFloat(typeof value === 'string' ? value.replace(/,/g, '') : value);
     return Number.isFinite(n) ? n : fallback;
 };
 
@@ -265,15 +265,84 @@ const fillCurrencySelect = (sel, value) => {
     sel.value = v;
 };
 // Small boxes on phones: full amount when it fits, "Rs. 599.3K" when it doesn't (full value in the tooltip).
+const wholeFmt = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
+const formatWhole = (amount, cur, signed = false) => `${amount < 0 ? (signed ? '−' : '-') : (signed && amount > 0 ? '+' : '')}${symbolFor(cur)}${wholeFmt.format(Math.abs(amount))}`;
+// Small boxes: the full amount (with commas) when it fits, then the same without cents, and only for
+// very large numbers the short form ("Rs. 1.2M"); the full value is always in the tooltip.
 const fitMoney = (v, cur, max = 11) => {
     const full = formatCurrency(v, cur);
-    return full.length > max ? formatCompact(v, cur) : full;
+    if (full.length <= max + 3) return full;
+    const whole = formatWhole(v, cur);
+    return whole.length <= max + 3 ? whole : formatCompact(v, cur);
 };
+// Fits an amount into its box: the full amount with commas, then without cents, and only if it
+// still doesn't fit the short form ("Rs. 1.2M"). Boxes that aren't visible yet keep the full amount.
+const fitAmount = (el) => {
+    if (!el || !el.isConnected || el.dataset.v === undefined) return;
+    const v = Number(el.dataset.v);
+    const cur = el.dataset.cur;
+    const signed = el.dataset.signed === 'true';
+    const full = signed ? formatSigned(v, cur) : formatCurrency(v, cur);
+    const whole = formatWhole(v, cur, signed);
+    // [text, font scale]: shrink the text a little before dropping cents, and only then shorten.
+    const tries = [[full, 1], [full, 0.86], [whole, 1], [whole, 0.86], [whole, 0.74], [`${signed && v > 0 ? '+' : ''}${formatCompact(v, cur)}`, 1], [`${signed && v > 0 ? '+' : ''}${formatCompact(v, cur)}`, 0.8], [`${signed && v > 0 ? '+' : ''}${formatCompact(v, cur)}`, 0.66]];
+    const box = el.clientWidth ? el : el.parentElement;
+    el.style.fontSize = '';
+    if (!box || !box.clientWidth) { el.textContent = full; return; }
+    for (const [text, scale] of tries) {
+        el.textContent = text;
+        el.style.fontSize = scale === 1 ? '' : `${scale}em`;
+        const fits = el.clientWidth ? el.scrollWidth <= el.clientWidth + 1 : el.getBoundingClientRect().width <= box.clientWidth + 1;
+        if (fits) return;
+    }
+};
+const refitAmounts = (root = document) => { root.querySelectorAll('[data-v]').forEach(fitAmount); root.querySelectorAll('.hero-amount').forEach((el) => shrinkToFit(el)); };
+const moneyAttrs = (v, cur, signed = false) => `data-v="${Number(v)}" data-cur="${escapeHtml(cur)}"${signed ? ' data-signed="true"' : ''}`;
 const setMoney = (el, v, cur, max = 11, signed = false) => {
     if (!el) return;
-    const full = signed ? formatSigned(v, cur) : formatCurrency(v, cur);
-    el.textContent = full.length > max ? `${signed && v > 0 ? '+' : ''}${formatCompact(v, cur)}` : full;
-    el.title = full;
+    el.dataset.v = String(v);
+    el.dataset.cur = cur;
+    el.dataset.signed = String(!!signed);
+    el.title = signed ? formatSigned(v, cur) : formatCurrency(v, cur);
+    fitAmount(el);
+};
+
+/* ---- Amount boxes: commas appear while typing (1000 -> 1,000) ---- */
+const NATIVE_VALUE = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+const groupDigits = (raw, allowNegative) => {
+    const s = String(raw == null ? '' : raw);
+    const neg = allowNegative && s.trim().startsWith('-');
+    let clean = s.replace(/[^\d.]/g, '');
+    const dot = clean.indexOf('.');
+    if (dot >= 0) clean = clean.slice(0, dot + 1) + clean.slice(dot + 1).replace(/\./g, '').slice(0, 2);
+    const [intPart, decPart] = clean.split('.');
+    const int = intPart.replace(/^0+(?=\d)/, '');
+    const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    return (neg ? '-' : '') + grouped + (decPart !== undefined ? `.${decPart}` : '');
+};
+const formatMoneyField = (el, keepCaret) => {
+    const raw = NATIVE_VALUE.get.call(el);
+    const out = groupDigits(raw, el.dataset.negative === 'true');
+    if (out === raw) return;
+    let caretDigits = 0;
+    if (keepCaret) caretDigits = raw.slice(0, el.selectionStart == null ? raw.length : el.selectionStart).replace(/[^\d.]/g, '').length;
+    NATIVE_VALUE.set.call(el, out);
+    if (keepCaret && document.activeElement === el) {
+        let pos = out.startsWith('-') ? 1 : 0;
+        for (let seen = 0; pos < out.length && seen < caretDigits; pos++) if (/[\d.]/.test(out[pos])) seen++;
+        try { el.setSelectionRange(pos, pos); } catch (e) { /* not supported */ }
+    }
+};
+const initMoneyInputs = () => {
+    document.querySelectorAll('input.money-input').forEach((el) => {
+        // Values set by the app (editing an entry, a quick pick) are formatted too.
+        Object.defineProperty(el, 'value', {
+            configurable: true,
+            get() { return NATIVE_VALUE.get.call(this); },
+            set(v) { NATIVE_VALUE.set.call(this, v); formatMoneyField(this, false); }
+        });
+        el.addEventListener('input', () => formatMoneyField(el, true));
+    });
 };
 
 /* ---- Categories ---- */
@@ -347,7 +416,9 @@ const normalizeTx = (t, forcedType) => {
         date: cleanDate(t.date) || toISODate(),
         note: t.note ? String(t.note).slice(0, 500) : '',
         createdAt: stamp(t.createdAt) || stamp(t.created_at),
-        recurringId: t.recurringId ? String(t.recurringId) : null
+        recurringId: t.recurringId ? String(t.recurringId) : null,
+        // Fixed expenses: rent, internet, subscriptions... Entries logged from a bill are always fixed.
+        fixed: type === 'expense' && (t.fixed === true || !!t.recurringId)
     };
 };
 
@@ -1024,6 +1095,7 @@ const renderActive = () => {
     else if (currentTab === 'plan') renderPlan();
     else if (currentTab === 'analytics') renderAnalytics();
     else if (currentTab === 'settings') renderSettings();
+    refitAmounts($(`tab-${currentTab}`) || document);
 };
 
 const goToPlan = (sub) => {
@@ -1127,6 +1199,69 @@ const debtTotals = () => {
     return { owedToYou, youOwe };
 };
 
+/* ---- Fixed expenses: worked out per month, each bill counted once per due date ---- */
+// Due dates of a bill that fall inside a month.
+const billDatesInMonth = (b, y, m) => {
+    const nd = parseDate(b.nextDate);
+    if (isNaN(nd)) return [];
+    const days = daysInMonth(y, m);
+    const anchor = b.anchorDay || nd.getDate();
+    if (b.frequency === 'weekly') {
+        const start = new Date(y, m, 1);
+        const end = new Date(y, m, days);
+        let d = new Date(nd);
+        while (d > start) d = addDays(d, -7);
+        while (d < start) d = addDays(d, 7);
+        const out = [];
+        for (; d <= end; d = addDays(d, 7)) out.push(toISODate(d));
+        return out;
+    }
+    if (b.frequency === 'yearly') return nd.getMonth() === m ? [toISODate(new Date(y, m, Math.min(anchor, days)))] : [];
+    return [toISODate(new Date(y, m, Math.min(anchor, days)))];
+};
+// Income of the month minus its fixed expenses. A bill's due dates before its next due date were
+// either logged (an entry exists) or handled before Vela, so only entries and dates from the next
+// due date on are counted: nothing is taken off twice.
+const fixedForMonth = (y = new Date().getFullYear(), m = new Date().getMonth()) => {
+    const items = [];
+    state.recurring.filter((b) => b.type === 'expense').forEach((b) => {
+        state.transactions.filter((t) => t.recurringId === b.id && t.type === 'expense' && inMonth(t, y, m)).forEach((t) => {
+            items.push({ name: t.desc, amount: toDisplay(t.amount, t.currency), date: t.date, paid: !isUpcoming(t), billId: b.id, txId: t.id });
+        });
+        billDatesInMonth(b, y, m).filter((d) => d >= b.nextDate).forEach((d) => {
+            items.push({ name: b.name, amount: toDisplay(b.amount, b.currency), date: d, paid: false, billId: b.id });
+        });
+    });
+    // One-off fixed entries, and entries whose repeating fixed expense was deleted (they still happened).
+    const billIds = new Set(state.recurring.map((b) => b.id));
+    state.transactions.filter((t) => t.type === 'expense' && t.fixed && (!t.recurringId || !billIds.has(t.recurringId)) && inMonth(t, y, m)).forEach((t) => {
+        items.push({ name: t.desc, amount: toDisplay(t.amount, t.currency), date: t.date, paid: !isUpcoming(t), txId: t.id });
+    });
+    items.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
+    const total = items.reduce((s, i) => s + i.amount, 0);
+    const income = sumDisplay(state.transactions.filter((t) => t.type === 'income' && inMonth(t, y, m)));
+    const paid = items.filter((i) => i.paid).reduce((s, i) => s + i.amount, 0);
+    return { items, total, paid, due: total - paid, income, left: income - total };
+};
+
+const fixedSummaryHtml = ({ list = false, link = false } = {}) => {
+    const cur = dcur();
+    const f = fixedForMonth();
+    const pct = f.income > 0 ? Math.min(100, (f.total / f.income) * 100) : (f.total > 0 ? 100 : 0);
+    const rows = list && f.items.length ? `<ul class="fx-items">${f.items.map((i) => `<li><span class="fx-item-name">${escapeHtml(i.name)}</span><span class="fx-item-when ${i.paid ? 'is-paid' : ''}">${i.paid ? `${icon('i-check', 'ic ic-sm')} Paid ${escapeHtml(shortDate(i.date))}` : `Due ${escapeHtml(shortDate(i.date))}`}</span><span class="amount">${escapeHtml(formatCurrency(i.amount, cur))}</span></li>`).join('')}</ul>` : '';
+    return `<article class="card fx-card glow" style="--glow:var(--pal-cyan)">
+        <div class="card-head"><h2 class="card-title">After fixed expenses</h2>${link ? '<button type="button" class="link-btn" data-goto-plan="bills">Details</button>' : `<span class="card-sub">${escapeHtml(monthName(new Date().getFullYear(), new Date().getMonth(), { month: 'long' }))}</span>`}</div>
+        <div class="fx-rows">
+            <div class="fx-row"><span>Income</span><strong class="amount text-income">${escapeHtml(formatCurrency(f.income, cur))}</strong></div>
+            <div class="fx-row"><span>Fixed expenses${f.items.length ? ` (${f.items.length})` : ''}</span><strong class="amount text-expense">${f.total > 0 ? '−' : ''}${escapeHtml(formatCurrency(f.total, cur))}</strong></div>
+            <div class="fx-row fx-total"><span>${f.left >= 0 ? 'Left for everything else' : 'Short this month'}</span><strong class="amount ${f.left < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(Math.abs(f.left), cur))}</strong></div>
+        </div>
+        ${meterHtml(pct, pct >= 100 ? 'over' : pct >= 80 ? 'warn' : null, 'Share of income going to fixed expenses')}
+        <div class="meter-row" style="margin-top:var(--sp-2)"><span>${f.income > 0 ? `${Math.round((f.total / f.income) * 100)}% of income is fixed` : 'Add this month\u2019s income to see what\u2019s left'}</span><span>${f.due > 0 ? `${escapeHtml(formatCurrency(f.due, cur))} still due` : (f.total > 0 ? 'All paid' : '')}</span></div>
+        ${rows}
+    </article>`;
+};
+
 const monthlyEquivalent = (b) => {
     const v = toDisplay(b.amount, b.currency);
     if (b.frequency === 'weekly') return (v * 52) / 12;
@@ -1161,6 +1296,7 @@ const logBill = (bill, date) => {
         note: '',
         createdAt: Date.now(),
         recurringId: bill.id,
+        fixed: bill.type === 'expense',
         accountId: bill.accountId || state.accounts[0].id,
         receipt: null
     };
@@ -1349,7 +1485,7 @@ const txRow = (t, { showDate = true } = {}) => {
     const label = showDate ? cat.name : (t.note || cat.name);
     return `<li><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
         ${catBadge(t.category, t.type)}
-        <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub">${isUpcoming(t) ? '<span class="tx-upcoming">Upcoming</span>' : ''}${t.recurringId ? icon('i-repeat') : ''}${t.receipt ? icon('i-image') : ''}<span>${escapeHtml(label)}</span>${orig}</span></span>
+        <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub">${isUpcoming(t) ? '<span class="tx-upcoming">Upcoming</span>' : ''}${t.fixed ? '<span class="tx-fixed">Fixed</span>' : ''}${t.recurringId ? icon('i-repeat') : ''}${t.receipt ? icon('i-image') : ''}<span>${escapeHtml(label)}</span>${orig}</span></span>
         <span class="tx-amt"><span class="amount ${t.type === 'income' ? 'is-income' : ''}">${escapeHtml(signed)}</span>${when}</span>
     </button></li>`;
 };
@@ -1385,6 +1521,16 @@ const breakdownHtml = (entries, total, type) => entries.map(([catId, v]) => {
 
 // Money that counts up to its new value (skipped when the user prefers less motion).
 const reduceMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+// Big numbers on one line: step the font down until the amount fits its box.
+const shrinkToFit = (el) => {
+    if (!el || !el.clientWidth) return;
+    el.style.fontSize = '';
+    let size = parseFloat(getComputedStyle(el).fontSize);
+    while (el.scrollWidth > el.clientWidth + 1 && size > 18) {
+        size -= 2;
+        el.style.fontSize = `${size}px`;
+    }
+};
 const countUp = (el, to, cur) => {
     if (!el) return;
     const from = el.dataset.v === undefined ? 0 : Number(el.dataset.v);
@@ -1393,7 +1539,7 @@ const countUp = (el, to, cur) => {
     el.dataset.cur = cur;
     cancelAnimationFrame(el._raf);
     clearTimeout(el._done);
-    if (reduceMotion() || document.hidden || !sameCur || !isFinite(from) || from === to) { el.textContent = formatCurrency(to, cur); return; }
+    if (reduceMotion() || document.hidden || !sameCur || !isFinite(from) || from === to) { el.textContent = formatCurrency(to, cur); shrinkToFit(el); return; }
     const t0 = performance.now();
     const dur = 750;
     const step = (now) => {
@@ -1401,11 +1547,12 @@ const countUp = (el, to, cur) => {
         const e = 1 - Math.pow(1 - p, 3);
         el.textContent = formatCurrency(p < 1 ? from + (to - from) * e : to, cur);
         if (p < 1) el._raf = requestAnimationFrame(step);
+        else shrinkToFit(el);
     };
     el._raf = requestAnimationFrame(step);
     // If the browser pauses animation frames, still land on the right number.
     clearTimeout(el._done);
-    el._done = setTimeout(() => { cancelAnimationFrame(el._raf); el.textContent = formatCurrency(to, cur); }, dur + 150);
+    el._done = setTimeout(() => { cancelAnimationFrame(el._raf); el.textContent = formatCurrency(to, cur); shrinkToFit(el); }, dur + 150);
 };
 
 /* =========================================================================
@@ -1475,12 +1622,14 @@ const renderDashboard = () => {
         </div>`;
     }).join('');
 
+    const fx = fixedForMonth();
+    $('dash-fixed').innerHTML = (fx.income > 0 || fx.total > 0) ? fixedSummaryHtml({ link: true }) : '';
     setMoney($('networth'), netWorth(), cur, 16);
     $('account-strip').innerHTML = state.accounts.map((a) => {
         const bal = accountBalance(a);
         return `<button type="button" class="account-chip" data-account-filter="${escapeHtml(a.id)}" aria-label="${escapeHtml(a.name)}: ${escapeHtml(formatCurrency(bal, a.currency))}. Show its activity">
             <span class="account-chip-top"><span class="account-icon">${icon(accountIcon(a))}</span><span class="account-name">${escapeHtml(a.name)}</span></span>
-            <span class="account-bal amount ${bal < 0 ? 'text-expense' : ''}" title="${escapeHtml(formatCurrency(bal, a.currency))}">${escapeHtml(fitMoney(bal, a.currency, 14))}</span>
+            <span class="account-bal amount ${bal < 0 ? 'text-expense' : ''}" title="${escapeHtml(formatCurrency(bal, a.currency))}" ${moneyAttrs(bal, a.currency)}>${escapeHtml(formatCurrency(bal, a.currency))}</span>
         </button>`;
     }).join('') + `<button type="button" class="account-chip account-add" data-action="add-account">${icon('i-plus')}<span>Add account</span></button>`;
 
@@ -1690,18 +1839,22 @@ const planBillsHtml = () => {
     const sorted = [...state.recurring].sort((a, b) => (a.nextDate > b.nextDate ? 1 : -1));
     const bills = sorted.filter((b) => b.type === 'expense');
     const inc = sorted.filter((b) => b.type === 'income');
-    if (!sorted.length) {
-        return `<div class="card">${emptyState({ iconId: 'i-repeat', title: 'No bills or regular income', text: 'Add rent, subscriptions or your salary once. Vela logs them on time and reminds you before bills are due.', actionLabel: 'Add a bill', action: 'add-bill' })}</div>`;
+    const billIds = new Set(state.recurring.map((b) => b.id));
+    const oneOffFixed = state.transactions.filter((t) => t.type === 'expense' && t.fixed && (!t.recurringId || !billIds.has(t.recurringId)) && inMonth(t, new Date().getFullYear(), new Date().getMonth()));
+    if (!sorted.length && !oneOffFixed.length) {
+        return `${fixedSummaryHtml()}<div class="card">${emptyState({ iconId: 'i-repeat', title: 'No fixed expenses yet', text: 'Add rent, internet, subscriptions and other regular payments once. Vela takes them off your income each month, logs them on time and reminds you before they are due.', actionLabel: 'Add a fixed expense', action: 'add-bill' })}</div>`;
     }
     const monthlyOut = bills.reduce((s, b) => s + monthlyEquivalent(b), 0);
     const monthlyIn = inc.reduce((s, b) => s + monthlyEquivalent(b), 0);
     return `
+    ${fixedSummaryHtml({ list: true })}
     <div class="duo">
-        <div class="card glow metric" style="--glow:var(--pal-pink)"><span class="metric-label">Bills per month</span><span class="metric-value text-expense" title="${escapeHtml(formatCurrency(monthlyOut, cur))}">${escapeHtml(fitMoney(monthlyOut, cur, 13))}</span><span class="metric-sub">${plural(bills.length, 'bill')}</span></div>
-        <div class="card glow metric" style="--glow:var(--pal-green)"><span class="metric-label">Regular income</span><span class="metric-value text-income" title="${escapeHtml(formatCurrency(monthlyIn, cur))}">${escapeHtml(fitMoney(monthlyIn, cur, 13))}</span><span class="metric-sub">per month</span></div>
+        <div class="card glow metric" style="--glow:var(--pal-pink)"><span class="metric-label">Fixed per month</span><span class="metric-value text-expense" title="${escapeHtml(formatCurrency(monthlyOut, cur))}" ${moneyAttrs(monthlyOut, cur)}>${escapeHtml(formatCurrency(monthlyOut, cur))}</span><span class="metric-sub">${plural(bills.length, 'fixed expense', 'fixed expenses')}</span></div>
+        <div class="card glow metric" style="--glow:var(--pal-green)"><span class="metric-label">Regular income</span><span class="metric-value text-income" title="${escapeHtml(formatCurrency(monthlyIn, cur))}" ${moneyAttrs(monthlyIn, cur)}>${escapeHtml(formatCurrency(monthlyIn, cur))}</span><span class="metric-sub">per month</span></div>
     </div>
-    <div class="section-head"><h2>Bills and subscriptions</h2><button type="button" class="btn btn-primary btn-xs" data-action="add-bill">${icon('i-plus', 'ic ic-sm')} Add</button></div>
-    <div class="plan-half stack">${bills.length ? `<div class="card plan-list">${bills.map(billRow).join('')}</div>` : '<p class="card-sub" style="padding:0 4px">No bills yet.</p>'}</div>
+    <div class="section-head"><h2>Fixed expenses</h2><button type="button" class="btn btn-primary btn-xs" data-action="add-bill">${icon('i-plus', 'ic ic-sm')} Add</button></div>
+    <div class="plan-half stack">${bills.length ? `<div class="card plan-list">${bills.map(billRow).join('')}</div>` : '<p class="card-sub" style="padding:0 4px">No repeating fixed expenses yet.</p>'}</div>
+    ${oneOffFixed.length ? `<div class="plan-half stack"><div class="section-head"><h2>One-off fixed this month</h2></div><div class="card"><ul class="tx-list">${sortByNewest(oneOffFixed).map((t) => txRow(t)).join('')}</ul></div></div>` : ''}
     ${inc.length ? `<div class="plan-half stack"><div class="section-head"><h2>Regular income</h2></div><div class="card plan-list">${inc.map(billRow).join('')}</div></div>` : ''}`;
 };
 
@@ -1775,8 +1928,8 @@ const planDebtsHtml = () => {
     };
     return `
     <div class="duo">
-        <div class="card glow metric" style="--glow:var(--pal-green)"><span class="metric-label">Owed to you</span><span class="metric-value text-income" title="${escapeHtml(formatCurrency(owedToYou, cur))}">${escapeHtml(fitMoney(owedToYou, cur, 13))}</span><span class="metric-sub">${plural(open.filter((d) => d.direction === 'lent').length, 'person', 'people')}</span></div>
-        <div class="card glow metric" style="--glow:var(--pal-pink)"><span class="metric-label">You owe</span><span class="metric-value text-expense" title="${escapeHtml(formatCurrency(youOwe, cur))}">${escapeHtml(fitMoney(youOwe, cur, 13))}</span><span class="metric-sub">${plural(open.filter((d) => d.direction === 'borrowed').length, 'person', 'people')}</span></div>
+        <div class="card glow metric" style="--glow:var(--pal-green)"><span class="metric-label">Owed to you</span><span class="metric-value text-income" title="${escapeHtml(formatCurrency(owedToYou, cur))}" ${moneyAttrs(owedToYou, cur)}>${escapeHtml(formatCurrency(owedToYou, cur))}</span><span class="metric-sub">${plural(open.filter((d) => d.direction === 'lent').length, 'person', 'people')}</span></div>
+        <div class="card glow metric" style="--glow:var(--pal-pink)"><span class="metric-label">You owe</span><span class="metric-value text-expense" title="${escapeHtml(formatCurrency(youOwe, cur))}" ${moneyAttrs(youOwe, cur)}>${escapeHtml(formatCurrency(youOwe, cur))}</span><span class="metric-sub">${plural(open.filter((d) => d.direction === 'borrowed').length, 'person', 'people')}</span></div>
     </div>
     <div class="section-head"><h2>Open</h2><button type="button" class="btn btn-primary btn-xs" data-action="add-debt">${icon('i-plus', 'ic ic-sm')} Add</button></div>
     ${open.length ? open.map(card).join('') : '<p class="card-sub" style="padding:0 4px">Everything is settled.</p>'}
@@ -2032,6 +2185,21 @@ const renderCategoryChart = (out, total) => {
    21. Sheet: expense / income
    ========================================================================= */
 let txType = 'expense';
+let txKind = 'variable';
+let txKindTouched = false;
+const FIXED_HINT = /\b(rent|lease|boarding|internet|wifi|broadband|electric|water bill|phone bill|reload|subscription|netflix|spotify|youtube|insurance|loan|emi|installment|instalment|tuition|school fee|class fee|gym|membership|bill)\b/i;
+const setTxKind = (kind) => {
+    const editing = $('tx-id').value ? state.transactions.find((t) => t.id === $('tx-id').value) : null;
+    const fromBill = !!(editing && editing.recurringId);
+    txKind = fromBill ? 'fixed' : kind;
+    setPressed('[data-tx-kind]', (b) => b.dataset.txKind === txKind);
+    document.querySelectorAll('[data-tx-kind]').forEach((b) => { b.disabled = fromBill; });
+    $('tx-kind-field').hidden = txType !== 'expense';
+    $('tx-repeat-row').hidden = !(txType === 'expense' && txKind === 'fixed' && !editing);
+    $('tx-kind-hint').textContent = fromBill
+        ? `Logged from your fixed expense "${(state.recurring.find((b) => b.id === editing.recurringId) || {}).name || editing.desc}". Change it in Plan > Fixed.`
+        : txKind === 'fixed' ? 'Fixed: the same every month, like rent or internet. It is taken off your income for the month.' : 'Variable: changes from month to month, like food or transport.';
+};
 
 const buildCategoryPicker = (type, selected) => {
     $('tx-category-picker').innerHTML = catsOfType(type).map((c) => `
@@ -2062,6 +2230,7 @@ const setTxType = (type, keepCategory) => {
     renderTxSuggest();
     updatePriceHint();
     updateDateHint();
+    setTxKind(txKind);
 };
 
 const updateDateHint = () => {
@@ -2076,6 +2245,9 @@ const openAddTx = (type = 'expense') => {
     $('tx-form').reset();
     txHistory = historyStats();
     txCatTouched = false;
+    txKind = 'variable';
+    txKindTouched = false;
+    setSwitch($('tx-repeat'), true);
     $('tx-id').value = '';
     $('btn-delete-tx').hidden = true;
     fillAccountSelect($('tx-account'), activityAccount !== 'all' ? activityAccount : state.config.lastAccount);
@@ -2094,6 +2266,8 @@ const openEditTx = (id) => {
     $('tx-form').reset();
     txHistory = historyStats();
     txCatTouched = true;
+    txKind = t.fixed ? 'fixed' : 'variable';
+    txKindTouched = true;
     fillAccountSelect($('tx-account'), t.accountId);
     $('tx-account-field').hidden = state.accounts.length < 2;
     setReceiptDraft(t);
@@ -2156,10 +2330,19 @@ const submitTx = async () => {
     let record;
     if (prev) {
         const idx = state.transactions.findIndex((t) => t.id === id);
-        record = { ...prev, type: txType, desc, amount, currency, category, date, note, accountId, receipt };
+        record = { ...prev, type: txType, desc, amount, currency, category, date, note, accountId, receipt, fixed: txType === 'expense' && (txKind === 'fixed' || !!prev.recurringId) };
         state.transactions[idx] = record;
     } else {
-        record = { id: generateId(), type: txType, desc, amount, currency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt };
+        record = { id: generateId(), type: txType, desc, amount, currency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txType === 'expense' && txKind === 'fixed' };
+        // A new fixed expense that repeats becomes a monthly fixed expense (a bill); this entry is its first payment.
+        if (record.fixed && isOn($('tx-repeat'))) {
+            const day = parseDate(date).getDate();
+            const bill = { id: generateId(), type: 'expense', name: desc, amount, currency, category, frequency: 'monthly', nextDate: advanceDate(date, 'monthly', day), anchorDay: day, autoLog: true, accountId, createdAt: Date.now() };
+            state.recurring.push(bill);
+            record.recurringId = bill.id;
+            queueSync('recurring', bill.id, 'upsert', false);
+            setTimeout(scheduleReminders, 0);
+        }
         state.transactions.push(record);
     }
     state.config.lastCategory[txType] = category;
@@ -2169,7 +2352,14 @@ const submitTx = async () => {
     queueSync('transaction', record.id, 'upsert');
     if (receipt && !receipt.path) uploadReceipt(record);
     closeSheet('modal-tx');
-    if (isUpcoming(record)) {
+    if (txType === 'income') {
+        const d = parseDate(date);
+        const f = fixedForMonth(d.getFullYear(), d.getMonth());
+        const c = dcur();
+        showToast(f.total > 0
+            ? `${monthName(d.getFullYear(), d.getMonth(), { month: 'long' })}: income ${formatCurrency(f.income, c)} − fixed ${formatCurrency(f.total, c)} = ${formatCurrency(f.left, c)} left${isUpcoming(record) ? ` (this income counts from ${shortDate(date)})` : ''}`
+            : (isUpcoming(record) ? `Upcoming income: ${formatCurrency(amount, currency)} on ${shortDate(date)}. It counts in your balance from that day.` : `Income added: ${formatCurrency(amount, currency)}`), 'success');
+    } else if (isUpcoming(record)) {
         showToast(`Upcoming ${txType}: ${formatCurrency(amount, currency)} on ${shortDate(date)}. It counts in your balance from that day.`, 'info');
     } else {
         showToast(id ? 'Saved' : `${txType === 'income' ? 'Income' : 'Expense'} added: ${formatCurrency(amount, currency)}`, 'success');
@@ -2352,6 +2542,7 @@ const renderTxSuggest = () => {
 };
 
 const applyPick = (p) => {
+    if (!txKindTouched) txKind = FIXED_HINT.test(p.name) || p.category === 'Rent' || p.category === 'Utilities' ? 'fixed' : 'variable';
     $('tx-desc').value = p.name;
     $('tx-amount').value = p.price;
     if (expenseCatExists(p.category)) { selectTxCategory(p.category); txCatTouched = true; }
@@ -2404,6 +2595,7 @@ const updatePriceHint = () => {
 };
 
 const onTxDescInput = () => {
+    if (txType === 'expense' && !txKindTouched && !$('tx-id').value) setTxKind(FIXED_HINT.test($('tx-desc').value) ? 'fixed' : 'variable');
     if (txType === 'expense' && !txCatTouched && !$('tx-id').value) {
         const cat = guessCategory($('tx-desc').value);
         if (cat) selectTxCategory(cat);
@@ -2539,7 +2731,8 @@ const aiFacts = () => {
         `Today: ${now.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })} (${todayISO()}), ${SLOT_NAMES[daySlot()]} time.`,
         `Display currency: ${cur}. Home currency for new entries: ${homeCurrency()}.`,
         `This month: spent ${m(s.spent)}, income ${m(s.income)}, budget ${m(s.budget)}${s.fromIncome ? ` (set from this month's income of ${m(s.plannedIncome)}${state.config.budgetSavePct ? `, keeping ${state.config.budgetSavePct}% for saving` : ''})` : ''}, ${left >= 0 ? `${m(left)} left (${m(left / daysLeftInMonth())} a day for ${daysLeftInMonth()} days)` : `${m(-left)} over budget`}. Spent on the same days last month: ${m(s.prevSpent)}.`,
-        `This month by category: ${catLine(s.byCat)}.`
+        `This month by category: ${catLine(s.byCat)}.`,
+        (() => { const f = fixedForMonth(); return `Fixed expenses this month: ${m(f.total)} (${m(f.paid)} paid, ${m(f.due)} still due): ${f.items.map((i) => `${i.name} ${m(i.amount)} ${i.paid ? 'paid' : 'due'} ${i.date}`).join('; ') || 'none'}. Income ${m(f.income)} minus fixed = ${m(f.left)} left for everything else.`; })()
     ];
     for (let i = 1; i <= 5; i++) {
         const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
@@ -4401,6 +4594,7 @@ const exportPdf = async () => {
     y += 34;
 
     const ensure = (h) => { if (y + h > 280) { doc.addPage(); y = 20; } };
+    const fx = fixedForMonth(Y, M);
     const sectionTitle = (t) => {
         ensure(14);
         doc.setTextColor(25, 25, 33);
@@ -4432,6 +4626,17 @@ const exportPdf = async () => {
         y += 6.5;
         if (!opts.header) { doc.setDrawColor(236, 236, 242); doc.line(L, y - 4, R, y - 4); }
     };
+    if (fx.income > 0 || fx.total > 0) {
+        sectionTitle('After fixed expenses');
+        tableRow(['', 'Amount'], [140, 38], { header: true, alignRight: [1] });
+        tableRow(['Income', money(fx.income)], [140, 38], { alignRight: [1] });
+        fx.items.forEach((i) => tableRow([`  ${i.name} (${i.paid ? 'paid' : 'due'} ${shortDate(i.date)})`, `-${money(i.amount)}`], [140, 38], { alignRight: [1] }));
+        tableRow(['Fixed expenses total', `-${money(fx.total)}`], [140, 38], { alignRight: [1] });
+        doc.setFont('helvetica', 'bold');
+        tableRow([fx.left >= 0 ? 'Left for everything else' : 'Short this month', money(fx.left)], [140, 38], { alignRight: [1] });
+        doc.setFont('helvetica', 'normal');
+        y += 4;
+    }
     const catTable = (title, byCat, total, type) => {
         const entries = Object.entries(byCat).sort((a, b) => b[1] - a[1]);
         if (!entries.length) return;
@@ -4637,6 +4842,9 @@ const initRipples = () => {
 
 const initEvents = () => {
     initRipples();
+    initMoneyInputs();
+    let refitTimer = null;
+    window.addEventListener('resize', () => { clearTimeout(refitTimer); refitTimer = setTimeout(() => refitAmounts(), 150); });
     document.addEventListener('click', (e) => {
         const el = e.target.closest('button, [data-tab], [data-goto]');
         if (!el) return;
@@ -4663,6 +4871,7 @@ const initEvents = () => {
         if (d.catIcon) { catEditIcon = d.catIcon; renderCategoryEditor(); return; }
         if (d.catType) { catEditType = d.catType; if (!$('category-id').value) catEditIcon = catEditType === 'income' ? 'c-OtherIncome' : 'c-Other'; renderCategoryEditor(); return; }
         if (d.txType) { setTxType(d.txType); return; }
+        if (d.txKind) { txKindTouched = true; setTxKind(d.txKind); return; }
         if (d.pick) { const p = txPicks[Number(d.pick)]; if (p) applyPick(p); return; }
         if (d.starterPick) { starterPick(d.starterPick); return; }
         if (d.budgetMode) { budgetModeDraft = d.budgetMode; syncBudgetModeUi(); return; }
@@ -4857,6 +5066,7 @@ const initEvents = () => {
     $('tx-currency').addEventListener('change', () => { renderTxSuggest(); updatePriceHint(); });
     $('tx-desc').addEventListener('input', onTxDescInput);
     $('tx-date').addEventListener('input', updateDateHint);
+    $('tx-repeat').addEventListener('click', (e) => setSwitch(e.currentTarget, !isOn(e.currentTarget)));
     $('budget-category').addEventListener('change', syncBudgetModeUi);
     $('tx-date').addEventListener('change', updateDateHint);
     $('tx-amount').addEventListener('input', updatePriceHint);

@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.12.0">
+    <link rel="stylesheet" href="style.css?v=4.13.0">
 </head>
 <body data-view="dashboard">
 
@@ -242,6 +242,8 @@
                         </div>
                     </article>
 
+                    <div id="dash-fixed"></div>
+
                     <div class="tile-row">
                         <button class="tile card glow" type="button" data-goto-plan="goals" style="--glow:var(--pal-green)">
                             <span class="tile-label"><span class="tile-icon"><svg class="ic"><use href="#i-target"/></svg></span>Saved</span>
@@ -341,7 +343,7 @@
                 <section class="view" id="tab-plan">
                     <div class="segmented segmented-full" role="group" aria-label="Plan section">
                         <button type="button" data-plan-tab="budgets" aria-pressed="true">Budgets</button>
-                        <button type="button" data-plan-tab="bills" aria-pressed="false">Bills</button>
+                        <button type="button" data-plan-tab="bills" aria-pressed="false">Fixed</button>
                         <button type="button" data-plan-tab="goals" aria-pressed="false">Goals</button>
                         <button type="button" data-plan-tab="debts" aria-pressed="false">Debts</button>
                     </div>
@@ -624,7 +626,7 @@
                     <div class="field amount-field">
                         <label class="field-label" for="tx-amount">Amount</label>
                         <div class="input-group">
-                            <input type="number" id="tx-amount" class="input" step="0.01" min="0.01" placeholder="0.00" inputmode="decimal" required>
+                            <input type="text" id="tx-amount" class="input money-input" autocomplete="off" step="0.01" min="0.01" placeholder="0.00" inputmode="decimal" required>
                             <label class="sr-only" for="tx-currency">Currency</label>
                             <select id="tx-currency" class="addon"></select>
                         </div>
@@ -642,6 +644,18 @@
                         <legend class="field-label" style="margin-bottom:6px">Category</legend>
                         <div class="cat-picker" id="tx-category-picker"></div>
                     </fieldset>
+                    <div class="field" id="tx-kind-field">
+                        <span class="field-label">Kind of expense</span>
+                        <div class="segmented segmented-full" role="group" aria-label="Kind of expense">
+                            <button type="button" data-tx-kind="variable" aria-pressed="true">Variable</button>
+                            <button type="button" data-tx-kind="fixed" aria-pressed="false">Fixed</button>
+                        </div>
+                        <span class="field-hint" id="tx-kind-hint"></span>
+                        <div class="setting-row tx-repeat-row" id="tx-repeat-row" hidden>
+                            <div class="setting-text"><span class="setting-title">Repeats every month</span><span class="setting-desc">Adds it to your fixed expenses, logs it each month and reminds you.</span></div>
+                            <button class="switch" type="button" role="switch" aria-checked="true" id="tx-repeat" aria-label="Repeats every month"></button>
+                        </div>
+                    </div>
                     <div class="field">
                         <label class="field-label" for="tx-date">Date</label>
                         <input type="date" id="tx-date" class="input" required>
@@ -708,14 +722,14 @@
                     <div class="field">
                         <label class="field-label" for="goal-target">Target</label>
                         <div class="input-group">
-                            <input type="number" id="goal-target" class="input" step="0.01" min="0.01" placeholder="0.00" inputmode="decimal" required>
+                            <input type="text" id="goal-target" class="input money-input" autocomplete="off" step="0.01" min="0.01" placeholder="0.00" inputmode="decimal" required>
                             <label class="sr-only" for="goal-currency">Currency</label>
                             <select id="goal-currency" class="addon"></select>
                         </div>
                     </div>
                     <div class="field">
                         <label class="field-label" for="goal-saved" id="goal-saved-label">Already saved</label>
-                        <input type="number" id="goal-saved" class="input" step="0.01" min="0" placeholder="0.00" inputmode="decimal">
+                        <input type="text" id="goal-saved" class="input money-input" autocomplete="off" step="0.01" min="0" placeholder="0.00" inputmode="decimal">
                         <span class="field-hint">In the goal's currency.</span>
                     </div>
                     <div class="field">
@@ -754,7 +768,7 @@
                     <div class="field amount-field">
                         <label class="field-label" for="funds-amount">Amount</label>
                         <div class="input-group">
-                            <input type="number" id="funds-amount" class="input" step="0.01" min="0.01" placeholder="0.00" inputmode="decimal" required>
+                            <input type="text" id="funds-amount" class="input money-input" autocomplete="off" step="0.01" min="0.01" placeholder="0.00" inputmode="decimal" required>
                             <label class="sr-only" for="funds-currency">Currency</label>
                             <select id="funds-currency" class="addon"></select>
                         </div>
@@ -803,7 +817,7 @@
                     <div class="field amount-field" id="budget-amount-field">
                         <label class="field-label" for="budget-amount">Monthly limit</label>
                         <div class="input-group">
-                            <input type="number" id="budget-amount" class="input" step="1" min="1" placeholder="0" inputmode="decimal" required>
+                            <input type="text" id="budget-amount" class="input money-input" autocomplete="off" step="1" min="1" placeholder="0" inputmode="decimal" required>
                             <span class="addon" id="budget-currency">USD</span>
                         </div>
                         <span class="field-hint">Vela warns you at 80% and when you go over.</span>
@@ -840,7 +854,7 @@
                     <div class="field amount-field">
                         <label class="field-label" for="bill-amount">Amount</label>
                         <div class="input-group">
-                            <input type="number" id="bill-amount" class="input" step="0.01" min="0.01" placeholder="0.00" inputmode="decimal" required>
+                            <input type="text" id="bill-amount" class="input money-input" autocomplete="off" step="0.01" min="0.01" placeholder="0.00" inputmode="decimal" required>
                             <label class="sr-only" for="bill-currency">Currency</label>
                             <select id="bill-currency" class="addon"></select>
                         </div>
@@ -903,14 +917,14 @@
                     <div class="field amount-field">
                         <label class="field-label" for="debt-amount">Amount</label>
                         <div class="input-group">
-                            <input type="number" id="debt-amount" class="input" step="0.01" min="0.01" placeholder="0.00" inputmode="decimal" required>
+                            <input type="text" id="debt-amount" class="input money-input" autocomplete="off" step="0.01" min="0.01" placeholder="0.00" inputmode="decimal" required>
                             <label class="sr-only" for="debt-currency">Currency</label>
                             <select id="debt-currency" class="addon"></select>
                         </div>
                     </div>
                     <div class="field">
                         <label class="field-label" for="debt-repaid">Already paid back</label>
-                        <input type="number" id="debt-repaid" class="input" step="0.01" min="0" placeholder="0.00" inputmode="decimal">
+                        <input type="text" id="debt-repaid" class="input money-input" autocomplete="off" step="0.01" min="0" placeholder="0.00" inputmode="decimal">
                     </div>
                     <div class="field">
                         <label class="field-label" for="debt-due">Due date <span class="faint">(optional)</span></label>
@@ -944,7 +958,7 @@
                     <div class="field amount-field">
                         <label class="field-label" for="repay-amount">Amount paid back</label>
                         <div class="input-group">
-                            <input type="number" id="repay-amount" class="input" step="0.01" min="0.01" placeholder="0.00" inputmode="decimal" required>
+                            <input type="text" id="repay-amount" class="input money-input" autocomplete="off" step="0.01" min="0.01" placeholder="0.00" inputmode="decimal" required>
                             <span class="addon" id="repay-currency">USD</span>
                         </div>
                         <span class="field-hint" id="repay-hint"></span>
@@ -1087,7 +1101,7 @@
                     </div>
                     <div class="field amount-field">
                         <label class="field-label" for="account-opening" id="account-opening-label">Balance right now</label>
-                        <input type="number" id="account-opening" class="input" step="0.01" placeholder="0.00" inputmode="decimal">
+                        <input type="text" id="account-opening" class="input money-input" data-negative="true" autocomplete="off" step="0.01" placeholder="0.00" inputmode="decimal">
                         <span class="field-hint" id="account-opening-hint">What is in this account today. Use a minus sign for a card you owe on.</span>
                     </div>
                 </div>
@@ -1124,14 +1138,14 @@
                     <div class="field amount-field">
                         <label class="field-label" for="transfer-amount">Amount</label>
                         <div class="input-group">
-                            <input type="number" id="transfer-amount" class="input" step="0.01" min="0.01" placeholder="0.00" inputmode="decimal" required>
+                            <input type="text" id="transfer-amount" class="input money-input" autocomplete="off" step="0.01" min="0.01" placeholder="0.00" inputmode="decimal" required>
                             <span class="addon" id="transfer-currency">USD</span>
                         </div>
                     </div>
                     <div class="field" id="transfer-received-field" hidden>
                         <label class="field-label" for="transfer-received">Amount received</label>
                         <div class="input-group">
-                            <input type="number" id="transfer-received" class="input" step="0.01" min="0.01" inputmode="decimal">
+                            <input type="text" id="transfer-received" class="input money-input" autocomplete="off" step="0.01" min="0.01" inputmode="decimal">
                             <span class="addon" id="transfer-received-currency">LKR</span>
                         </div>
                         <span class="field-hint">Filled in at today's rate. Change it to what actually arrived.</span>
@@ -1282,7 +1296,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.12.0"></script>
+    <script src="app.js?v=4.13.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

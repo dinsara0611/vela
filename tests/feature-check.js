@@ -165,6 +165,112 @@ export async function run() {
             || `hidden ${amountHidden}, budget ${s1.budget} vs ${expected1}, grew ${grew} (${s2.budget}), category ${hiddenForCategory}, back ${back}`;
     });
 
+    await T('Amount boxes show commas and still read as numbers', async () => {
+        g('openAddTx')('expense'); await wait(250);
+        const box = $('tx-amount');
+        box.value = '1000000';
+        const shown = box.value;
+        box.focus();
+        g('NATIVE_VALUE').set.call(box, '12345.678');
+        box.setSelectionRange(5, 5);
+        box.dispatchEvent(new Event('input'));
+        const typed = box.value;
+        const parsed = g('toNumber')(box.value, NaN);
+        await close('modal-tx');
+        g('openAccountEditor')(); await wait(250);
+        $('account-opening').value = '-25000';
+        const negative = $('account-opening').value;
+        await close('modal-account');
+        const small = ['1000', '10000', '100000', '1000000'].map((v) => g('groupDigits')(v)).join(' ');
+        return (shown === '1,000,000' && typed === '12,345.67' && parsed === 12345.67 && negative === '-25,000' && small === '1,000 10,000 100,000 1,000,000')
+            || `shown ${shown}, typed ${typed}, parsed ${parsed}, negative ${negative}, small ${small}`;
+    });
+
+    await T('Cards show full amounts with commas', () => {
+        const a = g('fitMoney')(150000, 'LKR', 12);
+        const b = g('fitMoney')(1234567.5, 'LKR', 12);
+        return (a === 'Rs. 150,000.00' && b === 'Rs. 1,234,568') || `${a} | ${b}`;
+    });
+
+    await T('Mark an expense Fixed (one-off) and see it counted once', async () => {
+        g('openAddTx')('expense'); await wait(250);
+        $('tx-amount').value = '2500';
+        $('tx-desc').value = 'Exam fee';
+        g('selectTxCategory')('Other');
+        document.querySelector('[data-tx-kind="fixed"]').click();
+        g('setSwitch')($('tx-repeat'), false);
+        await g('submitTx')(); await wait(350);
+        const t = find('Exam fee');
+        const f = g('fixedForMonth')();
+        const counted = f.items.filter((i) => i.name === 'Exam fee').length;
+        const tag = !!document.querySelector('.tx-fixed');
+        return (t.fixed === true && !t.recurringId && counted === 1 && tag) || `fixed ${t.fixed}, bill ${t.recurringId}, counted ${counted}, tag ${tag}`;
+    });
+
+    await T('Fixed expense that repeats becomes a monthly fixed expense', async () => {
+        g('openAddTx')('expense'); await wait(250);
+        $('tx-desc').value = 'Internet bill';
+        $('tx-desc').dispatchEvent(new Event('input'));
+        const suggested = document.querySelector('[data-tx-kind="fixed"]').getAttribute('aria-pressed') === 'true';
+        $('tx-amount').value = '3500';
+        g('selectTxCategory')('Utilities');
+        g('setSwitch')($('tx-repeat'), true);
+        await g('submitTx')(); await wait(350);
+        const t = find('Internet bill');
+        const bill = s().recurring.find((b) => b.id === t.recurringId);
+        const next = new Date(); next.setMonth(next.getMonth() + 1);
+        return (suggested && t.fixed && bill && bill.frequency === 'monthly' && bill.amount === 3500 && bill.nextDate.slice(0, 7) === iso(next).slice(0, 7))
+            || `suggested ${suggested}, fixed ${t.fixed}, bill ${bill && bill.nextDate}`;
+    });
+
+    await T('Income minus fixed expenses, each bill counted once per month', async () => {
+        const now = new Date();
+        const y = now.getFullYear(); const mo = now.getMonth();
+        const last = new Date(y, mo + 1, 0).getDate();
+        // A rent bill due later this month (not paid yet) and a weekly bill.
+        const rentDay = Math.min(last, now.getDate() + 1);
+        const rentDate = iso(new Date(y, mo, rentDay));
+        s().recurring.push({ id: 'rent-bill', type: 'expense', name: 'Rent', amount: 25000, currency: 'LKR', category: 'Rent', frequency: 'monthly', nextDate: rentDate, anchorDay: rentDay, autoLog: false, accountId: 'acc-cash', createdAt: 1 });
+        const weeklyStart = iso(new Date(y, mo, 1));
+        s().recurring.push({ id: 'gym-bill', type: 'expense', name: 'Gym', amount: 1000, currency: 'LKR', category: 'Health', frequency: 'weekly', nextDate: weeklyStart, anchorDay: 1, autoLog: false, accountId: 'acc-cash', createdAt: 1 });
+        const f1 = g('fixedForMonth')();
+        const rentCount = f1.items.filter((i) => i.name === 'Rent').length;
+        const gymCount = f1.items.filter((i) => i.name === 'Gym').length;
+        const gymExpected = g('billDatesInMonth')(s().recurring.find((b) => b.id === 'gym-bill'), y, mo).length;
+        // Paying the rent logs it and moves its due date to next month: it must still count once, not twice or zero.
+        g('markBillPaid')('rent-bill'); await wait(300);
+        const f2 = g('fixedForMonth')();
+        const rentAfter = f2.items.filter((i) => i.name === 'Rent');
+        // Two incomes in the month: fixed expenses are still taken off once.
+        await addTx({ type: 'income', amount: 50000, desc: 'Side job', category: 'Freelance' });
+        const f3 = g('fixedForMonth')();
+        const sameFixed = Math.abs(f3.total - f2.total) < 0.01;
+        const leftOk = Math.abs(f3.left - (f3.income - f3.total)) < 0.01;
+        // Deleting the rent bill keeps this month's payment counted.
+        s().recurring = s().recurring.filter((b) => b.id !== 'rent-bill' && b.id !== 'gym-bill');
+        const f4 = g('fixedForMonth')();
+        const rentKept = f4.items.filter((i) => i.name === 'Rent').length === 1;
+        return (rentCount === 1 && gymCount === gymExpected && gymExpected >= 4 && rentAfter.length === 1 && rentAfter[0].paid && sameFixed && leftOk && rentKept)
+            || `rent ${rentCount}, gym ${gymCount}/${gymExpected}, rent after paying ${rentAfter.length} paid ${rentAfter[0] && rentAfter[0].paid}, same fixed ${sameFixed}, left ok ${leftOk}, kept after delete ${rentKept}`;
+    });
+
+    await T('Home and Plan show income, fixed and what is left', async () => {
+        g('switchTab')('dashboard'); await wait(400);
+        const home = $('dash-fixed').innerText;
+        g('goToPlan')('bills'); await wait(400);
+        const plan = document.querySelector('#plan-content .fx-card');
+        const f = g('fixedForMonth')();
+        const want = fmt(f.left);
+        return (/Income/.test(home) && /Fixed expenses/.test(home) && home.includes(want) && plan && plan.innerText.includes(want))
+            || `home "${home.slice(0, 120)}", plan ${!!plan}, want ${want}`;
+    });
+
+    await T('PDF report includes the fixed expenses section with commas', async () => {
+        g('switchTab')('activity'); await wait(300);
+        const pdf = await captureDownload(() => g('exportPdf')());
+        return (pdf.includes('After fixed expenses') && /\d{1,3},\d{3}/.test(pdf)) || `pdf ${pdf.length} bytes, section ${pdf.includes('After fixed expenses')}`;
+    });
+
     await T('Category budget set and removed', async () => {
         g('openBudget')(); await wait(250);
         $('budget-category').value = 'Food';
@@ -197,6 +303,9 @@ export async function run() {
 
     await T('Transfer between accounts moves money', async () => {
         const boc = s().accounts.find((x) => x.name === 'BOC');
+        const cash0 = g('accountBalance')(s().accounts[0]);
+        const bank0 = g('accountBalance')(boc);
+        const spent0 = g('monthStats')().spent;
         g('openTransfer')(); await wait(250);
         $('transfer-from').value = 'acc-cash';
         $('transfer-to').value = boc.id;
@@ -207,7 +316,8 @@ export async function run() {
         const cash = g('accountBalance')(s().accounts[0]);
         const bank = g('accountBalance')(boc);
         const st = g('monthStats')();
-        return (cash === 148500 - 20000 && bank === 70000 && st.spent === 1500) || `cash ${cash}, bank ${bank}, spent ${st.spent}`;
+        // Money moves between accounts; it is not spending.
+        return (cash === cash0 - 20000 && bank === bank0 + 20000 && bank0 === 50000 && st.spent === spent0) || `cash ${cash0}->${cash}, bank ${bank0}->${bank}, spent ${spent0}->${st.spent}`;
     });
 
     await T('Transfer to a USD account needs the received amount', async () => {

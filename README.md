@@ -8,6 +8,8 @@ A phone-first expense and savings tracker that works in USD and LKR. It is a sta
 - **Accounts:** cash, bank, card and mobile wallets with live balances, and transfers between them (even across currencies).
 - **Any currency:** 17 currencies with live rates; show everything in the one you choose.
 - **Receipt photos** on any expense, kept on the phone and backed up when signed in.
+- **Fixed and variable expenses**: mark any expense Fixed (rent, internet, subscriptions) or Variable. Repeating fixed expenses live in Plan > Fixed. Each month Vela shows your income, your fixed expenses (paid and still due) and what's left, counting each fixed expense once per due date; also on Home, after saving income, for Vela AI and in the PDF report.
+- **Amounts with commas everywhere**, including while typing (100000 shows as 100,000); small cards shrink the text before shortening a number.
 - **Quick picks** with typical local prices (Sri Lanka, India, US, and scaled for other currencies), your own usual items learnt from history, ordered for the time of day (breakfast, lunch, tea, dinner), and auto-picked categories as you type.
 - **Vela AI**: a real AI money assistant (Google Gemini, free tier) behind the `vela-ai` Supabase Edge Function, so the key stays on the server. Tell it “kottu 1200 and bus 100” and it prepares entries to add; ask anything about spending, budgets and saving, in English or Sinhala. Needs sign-in. Setup: `supabase_setup_guide.md`.
 - **Price check**: a gentle warning when an amount is far above or below what you usually pay.
