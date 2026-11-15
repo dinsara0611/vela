@@ -11,7 +11,7 @@
 // Tolerate common paste mistakes: spaces, quotes, or "GEMINI_API_KEY=" typed into the value.
 const KEY = (Deno.env.get("GEMINI_API_KEY") ?? "").trim().replace(/^GEMINI_API_KEY=/, "").replace(/^["']|["']$/g, "").trim();
 const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-flash-latest";
-const CODE_VERSION = "3";
+const CODE_VERSION = "4";
 // Safe hint about which key the server holds: first 5 characters and the length, never the key.
 const KEY_HINT = KEY ? `server key starts "${KEY.slice(0, 5)}", ${KEY.length} characters, code v${CODE_VERSION}` : `no key, code v${CODE_VERSION}`;
 
@@ -92,34 +92,47 @@ ${cats}
 ${String(d.facts ?? "").slice(0, 40000)}
 </vela_data>`;
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(MODEL)}:generateContent`;
   const payload = JSON.stringify({
     systemInstruction: { parts: [{ text: `${RULES}\n\n${dataText}` }] },
     contents: messages,
     tools: [{ functionDeclarations: [ADD_ENTRY] }],
     generationConfig: { temperature: 0.4, maxOutputTokens: 4096 },
   });
-  const call = (headers: Record<string, string>) =>
-    fetch(url, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: payload });
 
-  let res: Response;
-  try {
-    res = await call({ "x-goog-api-key": KEY });
-    // If Google refuses the key in the header, try the other ways it accepts keys:
-    // as a ?key= parameter, and (for newer "AQ." auth keys) as a bearer token.
-    if (res.status === 400 || res.status === 401 || res.status === 403) {
-      const viaQuery = await fetch(`${url}?key=${encodeURIComponent(KEY)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload });
-      if (viaQuery.ok || viaQuery.status === 429) res = viaQuery;
+  // One model, trying the ways Google accepts a key: header, then ?key=, then (for "AQ." keys) bearer.
+  const askModel = async (model: string): Promise<Response> => {
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`;
+    const post = (target: string, headers: Record<string, string>) =>
+      fetch(target, { method: "POST", headers: { "Content-Type": "application/json", ...headers }, body: payload });
+    let r = await post(url, { "x-goog-api-key": KEY });
+    if (r.status === 400 || r.status === 401 || r.status === 403) {
+      const viaQuery = await post(`${url}?key=${encodeURIComponent(KEY)}`, {});
+      if (viaQuery.ok || viaQuery.status === 429 || viaQuery.status >= 500) r = viaQuery;
       else if (KEY.startsWith("AQ.")) {
-        const viaBearer = await call({ Authorization: `Bearer ${KEY}` });
-        if (viaBearer.ok || viaBearer.status === 429) res = viaBearer;
+        const viaBearer = await post(url, { Authorization: `Bearer ${KEY}` });
+        if (viaBearer.ok || viaBearer.status === 429 || viaBearer.status >= 500) r = viaBearer;
       }
+    }
+    return r;
+  };
+
+  // Free models get busy at peak times (503) or hit their limit (429): try the next free model.
+  const models = [...new Set([MODEL, "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"])];
+  let res: Response | null = null;
+  try {
+    for (const model of models) {
+      res = await askModel(model);
+      if (res.ok || !(res.status === 429 || res.status >= 500)) break;
+      console.warn(`Gemini ${model} busy (${res.status}), trying the next model`);
+      await new Promise((r) => setTimeout(r, 300));
     }
   } catch {
     return json({ error: "Couldn't reach the AI service. Try again." }, 502);
   }
+  if (!res) return json({ error: "Couldn't reach the AI service. Try again." }, 502);
 
   if (res.status === 429) return json({ error: "Vela AI is busy right now. Try again in a minute." }, 429);
+  if (res.status >= 500) return json({ error: "Google's AI is very busy right now. Try again in a minute." }, 503);
   if (!res.ok) {
     const detail = await res.text();
     console.error("Gemini error", res.status, detail.slice(0, 800));
