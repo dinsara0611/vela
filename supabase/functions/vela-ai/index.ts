@@ -102,10 +102,15 @@ ${String(d.facts ?? "").slice(0, 40000)}
   let res: Response;
   try {
     res = await call({ "x-goog-api-key": KEY });
-    // Newer AI Studio keys ("AQ." auth keys): if the key header is refused, try it as a bearer token.
-    if ((res.status === 401 || res.status === 403) && KEY.startsWith("AQ.")) {
-      const retry = await call({ Authorization: `Bearer ${KEY}` });
-      if (retry.ok || retry.status === 429) res = retry;
+    // If Google refuses the key in the header, try the other ways it accepts keys:
+    // as a ?key= parameter, and (for newer "AQ." auth keys) as a bearer token.
+    if (res.status === 400 || res.status === 401 || res.status === 403) {
+      const viaQuery = await fetch(`${url}?key=${encodeURIComponent(KEY)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: payload });
+      if (viaQuery.ok || viaQuery.status === 429) res = viaQuery;
+      else if (KEY.startsWith("AQ.")) {
+        const viaBearer = await call({ Authorization: `Bearer ${KEY}` });
+        if (viaBearer.ok || viaBearer.status === 429) res = viaBearer;
+      }
     }
   } catch {
     return json({ error: "Couldn't reach the AI service. Try again." }, 502);
