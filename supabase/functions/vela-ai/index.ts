@@ -11,6 +11,9 @@
 // Tolerate common paste mistakes: spaces, quotes, or "GEMINI_API_KEY=" typed into the value.
 const KEY = (Deno.env.get("GEMINI_API_KEY") ?? "").trim().replace(/^GEMINI_API_KEY=/, "").replace(/^["']|["']$/g, "").trim();
 const MODEL = Deno.env.get("GEMINI_MODEL") ?? "gemini-flash-latest";
+const CODE_VERSION = "3";
+// Safe hint about which key the server holds: first 5 characters and the length, never the key.
+const KEY_HINT = KEY ? `server key starts "${KEY.slice(0, 5)}", ${KEY.length} characters, code v${CODE_VERSION}` : `no key, code v${CODE_VERSION}`;
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -126,7 +129,7 @@ ${String(d.facts ?? "").slice(0, 40000)}
     const keyProblem = res.status === 401 || res.status === 403 || /API key|API_KEY|PERMISSION|credential|unauthenticated/i.test(detail);
     return json({
       error: keyProblem
-        ? `Google refused the AI key (${res.status}): ${reason || "check GEMINI_API_KEY"}`
+        ? `Google refused the AI key (${res.status}): ${reason || "check GEMINI_API_KEY"} [${KEY_HINT}]`
         : `The AI service had a problem (${res.status}): ${reason || "try again"}`,
     }, 502);
   }
