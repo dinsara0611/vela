@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   "Vela" standard edition: installs from WhatsApp, a browser or a file manager.
-  Google Play Protect's enhanced fraud protection blocks sideloaded apps that request SMS access or
-  Notification access, so this edition leaves both out. Bank transactions are added by sharing or pasting
+  Google Play Protect's enhanced fraud protection blocks sideloaded apps that request SMS access,
+  so this edition leaves it out. Bank transactions are added by sharing or pasting
   a bank SMS. The "full" edition keeps automatic detection.
 -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -11,6 +11,5 @@
     <uses-permission android:name="android.permission.RECEIVE_SMS" tools:node="remove" />
     <application>
         <receiver android:name=".SmsReceiver" tools:node="remove" />
-        <service android:name=".BankNotificationListener" tools:node="remove" />
     </application>
 </manifest>

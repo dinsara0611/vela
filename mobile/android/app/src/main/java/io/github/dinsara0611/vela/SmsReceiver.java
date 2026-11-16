@@ -32,10 +32,9 @@ public class SmsReceiver extends BroadcastReceiver {
             item.put("address", address == null ? "" : address);
             item.put("body", text);
             item.put("date", date);
-            boolean merged = SmsStore.alreadyNotified(ctx, item, info);
             if (!SmsStore.add(ctx, item)) return;
             if (SmsReaderPlugin.isForeground()) SmsReaderPlugin.emit(item);
-            else if (!merged) SmsStore.notify(ctx, item, info);
+            else SmsStore.notify(ctx, item, info);
         } catch (Exception e) {
             // Never crash on an odd message.
         }

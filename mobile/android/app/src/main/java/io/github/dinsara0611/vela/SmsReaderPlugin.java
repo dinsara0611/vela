@@ -1,7 +1,6 @@
 package io.github.dinsara0611.vela;
 
 import android.Manifest;
-import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -23,8 +22,8 @@ import java.util.Set;
 import org.json.JSONObject;
 
 /**
- * Bank connections for Vela: SMS tracking, bank-app notification tracking, their real status, and the detections
- * kept while Vela was closed. Messages and notifications never leave the phone.
+ * Bank SMS tracking for Vela: its real status from Android, and the detections kept while Vela was closed.
+ * Messages never leave the phone.
  */
 @CapacitorPlugin(
     name = "SmsReader",
@@ -39,7 +38,6 @@ public class SmsReaderPlugin extends Plugin {
         instance = this;
         foreground = true;
         if (getActivity() != null) handleIntent(getActivity().getIntent());
-        if (SmsStore.notifOn(getContext())) BankNotificationListener.start(getContext());
     }
 
     @Override
@@ -105,28 +103,10 @@ public class SmsReaderPlugin extends Plugin {
         }
     }
 
-    /** Notification access (NotificationListenerService), asked from Android itself. Not POST_NOTIFICATIONS. */
-    private boolean notificationAccessGranted() {
-        Context ctx = getContext();
-        ComponentName me = BankNotificationListener.component(ctx);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
-            try {
-                android.app.NotificationManager nm = (android.app.NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
-                if (nm != null) return nm.isNotificationListenerAccessGranted(me);
-            } catch (Exception e) {
-                // fall back below
-            }
-        }
-        String flat = Settings.Secure.getString(ctx.getContentResolver(), "enabled_notification_listeners");
-        if (flat == null) return false;
-        for (String part : flat.split(":")) if (me.flattenToString().equals(part)) return true;
-        return false;
-    }
-
     /**
      * Android's "Restricted setting" state for Vela (Android 13+). For apps not installed by an app store, Android
-     * blocks Notification access (and on some versions SMS) until the user picks App info > ⋮ > Allow restricted
-     * settings. Vela only reads this; it can't and doesn't change it.
+     * blocks the SMS permission until the user picks App info > ⋮ > Allow restricted settings.
+     * Vela only reads this; it can't and doesn't change it.
      * Returns "allowed", "restricted" or "unknown".
      */
     private String restrictedSettings() {
@@ -169,76 +149,28 @@ public class SmsReaderPlugin extends Plugin {
         return false;
     }
 
-    private boolean hasListener() {
-        try {
-            getContext().getPackageManager().getServiceInfo(BankNotificationListener.component(getContext()), 0);
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    private boolean installed(String pkg) {
-        try {
-            getContext().getPackageManager().getPackageInfo(pkg, 0);
-            return true;
-        } catch (PackageManager.NameNotFoundException e) {
-            return false;
-        }
-    }
-
-    /** Everything the Bank Connections screen shows, read from Android itself. */
+    /** Everything the Bank connections screen shows, read from Android itself. */
     @PluginMethod
     public void status(PluginCall call) {
         Context ctx = getContext();
         android.content.SharedPreferences p = SmsStore.prefs(ctx);
         JSObject ret = new JSObject();
         ret.put("sdk", Build.VERSION.SDK_INT);
-        // What this edition of Vela includes (the standard edition leaves both out so Play Protect allows it).
+        // What this edition of Vela includes (the standard edition leaves SMS out so Play Protect allows it).
         ret.put("smsAvailable", declaresSms());
-        ret.put("notifAvailable", hasListener());
+        ret.put("notifAvailable", false);
         String smsPerm = "unavailable";
         if (declaresSms()) {
             try { smsPerm = getPermissionState("sms").toString().toLowerCase(); } catch (Exception e) { smsPerm = "denied"; }
         }
         ret.put("smsPermission", smsPerm);
         ret.put("smsEnabled", p.getBoolean("enabled", false));
-        ret.put("notifEnabled", p.getBoolean("notifEnabled", false));
         ret.put("paused", SmsStore.paused(ctx));
-        boolean access = hasListener() && notificationAccessGranted();
-        boolean connected = access && BankNotificationListener.isConnected();
-        // Access granted but Android hasn't bound the listener yet (e.g. right after granting): ask it to.
-        if (access && !connected && p.getBoolean("notifEnabled", false)) BankNotificationListener.start(ctx);
-        String restricted = restrictedSettings();
-        boolean requested = p.getLong("notifRequestedAt", 0) > 0;
-        // One clear state for the screen, from what Android reports (never from "the user opened Settings").
-        String notifState = !hasListener() ? "unavailable"
-            : connected ? "connected"
-            : access ? "disconnected"
-            : "restricted".equals(restricted) ? "restricted"
-            : requested ? "not_granted" : "not_requested";
-        ret.put("notifAccess", access);
-        ret.put("listenerConnected", connected);
-        ret.put("notifState", notifState);
-        ret.put("restrictedSettings", restricted);
+        ret.put("restrictedSettings", restrictedSettings());
         ret.put("installSource", installSource());
-        ret.put("notifRequestedAt", p.getLong("notifRequestedAt", 0));
-        ret.put("listenerConnectedAt", p.getLong("listenerConnectedAt", 0));
         ret.put("postNotifications", NotificationManagerCompat.from(ctx).areNotificationsEnabled());
         ret.put("lastDetected", p.getLong("lastDetected", 0));
-        ret.put("hiddenAt", p.getLong("hiddenAt", 0));
         ret.put("pending", SmsStore.all(ctx).length());
-        Set<String> chosen = SmsStore.bankApps(ctx);
-        JSArray apps = new JSArray();
-        for (String[] a : BankSms.BANK_APPS) {
-            JSObject o = new JSObject();
-            o.put("pkg", a[0]);
-            o.put("name", a[1]);
-            o.put("installed", installed(a[0]));
-            o.put("selected", chosen.contains(a[0]));
-            apps.put(o);
-        }
-        ret.put("apps", apps);
         call.resolve(ret);
     }
 
@@ -250,35 +182,16 @@ public class SmsReaderPlugin extends Plugin {
         call.resolve();
     }
 
-    /** Bank notification tracking on or off, and which bank apps to listen to. */
-    @PluginMethod
-    public void setNotifTracking(PluginCall call) {
-        boolean on = Boolean.TRUE.equals(call.getBoolean("enabled", false));
-        Set<String> apps = new HashSet<>();
-        try {
-            JSArray arr = call.getArray("apps", new JSArray());
-            for (int i = 0; i < arr.length(); i++) if (BankSms.isBankApp(arr.getString(i))) apps.add(arr.getString(i));
-        } catch (Exception e) {
-            // keep empty
-        }
-        SmsStore.prefs(getContext()).edit().putBoolean("notifEnabled", on).putStringSet("bankApps", apps).apply();
-        if (on) BankNotificationListener.start(getContext());
-        else BankNotificationListener.stop();
-        call.resolve();
-    }
-
     @PluginMethod
     public void setPaused(PluginCall call) {
         SmsStore.prefs(getContext()).edit().putBoolean("paused", Boolean.TRUE.equals(call.getBoolean("paused", false))).apply();
         call.resolve();
     }
 
-    /** Disconnect: stops both kinds of tracking and deletes every kept detection. */
+    /** Disconnect: stops SMS tracking and deletes every kept detection. */
     @PluginMethod
     public void disconnect(PluginCall call) {
-        SmsStore.prefs(getContext()).edit().putBoolean("enabled", false).putBoolean("notifEnabled", false)
-            .putBoolean("paused", false).putStringSet("bankApps", new HashSet<>()).apply();
-        BankNotificationListener.stop();
+        SmsStore.prefs(getContext()).edit().putBoolean("enabled", false).putBoolean("paused", false).apply();
         SmsStore.clear(getContext());
         call.resolve();
     }
@@ -287,28 +200,6 @@ public class SmsReaderPlugin extends Plugin {
     @PluginMethod
     public void deleteDetections(PluginCall call) {
         SmsStore.clear(getContext());
-        call.resolve();
-    }
-
-    /** Android's Notification access screen (the user grants or removes access there). */
-    @PluginMethod
-    public void openNotificationAccess(PluginCall call) {
-        SmsStore.prefs(getContext()).edit().putLong("notifRequestedAt", System.currentTimeMillis()).apply();
-        Intent i;
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            i = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS);
-            i.putExtra(Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME, BankNotificationListener.component(getContext()).flattenToString());
-        } else {
-            i = new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS");
-        }
-        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        try {
-            getContext().startActivity(i);
-        } catch (Exception e) {
-            Intent all = new Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS");
-            all.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-            try { getContext().startActivity(all); } catch (Exception e2) { call.reject("Couldn't open Notification access"); return; }
-        }
         call.resolve();
     }
 

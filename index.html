@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.18.0">
+    <link rel="stylesheet" href="style.css?v=4.19.0">
 </head>
 <body data-view="dashboard">
 
@@ -498,7 +498,7 @@
                                 <span class="bank-logo" aria-hidden="true">CB</span>
                                 <div class="bank-id">
                                     <span class="bank-name">Commercial Bank of Ceylon</span>
-                                    <span class="bank-sub" id="bank-sub">Detects your transactions from SMS and the ComBank app</span>
+                                    <span class="bank-sub" id="bank-sub">Detects your transactions from bank SMS</span>
                                 </div>
                                 <span class="bank-pill" id="bank-overall" data-state="off">Not connected</span>
                             </div>
@@ -513,15 +513,6 @@
                                         <button class="switch" type="button" role="switch" aria-checked="false" id="switch-sms" aria-label="SMS tracking"></button>
                                     </div>
                                     <div class="bank-help" id="bank-sms-help" hidden></div>
-                                </div>
-                                <div class="bank-conn">
-                                    <div class="bank-conn-row">
-                                        <span class="row-icon"><svg class="ic"><use href="#i-bell"/></svg></span>
-                                        <div class="bank-conn-text"><span class="setting-title">Bank notification tracking</span><span class="bank-state" id="bank-ntf-state" data-state="off">Disconnected</span></div>
-                                        <button class="switch" type="button" role="switch" aria-checked="false" id="switch-ntf" aria-label="Bank notification tracking"></button>
-                                    </div>
-                                    <div class="bank-apps" id="bank-apps" role="group" aria-label="Commercial Bank apps to listen to"></div>
-                                    <div class="bank-help" id="bank-ntf-help" hidden></div>
                                 </div>
                             </div>
 
@@ -552,7 +543,7 @@
                                 <button type="button" class="btn btn-ghost btn-sm" id="btn-bank-delete">Delete detection records</button>
                                 <button type="button" class="btn btn-danger-ghost btn-sm" id="btn-bank-disconnect">Disconnect bank</button>
                             </div>
-                            <p class="bank-privacy">Messages and notifications are read on this phone only, kept encrypted until you add or ignore them, and never sent to Vela AI or anywhere else. Vela never asks for your bank password, PIN or codes.</p>
+                            <p class="bank-privacy">Bank SMS are read on this phone only, kept encrypted until you add or ignore them, and never sent to Vela AI or anywhere else. Vela never asks for your bank password, PIN or codes.</p>
                         </div>
                     </div>
 
@@ -1431,7 +1422,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.18.0"></script>
+    <script src="app.js?v=4.19.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

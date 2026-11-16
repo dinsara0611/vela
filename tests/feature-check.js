@@ -338,23 +338,23 @@ export async function run() {
             || `sheet ${sheetOpen}, cards ${cards}, match ${!!matchBtn}, pizza ${pizza && pizza.amount}/${pizza && pizza.accountId}, rent confirmed ${rent2 && rent2.pending === false}, 45k entries ${dupes}, cleared ${calls.cleared}, again ${again}`;
     });
 
-    // ---- Bank connections: SMS + bank-app notifications through one engine ----
-    // Examples follow common Sri Lankan bank alert wording; they are written for testing, not real ComBank messages.
+    // ---- Bank SMS tracking: one engine for received, inbox-read and shared/pasted SMS ----
+    // Examples follow common Sri Lankan bank alert wording with made-up numbers and names; they are written for
+    // testing, not copies of real Commercial Bank messages.
     const NOW = Date.now();
     const smsMsg = (id, body, at = NOW) => ({ id, source: 'sms', address: 'COMBANK', body, date: at });
-    const ntfMsg = (id, body, at = NOW) => ({ id, source: 'notification', address: 'combank.com.combankdigital', bank: 'Commercial Bank', body, date: at });
+    const pasted = (id, body, at = NOW) => ({ id, address: 'Pasted', shared: true, body, date: at });
     const freshEngine = () => { localStorage.removeItem('VELA_SMS'); (0, eval)('smsQueue = []'); };
     const fakeBankPlugin = (status = {}, extra = {}) => {
-        const calls = { cleared: [], listeners: {}, opened: [], disconnected: 0, deleted: 0, notif: [], paused: [] };
-        const st = { sdk: 34, smsPermission: 'granted', smsEnabled: true, notifEnabled: true, paused: false, notifAccess: true, listenerConnected: true, postNotifications: true, lastDetected: 0, hiddenAt: 0, pending: 0,
-            apps: [{ pkg: 'combank.com.combankdigital', name: 'ComBank Digital', installed: true, selected: true }, { pkg: 'net.combank.passbook', name: 'ComBank ePassbook', installed: false, selected: false }], ...status };
+        const calls = { cleared: [], listeners: {}, opened: [], disconnected: 0, deleted: 0, paused: [], requested: 0 };
+        const st = { sdk: 37, smsAvailable: true, notifAvailable: false, smsPermission: 'granted', smsEnabled: true, paused: false, restrictedSettings: 'allowed', installSource: 'other', postNotifications: true, lastDetected: 0, pending: 0, ...status };
         window.Capacitor = { isNativePlatform: () => true, Plugins: {
             SmsReader: {
-                status: async () => st, checkPermissions: async () => ({ sms: st.smsPermission }), requestPermissions: async () => ({ sms: st.smsPermission }),
-                setEnabled: async () => {}, setNotifTracking: async (o) => { calls.notif.push(o); st.notifEnabled = o.enabled; }, setPaused: async ({ paused }) => { calls.paused.push(paused); st.paused = paused; },
-                disconnect: async () => { calls.disconnected++; st.smsEnabled = false; st.notifEnabled = false; }, deleteDetections: async () => { calls.deleted++; },
-                openNotificationAccess: async () => { calls.opened.push('ntf'); }, openAppSettings: async () => { calls.opened.push('app'); },
-                getPending: async () => ({ messages: extra.pending || [] }), readInbox: async () => ({ messages: [] }),
+                status: async () => st, checkPermissions: async () => ({ sms: st.smsPermission }), requestPermissions: async () => { calls.requested++; return { sms: st.smsPermission }; },
+                setEnabled: async ({ enabled }) => { st.smsEnabled = enabled; }, setPaused: async ({ paused }) => { calls.paused.push(paused); st.paused = paused; },
+                disconnect: async () => { calls.disconnected++; st.smsEnabled = false; }, deleteDetections: async () => { calls.deleted++; },
+                openAppSettings: async () => { calls.opened.push('app'); },
+                getPending: async () => ({ messages: extra.pending || [] }), readInbox: async () => ({ messages: extra.inbox || [] }),
                 clearHandled: async ({ ids }) => { calls.cleared.push(...ids); }, addListener: (name, fn) => { calls.listeners[name] = fn; }
             },
             LocalNotifications: { checkPermissions: async () => ({ display: 'granted' }), requestPermissions: async () => ({ display: 'granted' }) }
@@ -362,55 +362,14 @@ export async function run() {
         return { calls, st };
     };
 
-    await T('Notification: debit and credit from the ComBank app are read (no SMS needed)', () => {
-        const out = P('Transaction Alert. LKR 3,450.00 spent at KEELLS SUPER using card ending 4321', 'combank.com.combankdigital', { source: 'notification', bank: 'Commercial Bank' });
-        const inn = P('Funds received. LKR 20,000.00 credited to your account from KAMAL SILVA', 'combank.com.combankdigital', { source: 'notification', bank: 'Commercial Bank' });
-        return (out && out.type === 'expense' && out.amount === 3450 && out.bank === 'Commercial Bank' && out.sources.join() === 'notification' && out.confidence === 'high'
-            && inn && inn.type === 'income' && inn.amount === 20000) || `out ${JSON.stringify(out && [out.type, out.amount, out.confidence, out.checks])}, in ${JSON.stringify(inn && [inn.type, inn.amount])}`;
-    });
-
-    await T('Notification: failed, OTP, hidden or incomplete notifications are never used', () => {
-        const n = (body) => P(body, 'combank.com.combankdigital', { source: 'notification', bank: 'Commercial Bank' });
-        const used = [
-            ['declined', 'Transaction declined. LKR 5,000.00 at ABC STORE'],
-            ['otp', 'Your OTP is 482913 for LKR 3,450.00 payment'],
-            ['hidden', 'Contents hidden'],
-            ['no amount', 'Transaction alert. Tap to view details'],
-            ['security', 'Security alert: beware of calls asking for your PIN'],
-            ['balance', 'Your available balance is LKR 45,230.50']
-        ].filter(([, b]) => n(b)).map(([k]) => k);
-        return used.length ? `used: ${used}` : true;
-    });
-
-    await T('Same purchase by SMS + notification becomes ONE transaction listing both sources', async () => {
+    await T('Same SMS received live AND read from the inbox (different ids, seconds apart) is offered once', () => {
         freshEngine();
-        g('smsTake')([smsMsg('x-sms', 'LKR 3,450.00 POS purchase at KEELLS SUPER on card ending 4321 on ' + new Date().toLocaleDateString('en-GB'), NOW)]);
-        g('smsTake')([ntfMsg('x-ntf', 'Transaction Alert. LKR 3,450.00 spent at KEELLS SUPER', NOW + 40000)]);
+        const body = 'LKR 3,450.00 POS purchase at KEELLS SUPER on card ending 4321 on ' + new Date().toLocaleDateString('en-GB');
+        g('smsTake')([smsMsg('sms-live', body, NOW)]);
+        g('smsTake')([smsMsg('sms-inbox', body, NOW + 3000)]);
         const q = g('smsQueue');
-        const one = q.length === 1 && q[0].sources.join('+') === 'sms+notification';
-        g('showSmsSheet')(); await wait(400);
-        const shows = /SMS/.test($('sms-list').innerText) && /Bank notification/.test($('sms-list').innerText);
-        const n0 = s().transactions.length;
-        document.querySelector('[data-sms-add="x-sms"]').click(); await wait(300);
-        const t = s().transactions.find((x) => x.bank && x.bank.smsId === 'x-sms');
-        return (one && shows && s().transactions.length === n0 + 1 && t.bank.sources.length === 2 && !g('isSheetOpen')('modal-sms'))
-            || `queued ${q.length} ${q[0] && q[0].sources}, popup shows sources ${shows}, added ${s().transactions.length - n0}, sources ${t && t.bank.sources}`;
-    });
-
-    await T('Notification arriving after the SMS was confirmed only adds the source, never a second entry', async () => {
-        const n0 = s().transactions.length;
-        // The same notification read again (e.g. after a restart) is never offered again.
-        const added = g('smsTake')([ntfMsg('x-ntf', 'Transaction Alert. LKR 3,450.00 spent at KEELLS SUPER', NOW + 40000)]);
-        const t = s().transactions.find((x) => x.bank && x.bank.smsId === 'x-sms');
-        // The reversed order: notification confirmed first, then the SMS.
         freshEngine();
-        g('smsTake')([ntfMsg('y-ntf', 'Payment of LKR 980.00 at UBER EATS', NOW)]);
-        g('smsAdd')('y-ntf'); await wait(200);
-        const before = s().transactions.length;
-        const again = g('smsTake')([smsMsg('y-sms', 'LKR 980.00 online transaction at UBER EATS on card ending 4321', NOW + 30000)]);
-        const y = s().transactions.find((x) => x.bank && x.bank.smsId === 'y-ntf');
-        return (added === 0 && s().transactions.length === before && again === 0 && y.bank.sources.includes('sms') && t.bank.sources.includes('notification') && before === n0 + 1)
-            || `late notification added ${added}, sms after notification added ${again}, sources ${y && y.bank.sources}`;
+        return (q.length === 1 && q[0].sourceIds.length === 2) || `queued ${q.length}`;
     });
 
     await T('Two real purchases with the same amount are NOT merged', () => {
@@ -418,50 +377,38 @@ export async function run() {
         const n = g('smsTake')([
             smsMsg('p1', 'LKR 500.00 POS purchase at CARGILLS on card ending 4321', NOW),
             smsMsg('p2', 'LKR 500.00 POS purchase at CARGILLS on card ending 4321 at 12:31', NOW + 4 * 60000),
-            ntfMsg('p3', 'LKR 500.00 spent at CARGILLS', NOW + 8 * 60 * 60000) // hours later: a third purchase
+            smsMsg('p3', 'LKR 500.00 POS purchase at CARGILLS on card ending 4321', NOW + 8 * 60 * 60000) // same text, hours later
         ]);
         return (n === 3 && g('smsQueue').length === 3) || `kept ${g('smsQueue').length}`;
     });
 
-    await T('Duplicate SMS delivery and notification updates are kept once', () => {
+    await T('Duplicates: resent SMS kept once; same reference kept once; pasted copy never added again', () => {
         freshEngine();
         const body = 'Dear Customer, Your A/C ...1234 has been debited for LKR 2,000.00 at DIALOG on 16/11/2026';
-        g('smsTake')([smsMsg('d-a', body, NOW), smsMsg('d-b', body, NOW + 2000)]); // resent SMS (new id)
-        g('smsTake')([ntfMsg('n-a', 'LKR 750.00 spent at PICKME', NOW), ntfMsg('n-a', 'LKR 750.00 spent at PICKME', NOW)]); // same notification twice
-        g('smsTake')([ntfMsg('n-a', 'LKR 750.00 spent at PICKME', NOW + 1000)]); // an update keeps its id on the phone
-        const kept = g('smsQueue').length;
+        g('smsTake')([smsMsg('d-a', body, NOW), smsMsg('d-b', body, NOW + 2000), smsMsg('d-a', body, NOW)]);
+        const resent = g('smsQueue').length;
         freshEngine();
-        // The same text twice is NOT a repeat when it is a separate alert: two notifications, or two SMS hours apart.
-        g('smsTake')([ntfMsg('two-a', 'LKR 750.00 spent at PICKME', NOW), ntfMsg('two-b', 'LKR 750.00 spent at PICKME', NOW + 5 * 60000)]);
-        g('smsTake')([smsMsg('two-c', 'LKR 450.00 POS purchase at CAFE KOPI on card ending 4321', NOW), smsMsg('two-d', 'LKR 450.00 POS purchase at CAFE KOPI on card ending 4321', NOW + 3 * 3600000)]);
-        const separate = g('smsQueue').length;
-        // A pasted copy of a message already waiting is a copy, whenever it is pasted.
-        g('smsTake')([{ id: 'paste-copy', address: 'Pasted', shared: true, body: 'LKR 450.00 POS purchase at CAFE KOPI on card ending 4321', date: NOW + 5 * 3600000 }]);
-        const afterPaste = g('smsQueue').length;
-        freshEngine();
-        return (kept === 2 && separate === 4 && afterPaste === 4) || `kept ${kept} (want 2), identical separate alerts ${separate} (want 4), after pasted copy ${afterPaste} (want 4)`;
-    });
-
-    await T('No reference: matched only within the time window and when card numbers agree', () => {
-        freshEngine();
-        g('smsTake')([smsMsg('w1', 'LKR 1,500.00 POS purchase at ODEL on card ending 4321', NOW)]);
-        g('smsTake')([ntfMsg('w2', 'LKR 1,500.00 spent at ODEL', NOW + 30 * 60000)]); // 30 min later: outside 15 min
-        const outside = g('smsQueue').length;
-        freshEngine();
-        g('smsTake')([smsMsg('c1', 'LKR 1,500.00 POS purchase at ODEL on card ending 4321', NOW)]);
-        g('smsTake')([ntfMsg('c2', 'LKR 1,500.00 spent at ODEL with card ending 9999', NOW + 60000)]); // different card
-        const otherCard = g('smsQueue').length;
-        freshEngine();
-        g('smsTake')([smsMsg('m1', 'LKR 1,500.00 POS purchase at ODEL on card ending 4321', NOW)]);
-        g('smsTake')([ntfMsg('m2', 'LKR 1,500.00 spent at FASHION BUG', NOW + 60000)]); // different shop: ask
-        const q = g('smsQueue');
-        const flagged = q.length === 2 && q[1].confidence === 'medium' && /same as another/.test(q[1].checks.join());
-        freshEngine();
-        g('smsTake')([smsMsg('r1', 'LKR 1,500.00 POS purchase at ODEL Ref:AB1234', NOW)]);
-        g('smsTake')([ntfMsg('r2', 'LKR 1,500.00 spent at ODEL Ref:AB1234', NOW + 50 * 60000)]); // same reference: same even if late
+        g('smsTake')([smsMsg('r1', 'LKR 1,500.00 POS purchase at ODEL Ref:AB1234', NOW), smsMsg('r2', 'LKR 1,500.00 debited at ODEL. Ref:AB1234', NOW + 50 * 60000)]);
         const byRef = g('smsQueue').length;
         freshEngine();
-        return (outside === 2 && otherCard === 2 && flagged && byRef === 1) || `outside window ${outside}, other card ${otherCard}, different shop flagged ${flagged}, same ref ${byRef}`;
+        const twice = 'LKR 450.00 POS purchase at CAFE KOPI on card ending 4321';
+        g('smsTake')([smsMsg('t1', twice, NOW), smsMsg('t2', twice, NOW + 3 * 3600000)]);
+        g('smsTake')([pasted('paste-copy', twice, NOW + 5 * 3600000)]);
+        const afterPaste = g('smsQueue').length;
+        freshEngine();
+        return (resent === 1 && byRef === 1 && afterPaste === 2) || `resent ${resent} (want 1), same ref ${byRef} (want 1), after pasted copy ${afterPaste} (want 2)`;
+    });
+
+    await T('Pasted copy of an SMS already added to Vela is recognised, not added twice', async () => {
+        freshEngine();
+        const body = 'LKR 980.00 online transaction at UBER EATS on card ending 4321';
+        g('smsTake')([smsMsg('y-sms', body, NOW)]);
+        g('smsAdd')('y-sms'); await wait(200);
+        const before = s().transactions.length;
+        const again = g('smsTake')([pasted('y-paste', body, NOW + 3600000)]);
+        const y = s().transactions.find((x) => x.bank && x.bank.smsId === 'y-sms');
+        freshEngine();
+        return (again === 0 && s().transactions.length === before && y.bank.sources.includes('shared')) || `pasted again added ${again}, sources ${y && y.bank.sources}`;
     });
 
     await T('Refund lowers the original purchase (not new income); partial refund lowers it by the refund', async () => {
@@ -502,9 +449,9 @@ export async function run() {
         return (st0.spent === st1.spent && bal0 === bal1) || `spent ${st0.spent}->${st1.spent}`;
     });
 
-    await T('Vela closed: kept detections load on start; tapping the notification opens the review', async () => {
+    await T('Vela closed: SMS kept on the phone load on start; tapping the notification opens the review', async () => {
         freshEngine();
-        const { calls } = fakeBankPlugin({}, { pending: [ntfMsg('closed-1', 'LKR 1,234.00 spent at CARGILLS', NOW - 600000)] });
+        const { calls } = fakeBankPlugin({}, { pending: [smsMsg('closed-1', 'LKR 1,234.00 POS purchase at CARGILLS on card ending 4321', NOW - 600000)] });
         g('initSms')();
         await calls.listeners.reviewRequested({ id: 'closed-1' }); await wait(500);
         const open = g('isSheetOpen')('modal-sms') && /1,234/.test($('sms-list').innerText);
@@ -516,39 +463,40 @@ export async function run() {
         return (open && cleared && !added) || `review open ${open}, ignored cleared ${cleared}, added ${added}`;
     });
 
-    await T('Bank connections: "Connected" only when Android access really works', async () => {
+    await T('Bank connections: "Connected" only when Android really allows SMS; no notification tracking anywhere', async () => {
         g('switchTab')('settings'); await wait(300);
-        const look = async (status) => { fakeBankPlugin(status); await g('refreshBankStatus')(); return [$('bank-sms-state').textContent, $('bank-ntf-state').textContent, $('bank-overall').textContent]; };
+        const look = async (status) => { fakeBankPlugin(status); await g('refreshBankStatus')(); return [$('bank-sms-state').textContent, $('bank-overall').textContent, $('bank-sms-help').innerText]; };
         const ok = await look({});
-        const noAccess = await look({ notifAccess: false, listenerConnected: false });
-        const stopped = await look({ listenerConnected: false });
-        const noSms = await look({ smsPermission: 'denied' });
-        const hidden = await look({ hiddenAt: NOW, lastDetected: NOW - 1000 });
-        const noApp = await look({ apps: [{ pkg: 'combank.com.combankdigital', name: 'ComBank Digital', installed: false, selected: true }] });
+        const restricted = await look({ smsPermission: 'denied', restrictedSettings: 'restricted' });
+        const btns = ['app', 'check'].every((k) => document.querySelector(`#bank-sms-help [data-bank-fix="${k}"]`));
+        const notYet = await look({ smsPermission: 'prompt', restrictedSettings: 'allowed' });
         const paused = await look({ paused: true });
-        const fixBtn = (await look({ notifAccess: false }), !!document.querySelector('[data-bank-fix="ntf"]'));
+        const off = await look({ smsEnabled: false });
+        const noNotifUi = !$('switch-ntf') && !document.querySelector('[data-bank-fix="ntf"]') && !/notification access/i.test($('bank-card').innerText);
         delete window.Capacitor;
         await g('refreshBankStatus')();
         const web = $('bank-overall').textContent;
-        const good = ok[0] === 'Connected' && ok[1] === 'Connected' && /Disconnected/.test(noAccess[1]) && /Android stopped/.test(stopped[1]) && /no SMS access/.test(noSms[0])
-            && /hidden/.test(hidden[1]) && /not found/.test(noApp[1]) && paused[2] === 'Paused' && fixBtn && web === 'Android only';
-        return good || JSON.stringify({ ok, noAccess, stopped, noSms, hidden, noApp, paused, fixBtn, web });
+        const good = ok[0] === 'Connected' && ok[1] === 'Connected' && /restricted setting/.test(restricted[0]) && /Allow restricted settings/.test(restricted[2]) && btns
+            && /Not allowed yet/.test(notYet[0]) && paused[1] === 'Paused' && off[0] === 'Off' && noNotifUi && web === 'Android only';
+        return good || JSON.stringify({ ok, restricted: restricted[0], btns, notYet: notYet[0], paused: paused[1], off: off[0], noNotifUi, web });
     });
 
-    await T('Notification access: restricted, not granted, disconnected and connected come from Android', async () => {
+    await T('Turning SMS on asks Android once; when blocked, the unlock steps mark step 1 done', async () => {
+        freshEngine();
         g('switchTab')('settings'); await wait(200);
-        const look = async (status) => { fakeBankPlugin(status); await g('refreshBankStatus')(); return [$('bank-ntf-state').textContent, $('bank-ntf-help').innerText]; };
-        const restricted = await look({ notifState: 'restricted', notifAccess: false, listenerConnected: false, restrictedSettings: 'restricted', notifRequestedAt: 0 });
-        const stepsBtns = ['ntf', 'app', 'check'].every((k) => document.querySelector(`#bank-ntf-help [data-bank-fix="${k}"]`));
-        const tried = (await look({ notifState: 'restricted', notifAccess: false, listenerConnected: false, notifRequestedAt: NOW }), document.querySelectorAll('#bank-ntf-help .bank-step.is-done').length);
-        const notGranted = await look({ notifState: 'not_granted', notifAccess: false, listenerConnected: false });
-        const disconnected = await look({ notifState: 'disconnected', notifAccess: true, listenerConnected: false });
-        const connected = await look({ notifState: 'connected', notifAccess: true, listenerConnected: true });
+        const { calls } = fakeBankPlugin({ smsEnabled: false, smsPermission: 'denied', restrictedSettings: 'restricted' });
+        await g('enableSmsTracking')(true); await wait(300);
+        if (g('isConfirmOpen')()) $('btn-confirm-cancel').click();
+        await wait(200);
+        const asked = calls.requested === 1;
+        const st = window.Capacitor.Plugins.SmsReader;
+        (await st.status()).smsEnabled = true;
+        await g('refreshBankStatus')();
+        const stepDone = document.querySelectorAll('#bank-sms-help .bank-step.is-done').length;
         delete window.Capacitor;
         await g('refreshBankStatus')();
-        const ok = /restricted setting/.test(restricted[0]) && /Allow restricted settings/.test(restricted[1]) && stepsBtns && tried === 1
-            && /Not allowed/.test(notGranted[0]) && /different from Vela/.test(notGranted[1]) && /Android stopped/.test(disconnected[0]) && connected[0] === 'Connected';
-        return ok || JSON.stringify({ restricted: restricted[0], stepsBtns, tried, notGranted: notGranted[0], disconnected: disconnected[0], connected: connected[0] });
+        freshEngine();
+        return (asked && stepDone === 1) || `asked ${calls.requested}, steps done ${stepDone}`;
     });
 
     await T('Entry status: "Not received yet" waits (not counted); switching to Received counts it; and back again', async () => {
@@ -576,41 +524,18 @@ export async function run() {
             || JSON.stringify({ labels, expLabels, waited: t.pending, shows, done: done.pending, inc: [inc0, inc1, inc2], back: back.pending });
     });
 
-    await T('SMS restricted by Android: unlock steps shown, never "Connected"', async () => {
+    await T('Standard / Play edition (no SMS permission): explains share & paste, offers no dead switches', async () => {
         g('switchTab')('settings'); await wait(200);
-        fakeBankPlugin({ smsPermission: 'denied', restrictedSettings: 'restricted' });
+        const { calls } = fakeBankPlugin({ smsAvailable: false, smsPermission: 'unavailable', smsEnabled: false });
         await g('refreshBankStatus')();
-        const st = $('bank-sms-state').textContent;
-        const help = $('bank-sms-help').innerText;
-        const btns = !!document.querySelector('#bank-sms-help [data-bank-fix="app"]') && !!document.querySelector('#bank-sms-help [data-bank-fix="check"]');
-        delete window.Capacitor;
-        await g('refreshBankStatus')();
-        return (/restricted setting/.test(st) && /Allow restricted settings/.test(help) && btns) || `state "${st}", buttons ${btns}`;
-    });
-
-    await T('Standard edition (no SMS / notification access): explains share & paste, offers no dead switches', async () => {
-        g('switchTab')('settings'); await wait(200);
-        const { calls } = fakeBankPlugin({ smsAvailable: false, notifAvailable: false, smsPermission: 'unavailable', smsEnabled: false, notifEnabled: false, notifAccess: false, listenerConnected: false });
-        await g('refreshBankStatus')();
-        const note = !$('bank-web-note').hidden && /Play Protect/.test($('bank-web-note').textContent) && /Check a bank SMS/.test($('bank-web-note').textContent);
+        const note = !$('bank-web-note').hidden && /sharing a bank SMS/.test($('bank-web-note').textContent) && /Check a bank SMS/.test($('bank-web-note').textContent);
         const hidden = $('bank-conns').hidden && $('btn-bank-disconnect').hidden && !$('btn-sms-paste').hidden;
         const pill = $('bank-overall').textContent;
-        await g('enableNotifTracking')(true); await wait(100);
-        const noConsent = !g('isConfirmOpen')() && calls.notif.length === 0;
+        await g('enableSmsTracking')(true); await wait(100);
+        const notAsked = calls.requested === 0;
         delete window.Capacitor;
         await g('refreshBankStatus')();
-        return (note && hidden && pill === 'Share & paste' && noConsent) || `note ${note}, rows hidden ${hidden}, pill ${pill}, tried to enable ${!noConsent}`;
-    });
-
-    await T('Bank connections: notification tracking asks for consent, then opens Android access', async () => {
-        const { calls } = fakeBankPlugin({ notifEnabled: false, notifAccess: false, listenerConnected: false });
-        await g('enableNotifTracking')(true); await wait(200);
-        const consent = /Notification access/.test($('confirm-message').textContent) && /Nothing is sent/.test($('confirm-message').textContent);
-        const notYet = calls.notif.length === 0;
-        await confirmOk(); await wait(200);
-        const ok = consent && notYet && calls.notif[0] && calls.notif[0].enabled && calls.notif[0].apps.join() === 'combank.com.combankdigital' && calls.opened.includes('ntf');
-        delete window.Capacitor;
-        return ok || `consent ${consent}, waited for consent ${notYet}, set ${JSON.stringify(calls.notif)}, opened ${calls.opened}`;
+        return (note && hidden && pill === 'Share & paste' && notAsked) || `note ${note}, rows hidden ${hidden}, pill ${pill}, asked ${calls.requested}`;
     });
 
     await T('Bank connections: pause, delete records and disconnect really stop and remove data', async () => {
@@ -622,17 +547,16 @@ export async function run() {
         g('deleteDetectionRecords')(); await confirmOk(); await wait(200);
         const withRef = s().transactions.filter((t) => t.bank && (t.bank.ref || t.bank.last4 || t.bank.bodyKeys)).length;
         const deleted = calls.deleted === 1 && g('smsQueue').length === 0 && withRef === 0;
-        g('disconnectBank')(); await confirmOk(); await wait(600);
+        g('disconnectBank')(); await confirmOk(); await wait(400);
         if (g('isConfirmOpen')()) $('btn-confirm-cancel').click();
         const p = JSON.parse(localStorage.getItem('VELA_SMS') || '{}');
-        const disc = calls.disconnected === 1 && !p.enabled && !p.notifEnabled;
+        const disc = calls.disconnected === 1 && !p.enabled;
         delete window.Capacitor;
         freshEngine();
         return (pausedOk && deleted && disc) || `paused ${pausedOk}, deleted ${deleted} (still with details ${withRef}), disconnected ${disc}`;
     });
 
-    await T('Activity shows the source; the entry shows reference and "Manual entry" for hand-made ones', async () => {
-        const t = s().transactions.find((x) => x.bank && x.bank.sources && x.bank.sources.length === 2);
+    await T('Activity shows the source; the entry shows "Manual entry" for hand-made ones', async () => {
         g('switchTab')('activity'); await wait(300);
         document.querySelector('[data-activity-status="bank"]').click(); await wait(200);
         const tag = [...document.querySelectorAll('.tx-bank')].map((e) => e.textContent).join('|');
@@ -640,7 +564,7 @@ export async function run() {
         g('openEditTx')(s().transactions.find((x) => !x.bank && x.type !== 'transfer').id); await wait(300);
         const manual = $('tx-source').textContent;
         await close('modal-tx');
-        return (/SMS \+ Notification/.test(tag) && /Manual entry/.test(manual) && !!t) || `tags ${tag}, manual "${manual}"`;
+        return (/SMS/.test(tag) && /Manual entry/.test(manual)) || `tags ${tag}, manual "${manual}"`;
     });
 
     await T('Waiting entries get a notification that stays until confirmed', async () => {

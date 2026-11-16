@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.18.0';
+const APP_VERSION = '4.19.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1527,7 +1527,7 @@ const txRow = (t, { showDate = true } = {}) => {
    messages. OTPs, promotions, login alerts, balance messages and failed or declined payments are never used. */
 const SMS_KEY = 'VELA_SMS';
 const smsPrefs = () => {
-    const base = { enabled: false, notifEnabled: false, apps: [], paused: false, autoAdd: false, since: 0, seen: [], accountId: null, lastDetected: 0, lastSync: 0, windowMin: 15 };
+    const base = { enabled: false, paused: false, autoAdd: false, since: 0, seen: [], accountId: null, lastDetected: 0, lastSync: 0, windowMin: 15 };
     try { return { ...base, ...(JSON.parse(localStorage.getItem(SMS_KEY) || '{}')) }; } catch (e) { return base; }
 };
 const saveSmsPrefs = (p) => { try { localStorage.setItem(SMS_KEY, JSON.stringify({ ...p, seen: p.seen.slice(-800) })); } catch (e) { /* storage blocked */ } };
@@ -2076,6 +2076,7 @@ const enableSmsTracking = async (on) => {
         try { perm = (await plugin.checkPermissions()).sms; } catch (e) { /* ignore */ }
         if (perm !== 'granted') {
             try { perm = (await plugin.requestPermissions({ permissions: ['sms'] })).sms; } catch (e) { perm = 'denied'; }
+            const q = smsPrefs(); q.smsRequestedAt = Date.now(); saveSmsPrefs(q);
         }
         if (perm !== 'granted') {
             setSwitch($('switch-sms'), false);
@@ -2144,59 +2145,26 @@ const agoLabel = (ms) => {
     if (min < 24 * 60) return `${Math.round(min / 60)} h ago`;
     return shortDate(toISODate(new Date(ms)));
 };
+// Android's "Restricted setting" for apps not installed from an app store: numbered unlock steps. Android only
+// offers "Allow restricted settings" after one blocked attempt, so step 1 is marked done once Vela has asked.
+const smsRestrictedHelp = (s) => {
+    const tried = (s.smsRequestedAt || smsPrefs().smsRequestedAt || 0) > 0;
+    const step = (n, done, html) => `<li class="bank-step${done ? ' is-done' : ''}"><span class="bank-step-n">${done ? '✓' : n}</span><span>${html}</span></li>`;
+    return `<span><strong>Android blocks SMS access for Vela because it wasn't installed from Google Play</strong> (a “Restricted setting”). Vela can't change this for you, but you can allow it once:</span>
+        <ol class="bank-steps">
+            ${step(1, tried, 'Switch <em>SMS tracking</em> on here. When Android says <em>App was denied access</em>, tap <em>Close</em>. This makes the next option appear.')}
+            ${step(2, false, 'Tap <em>Open App info</em>, then <em>⋮</em> (top right) › <em>Allow restricted settings</em>, and confirm with your PIN or fingerprint.')}
+            ${step(3, false, 'Still in App info: <em>Permissions</em> › <em>SMS</em> › <em>Allow</em>. Come back and tap <em>Check again</em>.')}
+        </ol>
+        <span class="bank-step-btns"><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="app">Open App info</button><button type="button" class="btn btn-ghost btn-sm" data-bank-fix="check">Check again</button></span>`;
+};
 // SMS: Connected only when it's on, not paused, and Android has granted the SMS permission.
-const smsConnState = (s, p) => {
+const smsConnState = (s) => {
     if (!s || !s.smsEnabled) return { state: 'off', text: 'Off' };
     if (s.paused) return { state: 'paused', text: 'Paused' };
-    if (s.smsPermission !== 'granted' && s.restrictedSettings === 'restricted') {
-        return { state: 'warn', text: 'Blocked by Android: restricted setting', help: `<span><strong>Android blocks SMS access for Vela because it wasn't installed from Google Play.</strong> Vela can't change this for you, but you can allow it (one time, also unlocks notification access):</span>
-        <ol class="bank-steps">
-            <li class="bank-step"><span class="bank-step-n">1</span><span>Switch <em>SMS tracking</em> on here once. If Android says it’s restricted, tap <em>OK</em>. This makes the next option appear.</span></li>
-            <li class="bank-step"><span class="bank-step-n">2</span><span>Tap <em>Open App info</em>, then <em>⋮</em> (top right) › <em>Allow restricted settings</em>, and confirm with your PIN or fingerprint.</span></li>
-            <li class="bank-step"><span class="bank-step-n">3</span><span>In App info › <em>Permissions</em> › <em>SMS</em>, choose <em>Allow</em>. Then come back and tap <em>Check again</em>.</span></li>
-        </ol>
-        <span class="bank-step-btns"><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="app">Open App info</button><button type="button" class="btn btn-ghost btn-sm" data-bank-fix="check">Check again</button></span>` };
-    }
+    if (s.smsPermission !== 'granted' && s.restrictedSettings === 'restricted') return { state: 'warn', text: 'Blocked by Android: restricted setting', help: smsRestrictedHelp(s) };
     if (s.smsPermission !== 'granted') {
-        return { state: 'warn', text: 'Disconnected: no SMS access', help: `<span><strong>Android hasn't allowed SMS access.</strong> Open App info › ⋮ (top right) › <em>Allow restricted settings</em>, then Permissions › SMS › Allow. If your phone doesn't offer that, share or paste bank SMS instead.</span><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="app">Open App info</button>` };
-    }
-    return { state: 'on', text: 'Connected' };
-};
-// Notifications: Connected only when Android lists Vela in Notification access AND the listener is running,
-// for at least one installed bank app the user picked.
-// Android's Restricted setting: shown as numbered steps, the first marked done once Vela has opened Notification access
-// (Android only offers "Allow restricted settings" after one blocked attempt).
-const restrictedStepsHtml = (s) => {
-    const tried = (s.notifRequestedAt || 0) > 0;
-    const step = (n, done, html) => `<li class="bank-step${done ? ' is-done' : ''}"><span class="bank-step-n">${done ? '✓' : n}</span><span>${html}</span></li>`;
-    return `<span><strong>Android blocks notification access for Vela because it wasn't installed from Google Play</strong> (a “Restricted setting”). Vela can't change this for you, but you can allow it:</span>
-        <ol class="bank-steps">
-            ${step(1, tried, 'Tap <em>Open Notification access</em>, tap <em>Vela</em> and try to switch it on. Android says it’s restricted: tap <em>OK</em>. This makes the next option appear.')}
-            ${step(2, false, 'Tap <em>Open App info</em>, then <em>⋮</em> (top right) › <em>Allow restricted settings</em>, and confirm with your PIN or fingerprint.')}
-            ${step(3, false, 'Come back, tap <em>Open Notification access</em> again, switch on <em>Vela</em> and tap <em>Allow</em>.')}
-        </ol>
-        <span class="bank-step-btns"><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="ntf">Open Notification access</button><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="app">Open App info</button><button type="button" class="btn btn-ghost btn-sm" data-bank-fix="check">Check again</button></span>`;
-};
-const ntfConnState = (s) => {
-    if (!s || !s.notifEnabled) return { state: 'off', text: 'Off' };
-    if (s.paused) return { state: 'paused', text: 'Paused' };
-    const picked = (s.apps || []).filter((a) => a.selected);
-    // Newer phones report one state straight from Android.
-    if (s.notifState === 'restricted') return { state: 'warn', text: 'Blocked by Android: restricted setting', help: restrictedStepsHtml(s) };
-    if (s.notifState === 'not_requested' || s.notifState === 'not_granted') {
-        return { state: 'warn', text: s.notifState === 'not_requested' ? 'Not allowed yet' : 'Not allowed', help: `<span><strong>Vela doesn’t have notification access.</strong> Open Notification access and switch on Vela. This is different from Vela’s own notifications.</span><span class="bank-step-btns"><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="ntf">Open Notification access</button><button type="button" class="btn btn-ghost btn-sm" data-bank-fix="check">Check again</button></span>` };
-    }
-    if (!s.notifAccess) {
-        return { state: 'warn', text: 'Disconnected: no notification access', help: `<span><strong>Notification access is off for Vela.</strong> In the list that opens, turn Vela on. If Android says it's a restricted setting: App info › ⋮ › <em>Allow restricted settings</em>, then try again.</span><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="ntf">Open Notification access</button>` };
-    }
-    if (!s.listenerConnected) {
-        return { state: 'warn', text: 'Disconnected: Android stopped it', help: `<span><strong>Access is granted but Android isn't running the listener.</strong> Turn Vela off and on in Notification access, and set Vela's battery use to Unrestricted.</span><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="ntf">Open Notification access</button>` };
-    }
-    if (!picked.some((a) => a.installed)) {
-        return { state: 'warn', text: 'Disconnected: ComBank app not found', help: '<span><strong>None of the Commercial Bank apps you picked is installed.</strong> Install ComBank Digital (or pick the app you use below), and turn on its transaction notifications.</span>' };
-    }
-    if (s.hiddenAt && s.hiddenAt > (s.lastDetected || 0)) {
-        return { state: 'warn', text: 'Connected, but content hidden', help: '<span><strong>A ComBank notification had its content hidden</strong>, so Vela couldn’t read it. In Android Settings › Notifications, allow sensitive content, and keep transaction alerts on in the ComBank app.</span>' };
+        return { state: 'warn', text: 'Not allowed yet', help: `<span><strong>Vela doesn’t have SMS access yet.</strong> Allow it in App info › <em>Permissions</em> › <em>SMS</em>. If it’s greyed out, tap <em>⋮</em> (top right) › <em>Allow restricted settings</em> first.</span><span class="bank-step-btns"><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="app">Open App info</button><button type="button" class="btn btn-ghost btn-sm" data-bank-fix="check">Check again</button></span>` };
     }
     return { state: 'on', text: 'Connected' };
 };
@@ -2204,41 +2172,29 @@ const renderBankConnections = () => {
     const plugin = smsPlugin();
     const p = smsPrefs();
     const s = bankStatus;
-    $('bank-web-note').hidden = !!plugin;
-    $('bank-conns').hidden = !plugin;
-    $('bank-options').hidden = !plugin;
-    $('btn-bank-disconnect').hidden = !plugin;
-    // The standard edition leaves SMS and notification access out (Play Protect blocks them for apps installed
-    // from WhatsApp or a browser): say so instead of offering switches that can't work.
+    // The standard and Google Play editions leave SMS out (Play Protect blocks it for apps installed from WhatsApp
+    // or a browser, and Google Play only allows it after approval): explain sharing instead of a switch that can't work.
     const noSms = !!(s && s.smsAvailable === false);
-    const noNtf = !!(s && s.notifAvailable === false);
-    const notHere = { state: 'off', text: 'Not in this version' };
-    // Google Play edition: notifications yes, SMS no (until Google approves SMS access).
-    const sms = noSms ? (noNtf ? notHere : { ...notHere, help: '<span><strong>This version doesn’t read SMS.</strong> Vela detects ComBank transactions from the ComBank app’s notifications instead. You can still share a bank SMS to Vela, or tap <em>Check a bank SMS</em>.</span>' }) : smsConnState(s, p);
-    const ntf = noNtf ? notHere : ntfConnState(s);
-    $('switch-sms').disabled = noSms;
-    $('switch-ntf').disabled = noNtf;
-    if (plugin && noSms && noNtf) {
-        $('bank-web-note').hidden = false;
-        $('bank-web-note').innerHTML = 'This is the standard Vela, which installs from WhatsApp or a browser. Google Play Protect blocks apps that read SMS or notifications when they are installed that way, so here you add ComBank transactions by <strong>sharing a bank SMS to Vela</strong> or tapping <strong>Check a bank SMS</strong>. Automatic detection needs <strong>Vela Full</strong>, installed from a computer.';
-    } else if (plugin) $('bank-web-note').hidden = true;
-    if (plugin && noSms && noNtf) { $('bank-conns').hidden = true; $('bank-options').hidden = true; $('btn-bank-disconnect').hidden = true; }
+    const shareOnly = !plugin || noSms;
+    $('bank-web-note').hidden = !shareOnly;
+    $('bank-web-note').innerHTML = !plugin
+        ? 'Automatic SMS detection works in the Vela Android app. Here you can paste a bank SMS to add it.'
+        : 'This version of Vela doesn’t read SMS by itself (Google blocks SMS access for apps installed from WhatsApp, a browser or Google Play without approval). Add ComBank transactions by <strong>sharing a bank SMS to Vela</strong> from your Messages app, or tap <strong>Check a bank SMS</strong>. Automatic detection needs <strong>Vela Full</strong>.';
+    $('bank-conns').hidden = shareOnly;
+    $('bank-options').hidden = shareOnly;
+    $('btn-bank-disconnect').hidden = shareOnly;
+    const sms = noSms ? { state: 'off', text: 'Not in this version' } : smsConnState(s);
     setSwitch($('switch-sms'), !noSms && !!(s ? s.smsEnabled : p.enabled));
-    setSwitch($('switch-ntf'), !noNtf && !!(s ? s.notifEnabled : p.notifEnabled));
     setSwitch($('switch-bank-pause'), !!(s ? s.paused : p.paused));
     setSwitch($('switch-sms-auto'), p.autoAdd);
-    [['bank-sms-state', 'bank-sms-help', sms], ['bank-ntf-state', 'bank-ntf-help', ntf]].forEach(([st, help, c]) => {
-        $(st).dataset.state = c.state;
-        $(st).textContent = c.text;
-        $(help).hidden = !c.help;
-        $(help).innerHTML = c.help || '';
-    });
-    const on = [sms, ntf].filter((c) => c.state === 'on').length;
-    const overall = !plugin ? { state: 'off', text: 'Android only' } : noSms && noNtf ? { state: 'off', text: 'Share & paste' } : (s && s.paused) ? { state: 'paused', text: 'Paused' }
-        : on ? { state: 'on', text: on === 2 ? 'Connected' : 'Partly connected' } : [sms, ntf].some((c) => c.state === 'warn') ? { state: 'warn', text: 'Needs attention' } : { state: 'off', text: 'Not connected' };
+    $('bank-sms-state').dataset.state = sms.state;
+    $('bank-sms-state').textContent = sms.text;
+    $('bank-sms-help').hidden = !sms.help;
+    $('bank-sms-help').innerHTML = sms.help || '';
+    const overall = !plugin ? { state: 'off', text: 'Android only' } : noSms ? { state: 'off', text: 'Share & paste' } : (s && s.paused) ? { state: 'paused', text: 'Paused' }
+        : sms.state === 'on' ? { state: 'on', text: 'Connected' } : sms.state === 'warn' ? { state: 'warn', text: 'Needs attention' } : { state: 'off', text: 'Not connected' };
     $('bank-overall').dataset.state = overall.state;
     $('bank-overall').textContent = overall.text;
-    $('bank-apps').innerHTML = s && s.notifEnabled ? (s.apps || []).map((a) => `<button type="button" class="chip" data-bank-app="${escapeHtml(a.pkg)}" aria-pressed="${a.selected}" ${a.installed ? '' : 'disabled'}>${escapeHtml(a.name)}${a.installed ? '' : ' · not installed'}</button>`).join('') : '';
     const last = Math.max(p.lastDetected || 0, (s && s.lastDetected) || 0);
     $('bank-last').textContent = last ? agoLabel(last) : 'Nothing yet';
     $('bank-sync').textContent = p.lastSync ? agoLabel(p.lastSync) : 'Not yet';
@@ -2246,11 +2202,11 @@ const renderBankConnections = () => {
     $('bank-pending').textContent = String(waiting);
     $('btn-bank-review').hidden = !waiting;
     $('btn-bank-review').textContent = `Review ${plural(waiting, 'transaction')}`;
-    $('sms-auto-row').hidden = !plugin;
-    const warnNotif = s && (s.smsEnabled || s.notifEnabled) && !s.postNotifications;
-    $('bank-sub').textContent = warnNotif ? 'Vela’s notifications are off: you’ll see detections when you open Vela.' : 'Detects your transactions from SMS and the ComBank app';
+    $('sms-auto-row').hidden = shareOnly;
+    const warnNotif = s && s.smsEnabled && !s.postNotifications;
+    $('bank-sub').textContent = warnNotif ? 'Vela’s notifications are off: you’ll see new transactions when you open Vela.' : 'Detects your transactions from bank SMS';
 };
-// Asks the phone for the real state (permissions, notification access, listener running) and redraws.
+// Asks the phone for the real state (SMS permission, restricted setting) and redraws.
 const refreshBankStatus = async () => {
     const plugin = smsPlugin();
     if (plugin && plugin.status) {
@@ -2258,55 +2214,6 @@ const refreshBankStatus = async () => {
     } else bankStatus = null;
     if ($('bank-card')) renderBankConnections();
     return bankStatus;
-};
-const enableNotifTracking = async (on) => {
-    const plugin = smsPlugin();
-    if (!plugin) return;
-    const s = (await refreshBankStatus()) || {};
-    if (!on) {
-        await plugin.setNotifTracking({ enabled: false, apps: [] });
-        const p = smsPrefs(); p.notifEnabled = false; saveSmsPrefs(p);
-        await refreshBankStatus();
-        if (s.notifAccess) {
-            showConfirm({ title: 'Bank notification tracking is off', message: 'Vela has stopped reading bank notifications. To remove the access completely, also turn Vela off in Android’s Notification access.', confirmLabel: 'Open Notification access', cancelLabel: 'Done', danger: false, onConfirm: () => plugin.openNotificationAccess().catch(() => {}) });
-        } else showToast('Bank notification tracking is off', 'success');
-        return;
-    }
-    if (s.notifAvailable === false) { setSwitch($('switch-ntf'), false); showToast('This version can’t read notifications. Share or paste a bank SMS instead.', 'info'); return; }
-    const installed = (s.apps || []).filter((a) => a.installed);
-    if (!installed.length) {
-        setSwitch($('switch-ntf'), false);
-        showConfirm({ title: 'ComBank app not found', message: 'Vela listens to notifications from the Commercial Bank app (ComBank Digital, ePassbook, Q+ or FLASH). Install one, sign in and turn on its transaction alerts, then come back here.', confirmLabel: 'OK', cancelLabel: 'Close', danger: false, onConfirm: () => {} });
-        return;
-    }
-    setSwitch($('switch-ntf'), false);
-    showConfirm({
-        title: 'Allow Vela to read ComBank notifications?',
-        message: `Android will ask you to give Vela “Notification access”. Android lets an app with this access see the notifications on your phone, so please only allow it if you’re comfortable.\n\nWhat Vela does with it: it reads notifications from ${installed.map((a) => a.name).join(', ')} only, ignores everything else (and any codes, OTPs or login alerts), keeps only what’s needed for a transaction, encrypted on this phone, and asks you before adding anything. Nothing is sent anywhere. You can turn it off any time here or in Android.\n\nNext: in the screen that opens, turn on Vela.`,
-        confirmLabel: 'I agree, open settings',
-        cancelLabel: 'Not now',
-        danger: false,
-        onConfirm: async () => {
-            const apps = installed.map((a) => a.pkg);
-            await plugin.setNotifTracking({ enabled: true, apps });
-            const p = smsPrefs(); p.notifEnabled = true; p.apps = apps; p.notifConsentAt = Date.now(); saveSmsPrefs(p);
-            const ln = nativePlugin('LocalNotifications');
-            if (ln) await ensureNotifPermission(ln, true);
-            await refreshBankStatus();
-            if (!s.notifAccess) plugin.openNotificationAccess().catch(() => showToast('Open Android Settings › Notifications › Notification access, and turn on Vela.', 'info'));
-            else showToast('Bank notification tracking is on', 'success');
-        }
-    });
-};
-const toggleBankApp = async (pkg) => {
-    const plugin = smsPlugin();
-    const s = bankStatus;
-    if (!plugin || !s) return;
-    const apps = (s.apps || []).filter((a) => (a.pkg === pkg ? !a.selected : a.selected) && a.installed).map((a) => a.pkg);
-    if (!apps.length) { showToast('Keep at least one bank app, or turn notification tracking off.', 'info'); return; }
-    await plugin.setNotifTracking({ enabled: true, apps });
-    const p = smsPrefs(); p.apps = apps; saveSmsPrefs(p);
-    refreshBankStatus();
 };
 const setBankPaused = async (paused) => {
     const plugin = smsPlugin();
@@ -2340,21 +2247,19 @@ const deleteDetectionRecords = () => showConfirm({
 });
 const disconnectBank = () => showConfirm({
     title: 'Disconnect Commercial Bank?',
-    message: 'Vela stops reading bank SMS and notifications and deletes everything waiting for review. Transactions you already added stay. To remove Android access completely, also turn Vela off in Notification access and SMS permissions.',
+    message: 'Vela stops reading bank SMS and deletes everything waiting for review. Transactions you already added stay. To remove the permission too, open App info › Permissions › SMS › Don’t allow.',
     confirmLabel: 'Disconnect',
     danger: true,
     onConfirm: async () => {
         const plugin = smsPlugin();
-        const had = bankStatus || {};
         if (plugin) { try { await plugin.disconnect(); } catch (e) { /* ignore */ } }
         const p = smsPrefs();
-        Object.assign(p, { enabled: false, notifEnabled: false, paused: false, autoAdd: false, apps: [] });
+        Object.assign(p, { enabled: false, paused: false, autoAdd: false });
         saveSmsPrefs(p);
         smsQueue = [];
         closeSheet('modal-sms');
         await refreshBankStatus();
         showToast('Commercial Bank disconnected', 'success');
-        if (plugin && had.notifAccess) setTimeout(() => showConfirm({ title: 'Remove notification access too?', message: 'Vela no longer reads notifications. Android still lists Vela in Notification access until you turn it off there.', confirmLabel: 'Open Notification access', cancelLabel: 'Later', danger: false, onConfirm: () => plugin.openNotificationAccess().catch(() => {}) }), 400);
     }
 });
 
@@ -5936,15 +5841,19 @@ const initEvents = () => {
         if (d.smsMatch) { smsConfirmMatch(d.smsMatch, el); return; }
         if (d.smsEdit) { smsEdit(d.smsEdit); return; }
         if (d.smsMove) { smsEdit(d.smsMove, true); return; }
-        if (d.bankApp) { toggleBankApp(d.bankApp); return; }
         if (d.bankFix) {
             const pl = smsPlugin();
             if (!pl) return;
             if (d.bankFix === 'check') {
-                refreshBankStatus().then((s) => showToast(s && s.listenerConnected ? 'Bank notification tracking is connected' : s && s.notifAccess ? 'Access is allowed; Android is starting the listener' : 'Notification access is still off', s && s.listenerConnected ? 'success' : 'info'));
+                refreshBankStatus().then((s) => {
+                    const ok = s && s.smsPermission === 'granted';
+                    showToast(ok ? 'SMS access is allowed' : 'SMS access is still off', ok ? 'success' : 'info');
+                    // Allowed in App info while tracking was on: start reading bank SMS now.
+                    if (ok && s.smsEnabled) scanSms();
+                });
                 return;
             }
-            (d.bankFix === 'ntf' ? pl.openNotificationAccess() : pl.openAppSettings()).catch(() => {});
+            pl.openAppSettings().catch(() => {});
             return;
         }
         if (d.activityStatus) { activityStatus = d.activityStatus; renderActivity(); return; }
@@ -6179,7 +6088,6 @@ const initEvents = () => {
         showToast(on ? 'Confident bank transactions will be added automatically. Anything unclear still asks you.' : 'Vela will ask before adding every bank transaction.', 'success');
     });
     $('btn-sms-paste').addEventListener('click', openSmsPaste);
-    $('switch-ntf').addEventListener('click', (e) => enableNotifTracking(!isOn(e.currentTarget)));
     $('switch-bank-pause').addEventListener('click', (e) => setBankPaused(!isOn(e.currentTarget)));
     $('btn-bank-delete').addEventListener('click', deleteDetectionRecords);
     $('btn-bank-disconnect').addEventListener('click', disconnectBank);

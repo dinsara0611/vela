@@ -49,17 +49,6 @@
             </intent-filter>
         </receiver>
 
-        <!-- Bank notification tracking: Android only runs this after the user grants Notification access to Vela. -->
-        <service
-            android:name=".BankNotificationListener"
-            android:label="Vela bank notification tracking"
-            android:exported="true"
-            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
-            <intent-filter>
-                <action android:name="android.service.notification.NotificationListenerService" />
-            </intent-filter>
-        </service>
-
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
@@ -77,12 +66,4 @@
     <uses-permission android:name="android.permission.RECEIVE_SMS" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
-
-    <!-- To see whether the Commercial Bank apps are installed (Android 11+ package visibility). -->
-    <queries>
-        <package android:name="combank.com.combankdigital" />
-        <package android:name="net.combank.passbook" />
-        <package android:name="com.euronetindia.combankqpluscustomer" />
-        <package android:name="com.kashmi.bank" />
-    </queries>
 </manifest>

@@ -25,7 +25,7 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * Bank detections (SMS or bank-app notification) waiting for the user to add or ignore them in Vela.
+ * Bank SMS detections waiting for the user to add or ignore them in Vela.
  * Kept encrypted with a key in the Android Keystore, only until handled, at most 50, and deleted on Disconnect.
  */
 final class SmsStore {
@@ -37,7 +37,6 @@ final class SmsStore {
     private static final String HANDLED = "handled";
     private static final String KEY_ALIAS = "vela_bank_store";
     private static final int MAX = 50;
-    static final long SAME_WINDOW_MS = 15 * 60 * 1000L;
 
     static SharedPreferences prefs(Context ctx) {
         return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -45,12 +44,7 @@ final class SmsStore {
 
     // ---- settings shared by the receiver, the listener and the plugin ----
     static boolean smsOn(Context ctx) { return prefs(ctx).getBoolean("enabled", false) && !paused(ctx); }
-    static boolean notifOn(Context ctx) { return prefs(ctx).getBoolean("notifEnabled", false) && !paused(ctx); }
     static boolean paused(Context ctx) { return prefs(ctx).getBoolean("paused", false); }
-
-    static Set<String> bankApps(Context ctx) {
-        return new HashSet<>(prefs(ctx).getStringSet("bankApps", new HashSet<>()));
-    }
 
     // ---- encrypted storage ----
     private static SecretKey key() throws Exception {
@@ -146,21 +140,6 @@ final class SmsStore {
         return true;
     }
 
-    /** True when another source already reported what looks like this same transaction (so don't notify twice). */
-    static synchronized boolean alreadyNotified(Context ctx, JSONObject item, BankSms.Info info) {
-        JSONArray list = all(ctx);
-        for (int i = 0; i < list.length(); i++) {
-            JSONObject o = list.optJSONObject(i);
-            if (o == null || o.optString("id").equals(item.optString("id"))) continue;
-            String src = o.optString("source", "sms");
-            BankSms.Info other = "notification".equals(src)
-                ? BankSms.parse(null, o.optString("body"), o.optString("bank", null))
-                : BankSms.parse(o.optString("address"), o.optString("body"));
-            if (BankSms.likelySame(info, item.optString("source", "sms"), item.optLong("date"), other, src, o.optLong("date"), SAME_WINDOW_MS)) return true;
-        }
-        return false;
-    }
-
     /** Added or ignored in Vela: forget them, remember they're done, remove their notifications. */
     static synchronized void remove(Context ctx, Set<String> ids) {
         JSONArray list = all(ctx);
@@ -187,7 +166,7 @@ final class SmsStore {
             JSONObject o = list.optJSONObject(i);
             if (o != null) nm.cancel(notificationId(o.optString("id")));
         }
-        prefs(ctx).edit().remove(KEY).remove("pending").remove(HANDLED).remove("lastDetected").remove("hiddenAt").apply();
+        prefs(ctx).edit().remove(KEY).remove("pending").remove(HANDLED).remove("lastDetected").apply();
     }
 
     static int notificationId(String id) {
