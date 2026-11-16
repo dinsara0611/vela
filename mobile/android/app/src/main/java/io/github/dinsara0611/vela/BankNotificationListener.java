@@ -76,14 +76,17 @@ public class BankNotificationListener extends NotificationListenerService {
         String big = x == null ? "" : str(x.getCharSequence(Notification.EXTRA_BIG_TEXT));
         String text = big.isEmpty() ? (x == null ? "" : str(x.getCharSequence(Notification.EXTRA_TEXT))) : big;
         CharSequence[] lines = x == null ? null : x.getCharSequenceArray(Notification.EXTRA_TEXT_LINES);
+        // Identity of this notification: its key plus when it was first created. An update of the same notification
+        // keeps both (so it isn't kept twice); a new alert in the same slot, or a second identical alert, has a new time.
+        String slot = sbn.getKey() + "|" + n.when;
         if (lines != null && lines.length > 0) {
-            for (CharSequence line : lines) take(pkg, title, str(line), sbn.getPostTime());
+            for (CharSequence line : lines) take(pkg, slot, title, str(line), sbn.getPostTime());
             return;
         }
-        take(pkg, title, text, sbn.getPostTime());
+        take(pkg, slot, title, text, sbn.getPostTime());
     }
 
-    private void take(String pkg, String title, String text, long postTime) {
+    private void take(String pkg, String slot, String title, String text, long postTime) {
         String body = (title.isEmpty() ? "" : title + ". ") + text;
         if (BankSms.looksHidden(text)) {
             // The bank app or Android hid the content: note it so Vela can explain, keep nothing else.
@@ -94,8 +97,8 @@ public class BankNotificationListener extends NotificationListenerService {
         if (info == null) return; // not a transaction (or an OTP, alert, promotion...): never stored
         try {
             JSONObject item = new JSONObject();
-            // Same text from the same app = the same notification (updates and re-posts don't duplicate).
-            item.put("id", "ntf-" + Math.abs((pkg + "|" + body.replaceAll("\\s+", " ").trim()).hashCode()));
+            // Same notification and same text = kept once (updates and re-reads after a restart don't duplicate).
+            item.put("id", "ntf-" + Math.abs((pkg + "|" + slot + "|" + body.replaceAll("\\s+", " ").trim()).hashCode()));
             item.put("source", "notification");
             item.put("address", pkg);
             item.put("bank", "Commercial Bank");

@@ -66,7 +66,7 @@ final class SmsStore {
     }
 
     private static String seal(String plain) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null; // no Keystore AES: don't keep anything
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null; // no Keystore AES before Android 6
         try {
             Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
             c.init(Cipher.ENCRYPT_MODE, key());
@@ -91,19 +91,35 @@ final class SmsStore {
     }
 
     static synchronized JSONArray all(Context ctx) {
-        prefs(ctx).edit().remove("pending").apply(); // older versions kept this unencrypted
+        SharedPreferences p = prefs(ctx);
+        // Vela 4.15 kept waiting messages unencrypted: move them into the encrypted store once.
+        String old = p.getString("pending", null);
+        if (old != null) {
+            p.edit().remove("pending").apply();
+            try {
+                JSONArray list = new JSONArray(old);
+                if (list.length() > 0 && p.getString(KEY, null) == null) save(ctx, list);
+            } catch (Exception e) {
+                // unreadable: drop it
+            }
+        }
         try {
-            String plain = open(prefs(ctx).getString(KEY, null));
+            String stored = p.getString(KEY, null);
+            String plain = stored == null ? null : stored.startsWith(PLAIN) ? stored.substring(PLAIN.length()) : open(stored);
             return new JSONArray(plain == null ? "[]" : plain);
         } catch (Exception e) {
             return new JSONArray();
         }
     }
 
+    /** Marks the rare phone whose Keystore can't encrypt: still kept, in Vela's private app storage. */
+    private static final String PLAIN = "plain:";
+
     private static void save(Context ctx, JSONArray list) {
+        if (list.length() == 0) { prefs(ctx).edit().remove(KEY).apply(); return; }
         String sealed = seal(list.toString());
-        if (sealed == null) prefs(ctx).edit().remove(KEY).apply();
-        else prefs(ctx).edit().putString(KEY, sealed).apply();
+        // If this phone's Keystore fails, keep the detection rather than silently losing it (private storage only).
+        prefs(ctx).edit().putString(KEY, sealed != null ? sealed : PLAIN + list.toString()).apply();
     }
 
     private static Set<String> handled(Context ctx) {

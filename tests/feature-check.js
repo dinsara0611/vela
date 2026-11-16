@@ -399,7 +399,8 @@ export async function run() {
 
     await T('Notification arriving after the SMS was confirmed only adds the source, never a second entry', async () => {
         const n0 = s().transactions.length;
-        const added = g('smsTake')([ntfMsg('x-ntf-late', 'Transaction Alert. LKR 3,450.00 spent at KEELLS SUPER', NOW + 120000)]);
+        // The same notification read again (e.g. after a restart) is never offered again.
+        const added = g('smsTake')([ntfMsg('x-ntf', 'Transaction Alert. LKR 3,450.00 spent at KEELLS SUPER', NOW + 40000)]);
         const t = s().transactions.find((x) => x.bank && x.bank.smsId === 'x-sms');
         // The reversed order: notification confirmed first, then the SMS.
         freshEngine();
@@ -427,8 +428,18 @@ export async function run() {
         const body = 'Dear Customer, Your A/C ...1234 has been debited for LKR 2,000.00 at DIALOG on 16/11/2026';
         g('smsTake')([smsMsg('d-a', body, NOW), smsMsg('d-b', body, NOW + 2000)]); // resent SMS (new id)
         g('smsTake')([ntfMsg('n-a', 'LKR 750.00 spent at PICKME', NOW), ntfMsg('n-a', 'LKR 750.00 spent at PICKME', NOW)]); // same notification twice
-        g('smsTake')([ntfMsg('n-b', 'LKR 750.00 spent at PICKME', NOW + 1000)]); // updated notification, same text
-        return (g('smsQueue').length === 2) || `queue ${g('smsQueue').map((i) => i.amount)}`;
+        g('smsTake')([ntfMsg('n-a', 'LKR 750.00 spent at PICKME', NOW + 1000)]); // an update keeps its id on the phone
+        const kept = g('smsQueue').length;
+        freshEngine();
+        // The same text twice is NOT a repeat when it is a separate alert: two notifications, or two SMS hours apart.
+        g('smsTake')([ntfMsg('two-a', 'LKR 750.00 spent at PICKME', NOW), ntfMsg('two-b', 'LKR 750.00 spent at PICKME', NOW + 5 * 60000)]);
+        g('smsTake')([smsMsg('two-c', 'LKR 450.00 POS purchase at CAFE KOPI on card ending 4321', NOW), smsMsg('two-d', 'LKR 450.00 POS purchase at CAFE KOPI on card ending 4321', NOW + 3 * 3600000)]);
+        const separate = g('smsQueue').length;
+        // A pasted copy of a message already waiting is a copy, whenever it is pasted.
+        g('smsTake')([{ id: 'paste-copy', address: 'Pasted', shared: true, body: 'LKR 450.00 POS purchase at CAFE KOPI on card ending 4321', date: NOW + 5 * 3600000 }]);
+        const afterPaste = g('smsQueue').length;
+        freshEngine();
+        return (kept === 2 && separate === 4 && afterPaste === 4) || `kept ${kept} (want 2), identical separate alerts ${separate} (want 4), after pasted copy ${afterPaste} (want 4)`;
     });
 
     await T('No reference: matched only within the time window and when card numbers agree', () => {

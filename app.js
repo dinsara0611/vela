@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.16.0';
+const APP_VERSION = '4.16.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1698,8 +1698,17 @@ const merchantsAgree = (a, b) => { const x = merchantWord(a); const y = merchant
    'maybe' - looks like an SMS + notification pair but the shop names differ: the user decides.
    null    - different. Two SMS (or two notifications) with the same amount are two purchases. */
 const sameDetection = (a, b) => {
-    if (!a || !b || a.bank !== b.bank) return null;
-    if ((a.bodyKeys || []).some((k) => (b.bodyKeys || []).includes(k))) return 'same';
+    if (!a || !b) return null;
+    // The same text is a repeat (resent SMS, inbox + live copy, notification update) only close in time:
+    // a shop that sends identical texts for two purchases hours apart is two purchases.
+    // A shared or pasted copy is a copy whenever it comes (even when the pasted text doesn't name the bank).
+    // Repeated SMS arrive seconds apart; separate notifications already have their own ids on the phone.
+    const sameText = (a.bodyKeys || []).some((k) => (b.bodyKeys || []).includes(k));
+    const copyShared = sourceList(a).includes('shared') || sourceList(b).includes('shared');
+    if (sameText && copyShared) return 'same';
+    if (a.bank !== b.bank) return null;
+    const onlyNotif = (x) => sourceList(x).every((s) => s === 'notification');
+    if (sameText && !(onlyNotif(a) && onlyNotif(b)) && a.arrivedAt && b.arrivedAt && Math.abs(a.arrivedAt - b.arrivedAt) <= 2 * 60000) return 'same';
     if (a.ref && b.ref) return a.ref.toUpperCase() === b.ref.toUpperCase() ? 'same' : null;
     if (a.type !== b.type || a.currency !== b.currency || Math.abs(a.amount - b.amount) > 0.005) return null;
     const sa = sourceList(a);
@@ -2004,7 +2013,9 @@ const smsTake = (messages) => {
         const waiting = smsQueue.concat(fresh);
         const same = waiting.filter((w) => sameDetection(w, i) === 'same');
         const maybe = waiting.filter((w) => sameDetection(w, i) === 'maybe');
-        if (same.length === 1) { mergeDetection(same[0], i); return; }
+        // A shared or pasted copy of text that's already waiting is never a new transaction, even if it matches more than one.
+        const isCopy = i.sources.includes('shared') && same.some((w) => (w.bodyKeys || []).some((k) => i.bodyKeys.includes(k)));
+        if (same.length === 1 || isCopy) { mergeDetection(same[0], i); return; }
         if (same.length > 1 || maybe.length) {
             i.checks.push('it may be the same as another detected transaction');
             i.confidence = 'medium';
