@@ -18,6 +18,8 @@ mkdirSync(join(www, 'fonts'), { recursive: true });
 for (const f of ['style.css', 'app.js', 'manifest.json', 'icon-192.png', 'icon-512.png']) {
     cpSync(join(root, f), join(www, f));
 }
+// Brand logos (bundled, so the app never fetches them while running).
+cpSync(join(root, 'logos'), join(www, 'logos'), { recursive: true });
 
 cpSync(join(nm, 'chart.js/dist/chart.umd.js'), join(www, 'vendor/chart.umd.js'));
 cpSync(join(nm, '@supabase/supabase-js/dist/umd/supabase.js'), join(www, 'vendor/supabase.js'));

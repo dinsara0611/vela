@@ -125,10 +125,13 @@
     --tabbar-h: 66px;
     --sidebar-w: 252px;
     --gutter: 16px;
-    --safe-top: env(safe-area-inset-top, 0px);
-    --safe-right: env(safe-area-inset-right, 0px);
-    --safe-bottom: env(safe-area-inset-bottom, 0px);
-    --safe-left: env(safe-area-inset-left, 0px);
+    /* In the Android app, Capacitor measures the real status/navigation bars and sets --safe-area-inset-*.
+       Prefer those: some WebView versions report env(safe-area-inset-top) too large (122px for a 65px status
+       bar on Android 17 / Chrome 157), which left an empty strip under the status bar. */
+    --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+    --safe-right: var(--safe-area-inset-right, env(safe-area-inset-right, 0px));
+    --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+    --safe-left: var(--safe-area-inset-left, env(safe-area-inset-left, 0px));
 }
 
 :root[data-theme="light"] {
@@ -3985,6 +3988,20 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 /* Fixed expenses */
 .fx-rows { display: flex; flex-direction: column; gap: 8px; margin: var(--sp-2) 0 var(--sp-3); }
 .fx-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--sp-3); font-size: var(--fs-md); color: var(--text-2); }
+.fx-row.fx-expected { font-size: var(--fs-sm); color: var(--text-3); }
+
+/* Shop badges in brand colours (drawn by Vela; no logo files are downloaded). */
+.cat-badge.brand-badge { background: var(--brand-bg); color: var(--brand-fg); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10), 0 4px 14px rgba(0, 0, 0, 0.35); }
+.cat-badge.brand-badge::before, .cat-badge.brand-badge::after { display: none; }
+.brand-mark { font-family: var(--font-display, inherit); font-weight: 800; font-size: 19px; line-height: 1; letter-spacing: -0.02em; }
+/* Real logo: on a white tile so every logo reads clearly on the dark theme; the letter badge shows if it can't load. */
+.cat-badge.brand-badge.has-logo { background: #ffffff; overflow: hidden; padding: 0; }
+.cat-badge.brand-badge.has-logo img { width: 100%; height: 100%; object-fit: contain; display: block; border-radius: inherit; }
+.cat-badge.brand-badge.has-logo .brand-mark, .cat-badge.brand-badge.has-logo > .ic { display: none; }
+.bank-logo.has-logo { background: #ffffff; padding: 0; overflow: hidden; }
+.bank-logo.has-logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.brand-mark.is-long { font-size: 12px; letter-spacing: 0; }
+.fx-row.fx-expected .amount { color: var(--text-3); white-space: nowrap; }
 .fx-row .amount { font-size: var(--fs-md); white-space: nowrap; }
 .fx-row.fx-total { padding-top: 8px; border-top: 1px dashed var(--border-strong); color: var(--text); font-weight: 600; }
 .fx-row.fx-total .amount { font-size: var(--fs-lg); }

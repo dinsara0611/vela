@@ -7,10 +7,12 @@ import com.getcapacitor.BridgeActivity;
 public class MainActivity extends BridgeActivity {
     @Override
     public void onCreate(Bundle savedInstanceState) {
-        // Vela's own plugin: bank SMS and bank-app notification tracking.
+        // Leave the launch (splash) theme for Vela's normal theme: no title bar, plain dark background.
+        // Without this the launch theme stayed, which added Android's grey "Vela" title bar over the page.
+        setTheme(R.style.AppTheme_NoActionBar);
+        // Vela's own plugin: bank SMS tracking.
         registerPlugin(SmsReaderPlugin.class);
-        // Android 15+ draws apps edge to edge; Capacitor's SystemBars passes the bar sizes to the page
-        // (env(safe-area-inset-*)), which Vela's layout already uses.
+        // Android 15+ draws apps edge to edge; Vela's layout pads for the status and navigation bars.
         EdgeToEdge.enable(this);
         super.onCreate(savedInstanceState);
     }

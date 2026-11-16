@@ -203,6 +203,33 @@ public class SmsReaderPlugin extends Plugin {
         call.resolve();
     }
 
+    /**
+     * The real status bar, navigation bar and display cutout sizes, in CSS pixels. Some WebView versions report
+     * env(safe-area-inset-top) too large on Android 15+ (edge to edge), so the page uses these instead.
+     */
+    @PluginMethod
+    public void insets(PluginCall call) {
+        if (getActivity() == null) { call.reject("No activity"); return; }
+        getActivity().runOnUiThread(() -> {
+            JSObject ret = new JSObject();
+            try {
+                android.view.View decor = getActivity().getWindow().getDecorView();
+                androidx.core.view.WindowInsetsCompat wi = androidx.core.view.ViewCompat.getRootWindowInsets(decor);
+                float d = getContext().getResources().getDisplayMetrics().density;
+                if (wi == null) { call.reject("Insets not ready"); return; }
+                androidx.core.graphics.Insets i = wi.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars()
+                    | androidx.core.view.WindowInsetsCompat.Type.displayCutout());
+                ret.put("top", i.top / d);
+                ret.put("bottom", i.bottom / d);
+                ret.put("left", i.left / d);
+                ret.put("right", i.right / d);
+                call.resolve(ret);
+            } catch (Exception e) {
+                call.reject("Couldn't read insets");
+            }
+        });
+    }
+
     /** Vela's App info screen (permissions, and "Allow restricted settings" on Android 13+). */
     @PluginMethod
     public void openAppSettings(PluginCall call) {

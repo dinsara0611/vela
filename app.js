@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.19.0';
+const APP_VERSION = '4.19.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -428,7 +428,25 @@ const normalizeTx = (t, forcedType) => {
         // Fixed expenses: rent, internet, subscriptions... Entries logged from a bill are always fixed.
         fixed: type === 'expense' && (t.fixed === true || !!t.recurringId),
         // Money that hasn't come in / gone out yet: counts once confirmed. Old future-dated entries become waiting.
-        pending: type !== 'transfer' && (t.pending === true || (t.pending === undefined && (cleanDate(t.date) || '') > toISODate()))
+        pending: type !== 'transfer' && (t.pending === true || (t.pending === undefined && (cleanDate(t.date) || '') > toISODate())),
+        // Kept across restarts and sync: when it was due and actually paid, and the bank details it was matched with
+        // (without these, a restart forgot an entry came from a bank SMS and the same SMS could be added again).
+        ...(cleanDate(t.dueDate) ? { dueDate: cleanDate(t.dueDate) } : {}),
+        ...(typeof t.paidAt === 'string' && !isNaN(Date.parse(t.paidAt)) ? { paidAt: t.paidAt } : {}),
+        ...(normalizeBankMeta(t.bank) ? { bank: normalizeBankMeta(t.bank) } : {})
+    };
+};
+// Bank details on an entry: only known fields, short strings, no message text.
+const normalizeBankMeta = (b) => {
+    if (!b || typeof b !== 'object' || !b.bank) return null;
+    const str = (v, n = 80) => (v === null || v === undefined || v === '' ? null : String(v).slice(0, n));
+    const strs = (v, n) => (Array.isArray(v) ? v.slice(0, 20).map((x) => String(x).slice(0, n)) : []);
+    return {
+        bank: str(b.bank, 40), kind: str(b.kind, 20), ref: str(b.ref, 40), last4: str(b.last4, 4), merchant: str(b.merchant) || '',
+        smsId: str(b.smsId, 120), dedupe: str(b.dedupe, 200), time: str(b.time, 5),
+        sources: strs(b.sources, 20).length ? strs(b.sources, 20) : ['sms'], sourceIds: strs(b.sourceIds, 120),
+        bodyKeys: Array.isArray(b.bodyKeys) ? b.bodyKeys.slice(0, 20).filter((k) => Number.isFinite(k)) : [],
+        arrivedAt: Number.isFinite(b.arrivedAt) ? b.arrivedAt : null, confidence: str(b.confidence, 10), verifiedAt: str(b.verifiedAt, 40)
     };
 };
 
@@ -1196,7 +1214,8 @@ const rangeBounds = (range) => {
 
 const txInRange = (range) => {
     const { start, end } = rangeBounds(range);
-    return state.transactions.filter((e) => { const d = parseDate(e.date); return d >= start && d <= end; });
+    // Same rule as Home: entries still waiting to be paid or received don't count yet.
+    return state.transactions.filter((e) => { const d = parseDate(e.date); return d >= start && d <= end && !isUpcoming(e); });
 };
 
 const debtTotals = () => {
@@ -1250,9 +1269,12 @@ const fixedForMonth = (y = new Date().getFullYear(), m = new Date().getMonth()) 
     });
     items.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
     const total = items.reduce((s, i) => s + i.amount, 0);
-    const income = sumDisplay(state.transactions.filter((t) => t.type === 'income' && inMonth(t, y, m)));
+    // Income actually received this month; money still expected is shown separately and isn't counted yet.
+    const monthIncome = state.transactions.filter((t) => t.type === 'income' && inMonth(t, y, m));
+    const income = sumDisplay(monthIncome.filter((t) => !isUpcoming(t)));
+    const expected = sumDisplay(monthIncome.filter((t) => isUpcoming(t)));
     const paid = items.filter((i) => i.paid).reduce((s, i) => s + i.amount, 0);
-    return { items, total, paid, due: total - paid, income, left: income - total };
+    return { items, total, paid, due: total - paid, income, expected, left: income - total };
 };
 
 const fixedSummaryHtml = ({ list = false, link = false } = {}) => {
@@ -1263,12 +1285,13 @@ const fixedSummaryHtml = ({ list = false, link = false } = {}) => {
     return `<article class="card fx-card glow" style="--glow:var(--pal-cyan)">
         <div class="card-head"><h2 class="card-title">After fixed expenses</h2>${link ? '<button type="button" class="link-btn" data-goto-plan="bills">Details</button>' : `<span class="card-sub">${escapeHtml(monthName(new Date().getFullYear(), new Date().getMonth(), { month: 'long' }))}</span>`}</div>
         <div class="fx-rows">
-            <div class="fx-row"><span>Income</span><strong class="amount text-income">${escapeHtml(formatCurrency(f.income, cur))}</strong></div>
+            <div class="fx-row"><span>Income received</span><strong class="amount text-income">${escapeHtml(formatCurrency(f.income, cur))}</strong></div>
+            ${f.expected > 0 ? `<div class="fx-row fx-expected"><span>Still expected (not counted yet)</span><span class="amount">+${escapeHtml(formatCurrency(f.expected, cur))}</span></div>` : ''}
             <div class="fx-row"><span>Fixed expenses${f.items.length ? ` (${f.items.length})` : ''}</span><strong class="amount text-expense">${f.total > 0 ? '−' : ''}${escapeHtml(formatCurrency(f.total, cur))}</strong></div>
             <div class="fx-row fx-total"><span>${f.left >= 0 ? 'Left for everything else' : 'Short this month'}</span><strong class="amount ${f.left < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(Math.abs(f.left), cur))}</strong></div>
         </div>
         ${meterHtml(pct, pct >= 100 ? 'over' : pct >= 80 ? 'warn' : null, 'Share of income going to fixed expenses')}
-        <div class="meter-row" style="margin-top:var(--sp-2)"><span>${f.income > 0 ? `${Math.round((f.total / f.income) * 100)}% of income is fixed` : 'Add this month\u2019s income to see what\u2019s left'}</span><span>${f.due > 0 ? `${escapeHtml(formatCurrency(f.due, cur))} still due` : (f.total > 0 ? 'All paid' : '')}</span></div>
+        <div class="meter-row" style="margin-top:var(--sp-2)"><span>${f.income > 0 ? `${Math.round((f.total / f.income) * 100)}% of income is fixed` : f.expected > 0 ? 'Mark your income received to count it' : 'Add this month\u2019s income to see what\u2019s left'}</span><span>${f.due > 0 ? `${escapeHtml(formatCurrency(f.due, cur))} still due` : (f.total > 0 ? 'All paid' : '')}</span></div>
         ${rows}
     </article>`;
 };
@@ -1515,7 +1538,7 @@ const txRow = (t, { showDate = true } = {}) => {
     const st = t.pending ? payStatus(t.date) : null;
     const waitingStrip = t.pending ? `<div class="tx-confirm" data-status="${st}"><span>${st === 'overdue' ? `${t.type === 'income' ? 'Expected' : 'Was due'} ${escapeHtml(shortDate(t.date))}` : st === 'due' ? (t.type === 'income' ? 'Expected today' : 'Due today') : `Due ${escapeHtml(shortDate(t.date))}`}</span><button type="button" class="btn btn-xs ${t.type === 'income' ? 'btn-income' : 'btn-primary'}" data-pay="tx:${escapeHtml(t.id)}">${icon('i-check', 'ic ic-sm')} ${t.type === 'income' ? 'Mark as received' : 'Mark as paid'}</button></div>` : '';
     return `<li class="${t.pending ? 'tx-li-pending' : ''}"><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
-        ${catBadge(t.category, t.type)}
+        ${entryBadge(t.desc, t.category, t.type)}
         <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub">${t.pending ? `<span class="tx-upcoming" data-status="${st}">${payStatusLabel(st, t.type)}</span>` : (t.dueDate || t.paidAt ? `<span class="tx-paid">${t.type === 'income' ? 'Received' : 'Paid'}</span>` : '')}${t.bank ? `<span class="tx-bank" title="${escapeHtml(`${t.bank.bank} – ${sourceLabel(t.bank.sources || ['sms'])}`)}">${icon('i-check', 'ic ic-sm')}${escapeHtml(sourceShort(t.bank.sources || ['sms']))}</span>` : ''}${t.fixed ? '<span class="tx-fixed">Fixed</span>' : ''}${t.recurringId ? icon('i-repeat') : ''}${t.receipt ? icon('i-image') : ''}<span>${escapeHtml(label)}</span>${orig}</span></span>
         <span class="tx-amt"><span class="amount ${t.type === 'income' ? 'is-income' : ''}">${escapeHtml(signed)}</span>${when}</span>
     </button>${waitingStrip}</li>`;
@@ -1580,6 +1603,111 @@ const SMS_KINDS = [
 ];
 const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
 const titleCase = (s) => s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
+
+/* ---- Known shops and services: a clean name, the right category and a badge in the brand's colours.
+   Drawn here (no logo files are downloaded), so nothing about your spending leaves the phone.
+   [match, name, category id, badge background, badge text colour, mark] ---- */
+const BRANDS = [
+    [/\bkeells\b|\bjaykay\b/i, 'Keells', 'Food', '#00843D', '#ffffff', 'K'],
+    [/\bcargills\b|\bfood ?city\b/i, 'Cargills', 'Food', '#E31837', '#ffffff', 'C'],
+    [/\bglomark\b/i, 'Glomark', 'Food', '#E2001A', '#ffffff', 'G'],
+    [/\bspar\b/i, 'SPAR', 'Food', '#DA1F26', '#ffffff', 'S'],
+    [/\bsathosa\b/i, 'Sathosa', 'Food', '#0A7A3D', '#ffffff', 'S'],
+    [/\barpico\b/i, 'Arpico', 'Shopping', '#00529B', '#ffffff', 'A'],
+    [/\blaugfs\b/i, 'Laugfs', 'Food', '#E30613', '#ffffff', 'L'],
+    [/uber ?eats/i, 'Uber Eats', 'Food', '#06C167', '#000000', 'UE'],
+    [/\bkfc\b/i, 'KFC', 'Food', '#A3080C', '#ffffff', 'KFC'],
+    [/mcdonald/i, "McDonald's", 'Food', '#DA291C', '#FFC72C', 'M'],
+    [/pizza ?hut/i, 'Pizza Hut', 'Food', '#EE3124', '#ffffff', 'PH'],
+    [/domino/i, "Domino's", 'Food', '#006491', '#ffffff', 'D'],
+    [/burger ?king/i, 'Burger King', 'Food', '#D62300', '#F5EBDC', 'BK'],
+    [/\bkoko\b/i, 'Koko', 'Shopping', '#111111', '#FFD400', 'K'],
+    [/\bdaraz\b/i, 'Daraz', 'Shopping', '#F57224', '#ffffff', 'D'],
+    [/\bodel\b/i, 'ODEL', 'Shopping', '#111111', '#ffffff', 'O'],
+    [/fashion ?bug/i, 'Fashion Bug', 'Shopping', '#E4007C', '#ffffff', 'FB'],
+    [/cool ?planet/i, 'Cool Planet', 'Shopping', '#00A3E0', '#ffffff', 'CP'],
+    [/\bnolimit\b/i, 'Nolimit', 'Shopping', '#E30613', '#ffffff', 'N'],
+    [/\bsinger\b/i, 'Singer', 'Shopping', '#E30613', '#ffffff', 'S'],
+    [/\babans\b/i, 'Abans', 'Shopping', '#0057A8', '#ffffff', 'A'],
+    [/\bsoftlogic\b/i, 'Softlogic', 'Shopping', '#ED1C24', '#ffffff', 'S'],
+    [/aliexpress/i, 'AliExpress', 'Shopping', '#E62E04', '#ffffff', 'A'],
+    [/\btemu\b/i, 'Temu', 'Shopping', '#FB7701', '#ffffff', 'T'],
+    [/\bamazon\b/i, 'Amazon', 'Shopping', '#232F3E', '#FF9900', 'a'],
+    [/\bnetflix\b/i, 'Netflix', 'Entertainment', '#141414', '#E50914', 'N'],
+    [/\bspotify\b/i, 'Spotify', 'Entertainment', '#1DB954', '#000000', 'S'],
+    [/\byoutube\b/i, 'YouTube', 'Entertainment', '#FF0000', '#ffffff', '▶'],
+    [/\bapple\.com|\bitunes\b|\bapple\b/i, 'Apple', 'Entertainment', '#1D1D1F', '#ffffff', ''],
+    [/\bgoogle\b/i, 'Google', 'Entertainment', '#ffffff', '#4285F4', 'G'],
+    [/\buber\b/i, 'Uber', 'Travel', '#000000', '#ffffff', 'U'],
+    [/pick ?me/i, 'PickMe', 'Travel', '#FFC72C', '#111111', 'P'],
+    [/lanka ?ioc|\bioc\b/i, 'Lanka IOC', 'Travel', '#F37021', '#ffffff', 'IOC'],
+    [/ceypetco|ceylon petroleum/i, 'Ceypetco', 'Travel', '#00539F', '#ffffff', 'C'],
+    [/\bdialog\b/i, 'Dialog', 'Utilities', '#E4002B', '#ffffff', 'D'],
+    [/mobitel/i, 'SLT-Mobitel', 'Utilities', '#0054A6', '#ffffff', 'M'],
+    [/\bslt\b|sri lanka telecom/i, 'SLT', 'Utilities', '#0054A6', '#ffffff', 'SLT'],
+    [/\bhutch\b/i, 'Hutch', 'Utilities', '#F58220', '#ffffff', 'H'],
+    [/\bairtel\b/i, 'Airtel', 'Utilities', '#E40000', '#ffffff', 'A'],
+    [/\bceb\b|ceylon electricity/i, 'CEB', 'Utilities', '#FDB913', '#111111', 'CEB'],
+    [/\bleco\b/i, 'LECO', 'Utilities', '#00843D', '#ffffff', 'L'],
+    [/\bnwsdb\b|water ?board/i, 'Water Board', 'Utilities', '#0072BC', '#ffffff', 'W']
+];
+const brandFor = (text) => { const s = String(text || ''); return s ? BRANDS.find(([re]) => re.test(s)) || null : null; };
+// Town, country and company suffixes that bank SMS add after a shop name.
+const SL_PLACES = 'colombo|col|kandy|galle|negombo|maharagama|nugegoda|dehiwala|mount lavinia|moratuwa|kotte|battaramulla|kollupitiya|wellawatte|bambalapitiya|rajagiriya|malabe|kadawatha|kiribathgoda|wattala|ja-?ela|gampaha|panadura|kurunegala|matara|jaffna|anuradhapura|kaduwela|homagama|piliyandala|boralesgamuwa|pannipitiya|ratmalana|kelaniya|kalutara|horana|chilaw|badulla|ratnapura|trincomalee|batticaloa';
+const cleanMerchant = (raw) => {
+    let s = String(raw || '').replace(/\s{2,}/g, ' ').trim();
+    for (let i = 0; i < 4; i++) {
+        const before = s;
+        s = s.replace(/[\s,*#\-]+(lk|lka|sl|sri lanka|ceylon|sg|in|us|gb)$/i, '')
+            .replace(/[\s,]+\(?(pvt|private)?\)?\s*(ltd|limited|plc)\.?$/i, '')
+            .replace(new RegExp(`[\\s,]+(${SL_PLACES})(\\s*0?\\d{1,2})?$`, 'i'), '')
+            .replace(/[\s,*#\-]+\d{1,6}$/, '')
+            .trim();
+        if (s === before) break;
+    }
+    return s ? titleCase(s) : '';
+};
+// Entries added from bank SMS before shop names were cleaned ("Koko Colombo 03 Lk"): tidy the ones the user hasn't
+// renamed (name still equals the shop name Vela read). Runs on start; changes nothing it isn't sure about.
+const tidyBankEntryNames = () => {
+    let changed = 0;
+    (state.transactions || []).forEach((t) => {
+        // Entries that lost their bank details to the old loading bug: the note Vela wrote still says where they came from.
+        const from = !t.bank && /^From (.{2,40}?) \((SMS|Shared|SMS \+ Shared|Notification|SMS \+ Notification)\)$/.exec(t.note || '');
+        if (from) {
+            t.bank = { bank: from[1], kind: null, ref: null, last4: null, merchant: t.desc, smsId: null, dedupe: null, time: null, sources: from[2].toLowerCase().includes('shared') ? ['sms', 'shared'] : ['sms'], sourceIds: [], bodyKeys: [], arrivedAt: null, confidence: null, verifiedAt: null };
+            changed++;
+        }
+        if (!t.bank || !t.bank.merchant || t.desc !== t.bank.merchant) {
+            if (from) queueSync('transaction', t.id, 'upsert', false);
+            return;
+        }
+        const clean = cleanMerchant(t.bank.merchant);
+        const b = brandFor(clean);
+        const name = b ? b[1] : clean;
+        if (!name || name === t.desc) return;
+        t.desc = name;
+        t.bank.merchant = name;
+        if (b && t.type === 'expense' && t.category === 'Other' && expenseCatExists(b[2])) t.category = b[2];
+        changed++;
+        queueSync('transaction', t.id, 'upsert', false);
+    });
+    if (changed) saveState();
+};
+// Real logos bundled with the app in logos/ (downloaded once by scripts/fetch-logos.mjs and checked by eye),
+// so showing them never contacts anyone. Brands without a verified logo get a badge in their colours.
+const LOGO_SLUGS = new Set(['aliexpress', 'amazon', 'apple', 'arpico', 'burgerking', 'cargills', 'ceb', 'ceypetco', 'combank', 'daraz', 'dialog', 'dominos', 'glomark', 'google', 'keells', 'kfc', 'koko', 'lankaioc', 'mcdonalds', 'mobitel', 'netflix', 'nolimit', 'pickme', 'pizzahut', 'singer', 'slt', 'spar', 'spotify', 'temu', 'uber', 'ubereats', 'waterboard', 'youtube']);
+const LOGO_ALIAS = { sltmobitel: 'mobitel' };
+const logoSlug = (name) => { const s = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, ''); const k = LOGO_ALIAS[s] || s; return LOGO_SLUGS.has(k) ? k : null; };
+const logoImg = (slug, alt = '') => `<img src="logos/${slug}.png" alt="${escapeHtml(alt)}" loading="lazy" decoding="async" draggable="false" onerror="this.parentNode.classList.remove('has-logo');this.remove()">`;
+// The badge for an entry: the shop's real logo when bundled, else its brand colours, else its category icon.
+const entryBadge = (desc, category, type) => {
+    const b = brandFor(desc);
+    if (!b) return catBadge(category, type);
+    const slug = logoSlug(b[1]);
+    const mark = b[5] ? `<span class="brand-mark${b[5].length > 2 ? ' is-long' : ''}">${escapeHtml(b[5])}</span>` : icon('c-Shopping');
+    return `<span class="cat-badge brand-badge${slug ? ' has-logo' : ''}" style="--brand-bg:${b[3]};--brand-fg:${b[4]}" title="${escapeHtml(b[1])}">${slug ? logoImg(slug) : ''}${mark}</span>`;
+};
 // Account and card numbers are shown as their last 4 digits only.
 const maskSms = (body) => String(body || '')
     .replace(/\b(?:[0-9][0-9 *xX#-]{6,}[0-9])\b/g, (m) => { const d = m.replace(/\D/g, ''); return d.length >= 8 ? `••${d.slice(-4)}` : m; })
@@ -1646,7 +1774,10 @@ const parseBankSms = (msg) => {
         : /\bto\s+([A-Za-z][A-Za-z0-9 &'.\-]{1,40}?)(?=\s+(?:on|from|ref|dated|via|a\/c|acc)\b|\s*[.,;(]|\s*$)/i.exec(body);
     let merchant = place && !/^(atm|your|the|a\/c)\b/i.test(place[1]) ? place[1].trim() : (party && !/^(your|the|a\/c|acc)/i.test(party[1]) ? party[1].trim() : '');
     if (/^\d|^(on|ref)$/i.test(merchant)) merchant = '';
-    merchant = merchant ? titleCase(merchant.replace(/\s{2,}/g, ' ')) : '';
+    // Shop names in bank SMS carry the town and country ("KOKO COLOMBO 03 LK"): keep the shop only.
+    merchant = merchant ? cleanMerchant(merchant) : '';
+    const brand = merchant ? brandFor(merchant) : null;
+    if (brand) merchant = brand[1];
     if (!merchant && (kindHit.kind === 'card' || kindHit.kind === 'online')) checks.push('no shop name in the message');
     if (kindHit.generic) checks.push('the message does not say what kind of payment it was');
     const theBank = bankApp || bank;
@@ -1663,7 +1794,7 @@ const parseBankSms = (msg) => {
         : merchant || (kindHit.kind === 'salary' ? 'Salary' : `${bankName} ${kindHit.label.toLowerCase()}`);
     let category = type === 'income'
         ? (kindHit.kind === 'salary' || /\bsalary\b/i.test(body) ? 'Salary' : 'OtherIncome')
-        : kindHit.kind === 'fee' ? 'Other' : (guessCategory(merchant) || (kindHit.kind === 'bill' ? 'Utilities' : 'Other'));
+        : kindHit.kind === 'fee' ? 'Other' : ((brand && expenseCatExists(brand[2]) ? brand[2] : null) || guessCategory(merchant) || (kindHit.kind === 'bill' ? 'Utilities' : 'Other'));
     const catType = type === 'income' ? 'income' : 'expense';
     if (!state.categories.some((c) => c.id === category && c.type === catType)) category = FALLBACK_CATEGORY[catType];
     const confidence = checks.length ? 'medium' : 'high';
@@ -2124,9 +2255,23 @@ const checkPastedSms = () => {
     closeSheet('modal-sms-paste');
     setTimeout(showSmsSheet, 350);
 };
+// The real system bar sizes from Android (some WebViews report env(safe-area-inset-top) too large when edge to edge).
+// style.css reads --safe-area-inset-* first, so setting them here fixes every screen at once.
+const applyNativeInsets = async () => {
+    const plugin = smsPlugin();
+    if (!plugin || !plugin.insets) return;
+    try {
+        const i = await plugin.insets();
+        const root = document.documentElement.style;
+        ['top', 'right', 'bottom', 'left'].forEach((k) => { if (Number.isFinite(i[k])) root.setProperty(`--safe-area-inset-${k}`, `${Math.round(i[k] * 10) / 10}px`); });
+    } catch (e) { /* the page keeps using env() */ }
+};
 const initSms = () => {
     const plugin = smsPlugin();
     if (!plugin) return;
+    applyNativeInsets();
+    setTimeout(applyNativeInsets, 600);
+    window.addEventListener('resize', () => setTimeout(applyNativeInsets, 120));
     plugin.addListener('smsReceived', (m) => { const n = smsTake([m]); if (n) haptic('MEDIUM'); if (smsQueue.length) showSmsSheet(); refreshBankStatus(); });
     // Tapped "Bank transaction detected": open the review screen once the app is ready.
     plugin.addListener('reviewRequested', async () => { await splashDone; await scanSms(); if (!smsQueue.length) showToast('That transaction was already added or ignored.', 'info'); });
@@ -2305,7 +2450,7 @@ const paymentRowHtml = (i) => {
     const income = i.type === 'income';
     const when = i.status === 'overdue' ? `${income ? 'Expected' : 'Was due'} ${shortDate(i.due)}` : i.status === 'due' ? (income ? 'Expected today' : 'Due today') : `${income ? 'Expected' : 'Due'} ${shortDate(i.due)}`;
     return `<li class="pay-row" data-status="${i.status}">
-        ${catBadge(i.category, i.type)}
+        ${entryBadge(i.name, i.category, i.type)}
         <div class="pay-main"><span class="pay-name">${escapeHtml(i.name)}</span><span class="pay-meta"><span class="pay-pill" data-status="${i.status}">${payStatusLabel(i.status, i.type)}</span>${escapeHtml(when)}</span></div>
         <div class="pay-end"><span class="amount ${income ? 'text-income' : ''}">${escapeHtml(formatCurrency(i.amount, i.currency))}</span>
         <button type="button" class="btn btn-xs ${income ? 'btn-income' : 'btn-primary'}" data-pay="${escapeHtml(i.key)}">${income ? 'Mark received' : 'Mark as paid'}</button></div>
@@ -2720,7 +2865,7 @@ const billRow = (b) => {
     const how = b.autoLog ? 'logs itself' : (b.type === 'income' ? 'you confirm it' : 'you mark it paid');
     return `<div class="plan-row">
         <button type="button" class="plan-row-main" data-edit-bill="${escapeHtml(b.id)}" aria-label="Edit ${escapeHtml(b.name)}">
-            ${catBadge(b.category, b.type)}
+            ${entryBadge(b.name, b.category, b.type)}
             <span class="row-main"><span class="row-title">${escapeHtml(b.name)}</span><span class="row-sub">${FREQ_PHRASE[b.frequency]}, ${how}</span></span>
             <span class="row-end"><span class="amount ${b.type === 'income' ? 'text-income' : ''}">${escapeHtml(formatDisplay(b.amount, b.currency))}</span><span class="badge-due" data-tone="${dl.tone}">${escapeHtml(label)}</span></span>
         </button>
@@ -3026,7 +3171,8 @@ const cashFlowChart = (canvasId, emptyId, data, key) => {
 const renderTrendChart = () => {
     const today = startOfDay(new Date());
     const start = dashboardRange === '30' ? addDays(today, -29) : new Date(today.getFullYear(), today.getMonth() - 11, 1);
-    const list = state.transactions.filter((x) => { const d = parseDate(x.date); return d >= start && d <= today; });
+    // Only money that really moved: waiting / not-yet-received entries aren't income or spending yet.
+    const list = state.transactions.filter((x) => { const d = parseDate(x.date); return d >= start && d <= today && !isUpcoming(x); });
     cashFlowChart('dashboard-trend-chart', 'dashboard-chart-empty', bucketize(list, start, today, dashboardRange !== '30'), 'trend');
 };
 
@@ -3707,7 +3853,7 @@ const draftCard = (d) => {
     botDrafts[id] = d;
     const cat = catById(d.category, d.type);
     return `<div class="bot-card" data-draft="${id}">
-        <div class="bot-card-row">${catBadge(d.category, d.type)}<div class="bot-card-main"><strong>${escapeHtml(d.desc)}</strong><span>${escapeHtml(cat.name)} · ${escapeHtml(relativeDayLabel(d.date))}</span></div>
+        <div class="bot-card-row">${entryBadge(d.desc, d.category, d.type)}<div class="bot-card-main"><strong>${escapeHtml(d.desc)}</strong><span>${escapeHtml(cat.name)} · ${escapeHtml(relativeDayLabel(d.date))}</span></div>
         <span class="amount ${d.type === 'income' ? 'text-income' : ''}">${escapeHtml(formatCurrency(d.amount, d.currency))}</span></div>
         <div class="bot-card-actions"><button type="button" class="btn btn-secondary btn-sm" data-bot-edit="${id}">Change</button><button type="button" class="btn ${d.type === 'income' ? 'btn-income' : 'btn-primary'} btn-sm" data-bot-add="${id}">Add ${d.type}</button></div>
     </div>`;
@@ -4531,6 +4677,8 @@ const pullFromCloud = async () => {
         state.recurring = by.recurring.map(normalizeBill).filter(Boolean);
         state.debts = by.debt.map(normalizeDebt).filter(Boolean);
         state.categories = mergeCategories(by.category);
+        // Tidy bank-SMS entries in the account too (shop names, lost bank details); the changes sync back.
+        tidyBankEntryNames();
         const hadSettings = !set.error && set.data && set.data.data;
         if (hadSettings) applyCloudSettings(set.data.data);
         recoverAccounts();
@@ -5774,6 +5922,7 @@ const setDisplayCurrency = (cur) => {
 
 const onAppHidden = () => { hiddenAt = Date.now(); };
 const onAppVisible = () => {
+    applyNativeInsets();
     if (state.config.lock.enabled && hiddenAt && Date.now() - hiddenAt > LOCK_AFTER_MS && !isLocked()) showLock();
     hiddenAt = 0;
     processRecurring();
@@ -6635,6 +6784,7 @@ const init = () => {
     loadState();
     migrateBudgets();
     fixAccountCurrencies();
+    tidyBankEntryNames();
     document.documentElement.setAttribute('data-theme', state.config.theme);
 
     initEvents();

@@ -164,7 +164,7 @@ export async function run() {
         const b = p({ id: 'b', address: 'COMBANK', body: 'Your A/C xxxx5678 has been credited with Rs. 150,000.00 from ABC PVT LTD on 16/11/26. Salary.', date: Date.now() });
         const c = p({ id: 'c', address: 'COMBANK', body: 'Your OTP for the transaction of LKR 2,500.00 is 123456. Do not share.', date: Date.now() });
         const d = p({ id: 'd', address: 'HNB', body: 'Purchase of USD 12.99 at NETFLIX.COM on your card ending 1111', date: Date.now() });
-        const ok = a && a.type === 'expense' && a.amount === 2500 && a.desc === 'Keells Super' && a.bank === 'Commercial Bank' && a.last4 === '4321' && a.category === 'Food'
+        const ok = a && a.type === 'expense' && a.amount === 2500 && a.desc === 'Keells' && a.bank === 'Commercial Bank' && a.last4 === '4321' && a.category === 'Food'
             && b && b.type === 'income' && b.amount === 150000 && b.category === 'Salary'
             && c === null
             && d && d.currency === 'USD' && d.amount === 12.99 && d.bank === 'HNB';
@@ -175,7 +175,7 @@ export async function run() {
     const P = (body, address = 'COMBANK', extra = {}) => g('parseBankSms')({ id: `t-${Math.random()}`, address, body, date: new Date(2026, 10, 16, 12, 0).getTime(), ...extra });
     const smsCases = [
         ['card payment', 'Transaction Alert: LKR 3,450.00 POS purchase at KEELLS SUPER COLOMBO 07 on your ComBank Debit Card ending 4321 on 16/11/2026 10:20:15. Avl Bal: LKR 12,345.67',
-            { type: 'expense', kind: 'card', amount: 3450, desc: 'Keells Super Colombo 07', last4: '4321', date: '2026-11-16', time: '10:20', category: 'Food', confidence: 'high' }],
+            { type: 'expense', kind: 'card', amount: 3450, desc: 'Keells', last4: '4321', date: '2026-11-16', time: '10:20', category: 'Food', confidence: 'high' }],
         ['account debit with ref + balance', 'Dear Customer, Your A/C No.8001234567 has been debited for LKR 3,450.00 on 16/11/2026 at 10:15 Ref:FT2632012345. Avl Bal LKR 45,230.50',
             { type: 'expense', amount: 3450, ref: 'FT2632012345', last4: '4567', date: '2026-11-16' }],
         ['salary credit', 'LKR 150,000.00 credited to A/C 8001234567 on 16/11/26 SALARY ABC PVT LTD. Avl Bal LKR 200,000.00',
@@ -361,6 +361,48 @@ export async function run() {
         } };
         return { calls, st };
     };
+
+    await T('SMS shop names are cleaned, matched to a category and get a brand badge', () => {
+        const c = g('cleanMerchant');
+        const names = [c('KOKO COLOMBO 03 LK'), c('KEELLS SUPER KOLLUPITIYA'), c('ABC TRADERS (PVT) LTD'), c('CAFE KOPI NUGEGODA 12'), c('ODEL')];
+        const koko = P('LKR 2,992.42 POS purchase at KOKO COLOMBO 03 LK on card ending 4321');
+        const net = P('Your ComBank Card ending 4321 was used for an online transaction of USD 12.99 at NETFLIX.COM');
+        const badge = g('entryBadge')('Koko', 'Shopping', 'expense');
+        const realLogo = /logos\/netflix\.png/.test(g('entryBadge')('Netflix', 'Entertainment', 'expense')) && /logos\/keells\.png/.test(g('entryBadge')('Keells', 'Food', 'expense'))
+            && !/<img/.test(g('entryBadge')('ODEL', 'Shopping', 'expense'));
+        if (!realLogo) return 'real logos missing (or shown for a brand without a verified logo)';
+        const plain = g('entryBadge')('Lunch with Amal', 'Food', 'expense');
+        const ok = names.join('|') === 'Koko|Keells Super|Abc Traders|Cafe Kopi|Odel' && koko.desc === 'Koko' && koko.category === 'Shopping'
+            && net.desc === 'Netflix' && net.category === 'Entertainment' && /brand-badge/.test(badge) && !/brand-badge/.test(plain);
+        return ok || JSON.stringify({ names, koko: koko && [koko.desc, koko.category], net: net && [net.desc, net.category] });
+    });
+
+    await T('Bank details, due date and paid date survive a restart (saved state is loaded again)', () => {
+        const t = { id: 'keep-bank', type: 'expense', desc: 'Koko', amount: 2992.42, currency: 'LKR', category: 'Shopping', date: iso(new Date()), note: 'From Commercial Bank (SMS)', createdAt: 1, accountId: 'acc-cash', pending: false,
+            dueDate: '2026-11-15', paidAt: '2026-11-16T10:00:00.000Z', bank: { bank: 'Commercial Bank', kind: 'card', ref: 'FT123', last4: '4321', merchant: 'Koko', smsId: 'sms-1', sources: ['sms'], sourceIds: ['sms-1'], bodyKeys: [123], arrivedAt: 1700000000000, sms: 'raw text must not be kept' } };
+        const back = g('normalizeTx')(JSON.parse(JSON.stringify(t)));
+        const ok = back.bank && back.bank.ref === 'FT123' && back.bank.sourceIds[0] === 'sms-1' && back.bank.bodyKeys[0] === 123 && !('sms' in back.bank) && back.dueDate === '2026-11-15' && back.paidAt === t.paidAt;
+        // Old entries that already lost it are repaired from the note Vela wrote, and their shop name tidied.
+        const lost = { ...t, id: 'lost-bank', desc: 'Koko Colombo 03 Lk', category: 'Other' };
+        delete lost.bank;
+        s().transactions.push(lost);
+        g('tidyBankEntryNames')();
+        const fixed = s().transactions.find((x) => x.id === 'lost-bank');
+        s().transactions = s().transactions.filter((x) => x.id !== 'lost-bank');
+        return (ok && fixed.bank && fixed.bank.bank === 'Commercial Bank' && fixed.desc === 'Koko' && fixed.category === 'Shopping') || JSON.stringify({ kept: back.bank, due: back.dueDate, paid: back.paidAt, repaired: [fixed.desc, fixed.category, !!fixed.bank] });
+    });
+
+    await T('Money not yet paid or received is left out of Insights, charts and "After fixed expenses"', async () => {
+        const y0 = iso(addDays(new Date(), 0));
+        s().transactions.push({ id: 'acc-wait-in', type: 'income', desc: 'Late transfer', amount: 7777, currency: 'LKR', category: 'OtherIncome', date: y0, note: '', createdAt: 1, recurringId: null, accountId: 'acc-cash', receipt: null, pending: true });
+        s().transactions.push({ id: 'acc-wait-out', type: 'expense', desc: 'Unpaid gym', amount: 8888, currency: 'LKR', category: 'Other', date: y0, note: '', createdAt: 1, recurringId: null, accountId: 'acc-cash', receipt: null, pending: true });
+        const inRange = g('txInRange')('30').some((t) => t.id === 'acc-wait-in' || t.id === 'acc-wait-out');
+        const f = g('fixedForMonth')();
+        const html = g('fixedSummaryHtml')();
+        s().transactions = s().transactions.filter((t) => !t.id.startsWith('acc-wait'));
+        const f2 = g('fixedForMonth')();
+        return (!inRange && f.expected - f2.expected === 7777 && f.income === f2.income && /Still expected/.test(html)) || `insights counted waiting ${inRange}, expected +${f.expected - f2.expected}, income changed ${f.income !== f2.income}`;
+    });
 
     await T('Same SMS received live AND read from the inbox (different ids, seconds apart) is offered once', () => {
         freshEngine();
