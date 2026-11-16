@@ -4033,7 +4033,9 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 .pay-summary { margin-left: 6px; font-family: var(--font-body); font-size: var(--fs-xs); font-weight: 700; padding: 2px 8px; border-radius: var(--r-full); vertical-align: middle; background: var(--surface-2); color: var(--text-2); }
 .pay-summary[data-status="overdue"] { background: var(--danger-soft, rgba(255, 42, 95, 0.15)); color: var(--danger); }
 .pay-summary[data-status="due"] { background: var(--warning-soft); color: var(--warning); }
-.pay-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); }
+.pay-wrap { display: block; width: 100%; min-width: 0; }
+.pay-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); width: 100%; }
+.pay-row .pay-end .btn { white-space: nowrap; }
 .pay-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--sp-3); padding: var(--sp-3); border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--border-strong); }
 .pay-row[data-status="due"] { border-left-color: var(--warning); }
 .pay-row[data-status="overdue"] { border-left-color: var(--danger); background: linear-gradient(90deg, rgba(255, 42, 95, 0.08), transparent 60%), var(--surface); }

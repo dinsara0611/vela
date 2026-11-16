@@ -140,7 +140,9 @@ public class SmsReaderPlugin extends Plugin {
             String src = installSource();
             return "store".equals(src) ? "allowed" : "restricted";
         } catch (Exception e) {
-            return "unknown";
+            // Some Android versions don't let an app read this op: judge by how Vela was installed.
+            String src = installSource();
+            return "store".equals(src) ? "allowed" : "unknown".equals(src) ? "unknown" : "restricted";
         }
     }
 

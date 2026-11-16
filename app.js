@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.17.2';
+const APP_VERSION = '4.17.3';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2606,7 +2606,8 @@ const renderDashboard = () => {
         </button>`;
     }).join('') + `<button type="button" class="account-chip account-add" data-action="add-account">${icon('i-plus')}<span>Add account</span></button>`;
 
-    const recent = sortByNewest(state.transactions).slice(0, 6);
+    // Waiting payments live in the Payments card above; Recent is money that really moved.
+    const recent = sortByNewest(state.transactions.filter((t) => !t.pending)).slice(0, 6);
     $('recent-list').innerHTML = recent.length
         ? recent.map((t) => txRow(t)).join('')
         : starterHtml();
