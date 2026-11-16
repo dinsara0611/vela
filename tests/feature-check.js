@@ -551,6 +551,43 @@ export async function run() {
         return ok || JSON.stringify({ restricted: restricted[0], stepsBtns, tried, notGranted: notGranted[0], disconnected: disconnected[0], connected: connected[0] });
     });
 
+    await T('Entry status: "Not received yet" waits (not counted); switching to Received counts it; and back again', async () => {
+        g('openAddTx')('income'); await wait(300);
+        const labels = $('tx-status-done').textContent + '/' + $('tx-status-waiting').textContent;
+        $('tx-amount').value = '1000'; $('tx-desc').value = 'Status test income';
+        $('tx-status-waiting').click();
+        await g('submitTx')(); await wait(300);
+        const t = find('Status test income');
+        const inc0 = g('monthStats')().income;
+        g('openEditTx')(t.id); await wait(300);
+        const shows = $('tx-status-waiting').getAttribute('aria-pressed') === 'true';
+        $('tx-status-done').click(); await g('submitTx')(); await wait(300);
+        const inc1 = g('monthStats')().income;
+        const done = find('Status test income');
+        g('openEditTx')(t.id); await wait(300);
+        $('tx-status-waiting').click(); await g('submitTx')(); await wait(300);
+        const inc2 = g('monthStats')().income;
+        const back = find('Status test income');
+        g('openAddTx')('expense'); await wait(200);
+        const expLabels = $('tx-status-done').textContent + '/' + $('tx-status-waiting').textContent;
+        await close('modal-tx');
+        s().transactions = s().transactions.filter((x) => x.id !== t.id);
+        return (labels === 'Received/Not received yet' && expLabels === 'Paid/Not paid yet' && t.pending === true && shows && done.pending === false && !!done.paidAt && inc1 - inc0 === 1000 && back.pending === true && inc1 - inc2 === 1000)
+            || JSON.stringify({ labels, expLabels, waited: t.pending, shows, done: done.pending, inc: [inc0, inc1, inc2], back: back.pending });
+    });
+
+    await T('SMS restricted by Android: unlock steps shown, never "Connected"', async () => {
+        g('switchTab')('settings'); await wait(200);
+        fakeBankPlugin({ smsPermission: 'denied', restrictedSettings: 'restricted' });
+        await g('refreshBankStatus')();
+        const st = $('bank-sms-state').textContent;
+        const help = $('bank-sms-help').innerText;
+        const btns = !!document.querySelector('#bank-sms-help [data-bank-fix="app"]') && !!document.querySelector('#bank-sms-help [data-bank-fix="check"]');
+        delete window.Capacitor;
+        await g('refreshBankStatus')();
+        return (/restricted setting/.test(st) && /Allow restricted settings/.test(help) && btns) || `state "${st}", buttons ${btns}`;
+    });
+
     await T('Standard edition (no SMS / notification access): explains share & paste, offers no dead switches', async () => {
         g('switchTab')('settings'); await wait(200);
         const { calls } = fakeBankPlugin({ smsAvailable: false, notifAvailable: false, smsPermission: 'unavailable', smsEnabled: false, notifEnabled: false, notifAccess: false, listenerConnected: false });

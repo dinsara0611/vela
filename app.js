@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.17.1';
+const APP_VERSION = '4.17.2';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2148,6 +2148,15 @@ const agoLabel = (ms) => {
 const smsConnState = (s, p) => {
     if (!s || !s.smsEnabled) return { state: 'off', text: 'Off' };
     if (s.paused) return { state: 'paused', text: 'Paused' };
+    if (s.smsPermission !== 'granted' && s.restrictedSettings === 'restricted') {
+        return { state: 'warn', text: 'Blocked by Android: restricted setting', help: `<span><strong>Android blocks SMS access for Vela because it wasn't installed from Google Play.</strong> Vela can't change this for you, but you can allow it (one time, also unlocks notification access):</span>
+        <ol class="bank-steps">
+            <li class="bank-step"><span class="bank-step-n">1</span><span>Switch <em>SMS tracking</em> on here once. If Android says it’s restricted, tap <em>OK</em>. This makes the next option appear.</span></li>
+            <li class="bank-step"><span class="bank-step-n">2</span><span>Tap <em>Open App info</em>, then <em>⋮</em> (top right) › <em>Allow restricted settings</em>, and confirm with your PIN or fingerprint.</span></li>
+            <li class="bank-step"><span class="bank-step-n">3</span><span>In App info › <em>Permissions</em> › <em>SMS</em>, choose <em>Allow</em>. Then come back and tap <em>Check again</em>.</span></li>
+        </ol>
+        <span class="bank-step-btns"><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="app">Open App info</button><button type="button" class="btn btn-ghost btn-sm" data-bank-fix="check">Check again</button></span>` };
+    }
     if (s.smsPermission !== 'granted') {
         return { state: 'warn', text: 'Disconnected: no SMS access', help: `<span><strong>Android hasn't allowed SMS access.</strong> Open App info › ⋮ (top right) › <em>Allow restricted settings</em>, then Permissions › SMS › Allow. If your phone doesn't offer that, share or paste bank SMS instead.</span><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="app">Open App info</button>` };
     }
@@ -3219,6 +3228,24 @@ const updateDateHint = () => {
     const future = isISODate(d) && d > todayISO();
     el.hidden = !future;
     if (future) el.textContent = `This date is in the future. It waits until you tap “${txType === 'income' ? 'Received' : 'Paid'}”, then counts in your balance. Vela reminds you on ${relativeDayLabel(d).toLowerCase() === 'tomorrow' ? 'the day' : shortDate(d)}.`;
+    setTxStatus(txWaiting);
+};
+// Received / Not received yet (Paid / Not paid yet): money that hasn't really arrived or left yet waits,
+// doesn't count in balances, and gets a reminder until it's marked done. A future date always waits.
+let txWaiting = false;
+const setTxStatus = (waiting) => {
+    const d = $('tx-date').value;
+    const future = isISODate(d) && d > todayISO();
+    txWaiting = !!waiting;
+    const w = future || txWaiting;
+    const income = txType === 'income';
+    $('tx-status-done').textContent = income ? 'Received' : 'Paid';
+    $('tx-status-waiting').textContent = income ? 'Not received yet' : 'Not paid yet';
+    setPressed('[data-tx-status]', (b) => (b.dataset.txStatus === 'waiting') === w);
+    $('tx-status-done').disabled = future;
+    $('tx-status-hint').textContent = future ? 'A future date waits until that day.'
+        : w ? `Not counted in your balance until you mark it ${income ? 'received' : 'paid'}. Vela keeps reminding you.`
+            : 'Counted in your balance.';
 };
 
 const openAddTx = (type = 'expense') => {
@@ -3237,6 +3264,7 @@ const openAddTx = (type = 'expense') => {
     setReceiptDraft(null);
     fillCurrencySelect($('tx-currency'), dcur());
     $('tx-date').value = todayISO();
+    txWaiting = false;
     setTxType(type);
     openOrSwap('modal-tx');
 };
@@ -3261,6 +3289,7 @@ const openEditTx = (id) => {
     $('tx-desc').value = t.desc;
     $('tx-date').value = t.date;
     $('tx-note').value = t.note || '';
+    txWaiting = t.pending === true;
     setTxType(t.type, t.category);
     $('tx-source').hidden = false;
     $('tx-source').innerHTML = t.bank
@@ -3317,10 +3346,16 @@ const submitTx = async () => {
     let record;
     if (prev) {
         const idx = state.transactions.findIndex((t) => t.id === id);
-        record = { ...prev, type: txType, desc, amount, currency, category, date, note, accountId, receipt, fixed: txType === 'expense' && (txKind === 'fixed' || !!prev.recurringId), pending: date > todayISO() || prev.pending === true };
+        const waiting = date > todayISO() || txWaiting;
+        record = { ...prev, type: txType, desc, amount, currency, category, date, note, accountId, receipt, fixed: txType === 'expense' && (txKind === 'fixed' || !!prev.recurringId), pending: waiting };
+        // Marked done here: same as tapping Received / Paid. Marked not done: it waits again, with reminders.
+        if (prev.pending && !waiting) { record.paidAt = new Date().toISOString(); record.dueDate = prev.dueDate || prev.date; cancelPaymentReminders(`tx:${id}`); }
+        if (!prev.pending && waiting) delete record.paidAt;
+        if (prev.pending !== waiting) setTimeout(scheduleReminders, 0);
         state.transactions[idx] = record;
     } else {
-        record = { id: generateId(), type: txType, desc, amount, currency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txType === 'expense' && txKind === 'fixed', pending: date > todayISO() };
+        record = { id: generateId(), type: txType, desc, amount, currency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txType === 'expense' && txKind === 'fixed', pending: date > todayISO() || txWaiting };
+        if (record.pending) setTimeout(scheduleReminders, 0);
         // A new fixed expense that repeats becomes a monthly fixed expense (a bill); this entry is its first payment.
         if (record.fixed && isOn($('tx-repeat'))) {
             const day = parseDate(date).getDate();
@@ -5883,6 +5918,7 @@ const initEvents = () => {
         if (d.activityStatus) { activityStatus = d.activityStatus; renderActivity(); return; }
         if (d.statusFilter) { activityStatus = d.statusFilter; activityType = 'all'; activityCategory = 'all'; activityView = 'list'; switchTab('activity'); return; }
         if (d.txKind) { txKindTouched = true; setTxKind(d.txKind); return; }
+        if (d.txStatus) { setTxStatus(d.txStatus === 'waiting'); return; }
         if (d.pick) { const p = txPicks[Number(d.pick)]; if (p) applyPick(p); return; }
         if (d.starterPick) { starterPick(d.starterPick); return; }
         if (d.budgetMode) { budgetModeDraft = d.budgetMode; syncBudgetModeUi(); return; }

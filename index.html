@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.17.1">
+    <link rel="stylesheet" href="style.css?v=4.17.2">
 </head>
 <body data-view="dashboard">
 
@@ -726,6 +726,14 @@
                         <label class="field-label" for="tx-date">Date</label>
                         <input type="date" id="tx-date" class="input" required>
                         <span class="field-hint date-hint" id="tx-date-hint" hidden></span>
+                    </div>
+                    <div class="field" id="tx-status-field">
+                        <span class="field-label" id="tx-status-label">Has it happened?</span>
+                        <div class="segmented segmented-full" role="group" aria-labelledby="tx-status-label">
+                            <button type="button" data-tx-status="done" aria-pressed="true" id="tx-status-done">Received</button>
+                            <button type="button" data-tx-status="waiting" aria-pressed="false" id="tx-status-waiting">Not received yet</button>
+                        </div>
+                        <span class="field-hint" id="tx-status-hint"></span>
                     </div>
                     <p class="tx-source" id="tx-source" hidden></p>
                     <div class="field">
@@ -1421,7 +1429,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.17.1"></script>
+    <script src="app.js?v=4.17.2"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
