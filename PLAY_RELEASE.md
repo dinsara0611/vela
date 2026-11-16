@@ -84,7 +84,10 @@ Bank notification tracking shows what is read and why, and only opens Android se
 
 ## 6. Building a new upload file
 
+Needs Java 21 (Capacitor 8, Android 16 / API 36 target, as Play requires since 31 Aug 2026).
+
 ```
+set JAVA_HOME=C:\Program Files\Microsoft\jdk-21.0.13.21-hotspot
 cd mobile
 npm run sync
 cd android
