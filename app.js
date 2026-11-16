@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.17.0';
+const APP_VERSION = '4.17.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2155,10 +2155,28 @@ const smsConnState = (s, p) => {
 };
 // Notifications: Connected only when Android lists Vela in Notification access AND the listener is running,
 // for at least one installed bank app the user picked.
+// Android's Restricted setting: shown as numbered steps, the first marked done once Vela has opened Notification access
+// (Android only offers "Allow restricted settings" after one blocked attempt).
+const restrictedStepsHtml = (s) => {
+    const tried = (s.notifRequestedAt || 0) > 0;
+    const step = (n, done, html) => `<li class="bank-step${done ? ' is-done' : ''}"><span class="bank-step-n">${done ? '✓' : n}</span><span>${html}</span></li>`;
+    return `<span><strong>Android blocks notification access for Vela because it wasn't installed from Google Play</strong> (a “Restricted setting”). Vela can't change this for you, but you can allow it:</span>
+        <ol class="bank-steps">
+            ${step(1, tried, 'Tap <em>Open Notification access</em>, tap <em>Vela</em> and try to switch it on. Android says it’s restricted: tap <em>OK</em>. This makes the next option appear.')}
+            ${step(2, false, 'Tap <em>Open App info</em>, then <em>⋮</em> (top right) › <em>Allow restricted settings</em>, and confirm with your PIN or fingerprint.')}
+            ${step(3, false, 'Come back, tap <em>Open Notification access</em> again, switch on <em>Vela</em> and tap <em>Allow</em>.')}
+        </ol>
+        <span class="bank-step-btns"><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="ntf">Open Notification access</button><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="app">Open App info</button><button type="button" class="btn btn-ghost btn-sm" data-bank-fix="check">Check again</button></span>`;
+};
 const ntfConnState = (s) => {
     if (!s || !s.notifEnabled) return { state: 'off', text: 'Off' };
     if (s.paused) return { state: 'paused', text: 'Paused' };
     const picked = (s.apps || []).filter((a) => a.selected);
+    // Newer phones report one state straight from Android.
+    if (s.notifState === 'restricted') return { state: 'warn', text: 'Blocked by Android: restricted setting', help: restrictedStepsHtml(s) };
+    if (s.notifState === 'not_requested' || s.notifState === 'not_granted') {
+        return { state: 'warn', text: s.notifState === 'not_requested' ? 'Not allowed yet' : 'Not allowed', help: `<span><strong>Vela doesn’t have notification access.</strong> Open Notification access and switch on Vela. This is different from Vela’s own notifications.</span><span class="bank-step-btns"><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="ntf">Open Notification access</button><button type="button" class="btn btn-ghost btn-sm" data-bank-fix="check">Check again</button></span>` };
+    }
     if (!s.notifAccess) {
         return { state: 'warn', text: 'Disconnected: no notification access', help: `<span><strong>Notification access is off for Vela.</strong> In the list that opens, turn Vela on. If Android says it's a restricted setting: App info › ⋮ › <em>Allow restricted settings</em>, then try again.</span><button type="button" class="btn btn-secondary btn-sm" data-bank-fix="ntf">Open Notification access</button>` };
     }
@@ -5852,7 +5870,16 @@ const initEvents = () => {
         if (d.smsEdit) { smsEdit(d.smsEdit); return; }
         if (d.smsMove) { smsEdit(d.smsMove, true); return; }
         if (d.bankApp) { toggleBankApp(d.bankApp); return; }
-        if (d.bankFix) { const pl = smsPlugin(); if (pl) (d.bankFix === 'ntf' ? pl.openNotificationAccess() : pl.openAppSettings()).catch(() => {}); return; }
+        if (d.bankFix) {
+            const pl = smsPlugin();
+            if (!pl) return;
+            if (d.bankFix === 'check') {
+                refreshBankStatus().then((s) => showToast(s && s.listenerConnected ? 'Bank notification tracking is connected' : s && s.notifAccess ? 'Access is allowed; Android is starting the listener' : 'Notification access is still off', s && s.listenerConnected ? 'success' : 'info'));
+                return;
+            }
+            (d.bankFix === 'ntf' ? pl.openNotificationAccess() : pl.openAppSettings()).catch(() => {});
+            return;
+        }
         if (d.activityStatus) { activityStatus = d.activityStatus; renderActivity(); return; }
         if (d.statusFilter) { activityStatus = d.statusFilter; activityType = 'all'; activityCategory = 'all'; activityView = 'list'; switchTab('activity'); return; }
         if (d.txKind) { txKindTouched = true; setTxKind(d.txKind); return; }

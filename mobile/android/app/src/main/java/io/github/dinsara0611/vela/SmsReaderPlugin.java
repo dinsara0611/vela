@@ -1,6 +1,7 @@
 package io.github.dinsara0611.vela;
 
 import android.Manifest;
+import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -104,13 +105,56 @@ public class SmsReaderPlugin extends Plugin {
         }
     }
 
+    /** Notification access (NotificationListenerService), asked from Android itself. Not POST_NOTIFICATIONS. */
     private boolean notificationAccessGranted() {
         Context ctx = getContext();
+        ComponentName me = BankNotificationListener.component(ctx);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+            try {
+                android.app.NotificationManager nm = (android.app.NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
+                if (nm != null) return nm.isNotificationListenerAccessGranted(me);
+            } catch (Exception e) {
+                // fall back below
+            }
+        }
         String flat = Settings.Secure.getString(ctx.getContentResolver(), "enabled_notification_listeners");
         if (flat == null) return false;
-        String mine = BankNotificationListener.component(ctx).flattenToString();
-        for (String part : flat.split(":")) if (mine.equals(part)) return true;
+        for (String part : flat.split(":")) if (me.flattenToString().equals(part)) return true;
         return false;
+    }
+
+    /**
+     * Android's "Restricted setting" state for Vela (Android 13+). For apps not installed by an app store, Android
+     * blocks Notification access (and on some versions SMS) until the user picks App info > ⋮ > Allow restricted
+     * settings. Vela only reads this; it can't and doesn't change it.
+     * Returns "allowed", "restricted" or "unknown".
+     */
+    private String restrictedSettings() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return "allowed";
+        try {
+            android.app.AppOpsManager ops = (android.app.AppOpsManager) getContext().getSystemService(Context.APP_OPS_SERVICE);
+            int mode = ops.unsafeCheckOpNoThrow("android:access_restricted_settings", android.os.Process.myUid(), getContext().getPackageName());
+            if (mode == android.app.AppOpsManager.MODE_ALLOWED) return "allowed";
+            if (mode == android.app.AppOpsManager.MODE_IGNORED || mode == android.app.AppOpsManager.MODE_ERRORED) return "restricted";
+            // MODE_DEFAULT: decided by how Vela was installed.
+            String src = installSource();
+            return "store".equals(src) ? "allowed" : "restricted";
+        } catch (Exception e) {
+            return "unknown";
+        }
+    }
+
+    /** How Vela was installed: "store", "file" (APK from a browser, chat app or file manager), "other" (e.g. a computer) or "unknown". */
+    private String installSource() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return "unknown";
+        try {
+            int s = getContext().getPackageManager().getInstallSourceInfo(getContext().getPackageName()).getPackageSource();
+            if (s == android.content.pm.PackageInstaller.PACKAGE_SOURCE_STORE) return "store";
+            if (s == android.content.pm.PackageInstaller.PACKAGE_SOURCE_LOCAL_FILE || s == android.content.pm.PackageInstaller.PACKAGE_SOURCE_DOWNLOADED_FILE) return "file";
+            return "other";
+        } catch (Exception e) {
+            return "unknown";
+        }
     }
 
     private boolean declaresSms() {
@@ -159,8 +203,25 @@ public class SmsReaderPlugin extends Plugin {
         ret.put("smsEnabled", p.getBoolean("enabled", false));
         ret.put("notifEnabled", p.getBoolean("notifEnabled", false));
         ret.put("paused", SmsStore.paused(ctx));
-        ret.put("notifAccess", notificationAccessGranted());
-        ret.put("listenerConnected", BankNotificationListener.isConnected());
+        boolean access = hasListener() && notificationAccessGranted();
+        boolean connected = access && BankNotificationListener.isConnected();
+        // Access granted but Android hasn't bound the listener yet (e.g. right after granting): ask it to.
+        if (access && !connected && p.getBoolean("notifEnabled", false)) BankNotificationListener.start(ctx);
+        String restricted = restrictedSettings();
+        boolean requested = p.getLong("notifRequestedAt", 0) > 0;
+        // One clear state for the screen, from what Android reports (never from "the user opened Settings").
+        String notifState = !hasListener() ? "unavailable"
+            : connected ? "connected"
+            : access ? "disconnected"
+            : "restricted".equals(restricted) ? "restricted"
+            : requested ? "not_granted" : "not_requested";
+        ret.put("notifAccess", access);
+        ret.put("listenerConnected", connected);
+        ret.put("notifState", notifState);
+        ret.put("restrictedSettings", restricted);
+        ret.put("installSource", installSource());
+        ret.put("notifRequestedAt", p.getLong("notifRequestedAt", 0));
+        ret.put("listenerConnectedAt", p.getLong("listenerConnectedAt", 0));
         ret.put("postNotifications", NotificationManagerCompat.from(ctx).areNotificationsEnabled());
         ret.put("lastDetected", p.getLong("lastDetected", 0));
         ret.put("hiddenAt", p.getLong("hiddenAt", 0));
@@ -230,6 +291,7 @@ public class SmsReaderPlugin extends Plugin {
     /** Android's Notification access screen (the user grants or removes access there). */
     @PluginMethod
     public void openNotificationAccess(PluginCall call) {
+        SmsStore.prefs(getContext()).edit().putLong("notifRequestedAt", System.currentTimeMillis()).apply();
         Intent i;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             i = new Intent(Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS);

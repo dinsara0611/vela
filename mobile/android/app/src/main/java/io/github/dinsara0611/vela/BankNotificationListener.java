@@ -44,6 +44,7 @@ public class BankNotificationListener extends NotificationListenerService {
     @Override
     public void onListenerConnected() {
         instance = this;
+        SmsStore.prefs(this).edit().putLong("listenerConnectedAt", System.currentTimeMillis()).apply();
         if (!SmsStore.notifOn(this)) return;
         // Bank notifications posted while the listener was down (e.g. right after a restart) that are still showing.
         try {

@@ -4091,6 +4091,12 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 .bank-help { font-size: var(--fs-xs); color: var(--text-2); display: grid; gap: var(--sp-2); padding: 8px 10px; border-radius: var(--r-sm); background: var(--warning-soft); }
 .bank-help strong { color: var(--warning); }
 .bank-help .btn { justify-self: start; }
+.bank-steps { margin: 0; padding: 0; list-style: none; display: grid; gap: 8px; }
+.bank-step { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; align-items: start; color: var(--text-2); }
+.bank-step-n { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; font-size: 11px; font-weight: 800; background: var(--warning); color: #111; }
+.bank-step.is-done { opacity: .7; }
+.bank-step.is-done .bank-step-n { background: var(--income); }
+.bank-step-btns { display: flex; flex-wrap: wrap; gap: 6px; }
 .bank-help[hidden], .bank-apps:empty, .bank-web-note[hidden] { display: none; }
 .bank-apps { display: flex; flex-wrap: wrap; gap: 6px; }
 .bank-apps .chip[disabled] { opacity: .45; }

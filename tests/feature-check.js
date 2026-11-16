@@ -535,6 +535,22 @@ export async function run() {
         return good || JSON.stringify({ ok, noAccess, stopped, noSms, hidden, noApp, paused, fixBtn, web });
     });
 
+    await T('Notification access: restricted, not granted, disconnected and connected come from Android', async () => {
+        g('switchTab')('settings'); await wait(200);
+        const look = async (status) => { fakeBankPlugin(status); await g('refreshBankStatus')(); return [$('bank-ntf-state').textContent, $('bank-ntf-help').innerText]; };
+        const restricted = await look({ notifState: 'restricted', notifAccess: false, listenerConnected: false, restrictedSettings: 'restricted', notifRequestedAt: 0 });
+        const stepsBtns = ['ntf', 'app', 'check'].every((k) => document.querySelector(`#bank-ntf-help [data-bank-fix="${k}"]`));
+        const tried = (await look({ notifState: 'restricted', notifAccess: false, listenerConnected: false, notifRequestedAt: NOW }), document.querySelectorAll('#bank-ntf-help .bank-step.is-done').length);
+        const notGranted = await look({ notifState: 'not_granted', notifAccess: false, listenerConnected: false });
+        const disconnected = await look({ notifState: 'disconnected', notifAccess: true, listenerConnected: false });
+        const connected = await look({ notifState: 'connected', notifAccess: true, listenerConnected: true });
+        delete window.Capacitor;
+        await g('refreshBankStatus')();
+        const ok = /restricted setting/.test(restricted[0]) && /Allow restricted settings/.test(restricted[1]) && stepsBtns && tried === 1
+            && /Not allowed/.test(notGranted[0]) && /different from Vela/.test(notGranted[1]) && /Android stopped/.test(disconnected[0]) && connected[0] === 'Connected';
+        return ok || JSON.stringify({ restricted: restricted[0], stepsBtns, tried, notGranted: notGranted[0], disconnected: disconnected[0], connected: connected[0] });
+    });
+
     await T('Standard edition (no SMS / notification access): explains share & paste, offers no dead switches', async () => {
         g('switchTab')('settings'); await wait(200);
         const { calls } = fakeBankPlugin({ smsAvailable: false, notifAvailable: false, smsPermission: 'unavailable', smsEnabled: false, notifEnabled: false, notifAccess: false, listenerConnected: false });
