@@ -4034,6 +4034,8 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 .pay-summary[data-status="overdue"] { background: var(--danger-soft, rgba(255, 42, 95, 0.15)); color: var(--danger); }
 .pay-summary[data-status="due"] { background: var(--warning-soft); color: var(--warning); }
 .pay-wrap { display: block; width: 100%; min-width: 0; }
+.delete-account-link { display: block; margin: var(--sp-3) auto 0; font-size: var(--fs-sm); color: var(--danger); }
+.delete-account-link[hidden] { display: none; }
 .pay-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--sp-2); width: 100%; }
 .pay-row .pay-end .btn { white-space: nowrap; }
 .pay-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--sp-3); padding: var(--sp-3); border-radius: var(--r-md); background: var(--surface); border: 1px solid var(--border); border-left: 3px solid var(--border-strong); }

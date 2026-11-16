@@ -37,6 +37,8 @@ android {
     productFlavors {
         standard { dimension "edition" }
         full { dimension "edition"; versionNameSuffix "-full" }
+        // Google Play: bank-app notifications (Notification access), no SMS until Google approves it
+        play { dimension "edition" }
     }
     buildTypes {
         release {

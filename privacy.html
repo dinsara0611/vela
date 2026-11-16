@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vela Privacy Policy</title>
+<meta name="description" content="How Vela handles your money data, bank notifications and messages.">
+<style>
+    :root { --bg: #07070b; --card: #12121a; --text: #ecebf5; --text-2: #b4b2c8; --accent: #b47cff; --line: #262636; }
+    @media (prefers-color-scheme: light) { :root { --bg: #f7f6fb; --card: #ffffff; --text: #17161f; --text-2: #4d4b5e; --accent: #7a3cd6; --line: #e3e1ee; } }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    main { max-width: 760px; margin: 0 auto; padding: 32px 16px 64px; }
+    h1 { font-size: 30px; margin: 0 0 4px; }
+    h2 { font-size: 19px; margin: 32px 0 8px; color: var(--accent); }
+    p, li { color: var(--text-2); }
+    strong { color: var(--text); }
+    .meta { color: var(--text-2); font-size: 14px; margin-bottom: 24px; }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
+    a { color: var(--accent); }
+    ul { padding-left: 20px; }
+</style>
+</head>
+<body>
+<main>
+    <h1>Vela Privacy Policy</h1>
+    <p class="meta">Last updated: 16 November 2026 · Applies to the Vela app on Android and the web</p>
+
+    <div class="card">
+        <p><strong>In short:</strong> Vela keeps your money records on your phone. If you sign in, they are synced to your own account so you can use them on another device. Bank messages and notifications are read on your phone only, and are never sent to Vela's servers or to any AI. Vela never asks for your bank password, PIN or one-time codes, and doesn't sell or share your data.</p>
+    </div>
+
+    <h2>What Vela stores</h2>
+    <ul>
+        <li><strong>Your entries:</strong> income, expenses, transfers, accounts, budgets, bills, savings goals, debts, categories, notes and receipt photos you add.</li>
+        <li><strong>Your settings:</strong> currency, exchange rates, reminders and app preferences.</li>
+        <li>These are kept on your device. Without an account nothing leaves your phone.</li>
+    </ul>
+
+    <h2>Optional account and sync</h2>
+    <p>If you sign in (Google or email), your entries, settings and receipt photos are stored in your own private account on Supabase, so they are kept when you change phones. Only you can read them (row-level security is tied to your account). For bank-detected entries this includes the bank name, reference, last 4 digits of the card or account, the shop name and where it was detected (SMS or notification). The text of the bank message itself is not uploaded.</p>
+
+    <h2>Bank notification tracking (optional, Android)</h2>
+    <ul>
+        <li>Only works after you turn it on in Vela and grant <strong>Notification access</strong> in Android settings. You can turn it off any time in Vela (Disconnect bank) or in Android.</li>
+        <li>Android lets an app with Notification access see notifications on the phone. Vela only reads notifications from the Commercial Bank apps you pick (ComBank Digital, ComBank ePassbook, ComBank Q+, FLASH) and ignores all other apps.</li>
+        <li>From a bank notification Vela keeps only what's needed to record the transaction: amount, currency, date, reference, shop and the last 4 digits. One-time codes (OTPs), login and security alerts, promotions and hidden notifications are ignored and never stored.</li>
+        <li>A detected transaction waits on your phone, encrypted with the Android Keystore, until you confirm or ignore it. Nothing is added to your records without your confirmation unless you turn on "Add confident ones automatically". Waiting detections are excluded from phone backups and are deleted when you Disconnect or tap Delete detection records.</li>
+    </ul>
+
+    <h2>Bank SMS (sharing or pasting; SMS reading only in versions that include it)</h2>
+    <p>You can share or paste a bank SMS into Vela to add it. It is read on your phone in the same way as notifications. Versions of Vela that read SMS directly (with your permission) only read bank transaction messages, and never OTPs or personal messages. The Google Play version of Vela does not read your SMS.</p>
+
+    <h2>Vela AI (optional)</h2>
+    <p>If you use Vela AI, your question and a summary of your money (month totals, categories, budgets and recent entries' descriptions and amounts) are sent through Vela's server to Google Gemini to answer you. Bank messages and notifications are never sent to the AI. Don't type passwords, PINs or codes into the chat.</p>
+
+    <h2>Other services</h2>
+    <ul>
+        <li><strong>Exchange rates:</strong> Vela downloads public rates from open.er-api.com. No personal data is sent.</li>
+        <li><strong>Notifications:</strong> reminders are scheduled on your phone.</li>
+        <li>Vela has no ads, no analytics and no tracking.</li>
+    </ul>
+
+    <h2>Security</h2>
+    <p>Data is sent over HTTPS. You can lock Vela with a PIN or fingerprint. Waiting bank detections are encrypted on the phone.</p>
+
+    <h2 id="delete">Your choices and deleting your account</h2>
+    <ul>
+        <li>Turn off bank tracking, delete detection records or disconnect the bank in Settings › Bank connections.</li>
+        <li>Delete entries in the app, or tap Settings › Delete data on this device. Uninstalling removes everything stored on the phone.</li>
+        <li><strong>Delete your account:</strong> in the app (or at <a href="https://dinsara0611.github.io/vela/">dinsara0611.github.io/vela</a>), sign in, open Settings › your profile and tap <strong>Delete my account and data</strong>. This permanently deletes your login and everything synced to it (entries, settings, profile, receipt photos) straight away. Nothing is kept.</li>
+        <li>If you can't sign in, open an issue at the contact link below and we'll delete it for you.</li>
+    </ul>
+
+    <h2>Children</h2>
+    <p>Vela is not directed at children under 13.</p>
+
+    <h2>Contact</h2>
+    <p>Questions or deletion requests: open an issue at <a href="https://github.com/dinsara0611/vela/issues">github.com/dinsara0611/vela/issues</a>.</p>
+</main>
+</body>
+</html>

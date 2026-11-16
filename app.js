@@ -2213,7 +2213,8 @@ const renderBankConnections = () => {
     const noSms = !!(s && s.smsAvailable === false);
     const noNtf = !!(s && s.notifAvailable === false);
     const notHere = { state: 'off', text: 'Not in this version' };
-    const sms = noSms ? notHere : smsConnState(s, p);
+    // Google Play edition: notifications yes, SMS no (until Google approves SMS access).
+    const sms = noSms ? (noNtf ? notHere : { ...notHere, help: '<span><strong>This version doesn’t read SMS.</strong> Vela detects ComBank transactions from the ComBank app’s notifications instead. You can still share a bank SMS to Vela, or tap <em>Check a bank SMS</em>.</span>' }) : smsConnState(s, p);
     const ntf = noNtf ? notHere : ntfConnState(s);
     $('switch-sms').disabled = noSms;
     $('switch-ntf').disabled = noNtf;
@@ -4761,6 +4762,7 @@ const updateUserProfileUI = () => {
         logout.className = cloud ? 'btn btn-danger btn-block' : 'btn btn-primary btn-block';
         logout.innerHTML = cloud ? `${icon('i-logout')} <span>Sign out</span>` : `${icon('i-cloud')} <span>Sign in to sync</span>`;
     }
+    if ($('btn-delete-my-account')) $('btn-delete-my-account').hidden = !cloud;
 };
 
 const resizeImage = (file, size = 256) => new Promise((resolve, reject) => {
@@ -5109,6 +5111,35 @@ const handleSignOut = () => {
             try { if (supabaseClient) await supabaseClient.auth.signOut(); } catch (err) { /* ignore */ }
             resetToSignedOut();
             showToast('Signed out', 'success');
+        }
+    });
+};
+
+// Delete my account: everything synced (entries, settings, profile, photos) and the login itself,
+// through the delete-account function on Vela's server, then everything on this device.
+const deleteMyAccount = () => {
+    if (!supabaseClient || state.auth.isMock || !state.auth.user) return;
+    showConfirm({
+        title: 'Delete your account?',
+        message: 'This permanently deletes your Vela account, every entry, budget, bill, goal and photo synced to it, and all Vela data on this phone. It cannot be undone. Export a backup first (Settings › Reports) if you might need it.',
+        confirmLabel: 'Delete my account',
+        onConfirm: async () => {
+            try {
+                const { data, error } = await supabaseClient.functions.invoke('delete-account', { body: {} });
+                if (error || !data || !data.ok) throw error || new Error('delete failed');
+            } catch (err) {
+                showToast('Your account couldn’t be deleted right now. Check your internet and try again, or contact support from the privacy policy page.', 'warning');
+                return;
+            }
+            try { await supabaseClient.auth.signOut(); } catch (e) { /* already gone */ }
+            const ln = nativePlugin('LocalNotifications');
+            if (ln && state.config.reminderIds.length) { try { await ln.cancel({ notifications: state.config.reminderIds.map((id) => ({ id })) }); } catch (e) { /* ignore */ } }
+            const plugin = smsPlugin();
+            if (plugin) { try { await plugin.disconnect(); } catch (e) { /* ignore */ } }
+            try { localStorage.removeItem(SMS_KEY); } catch (e) { /* ignore */ }
+            storage.remove(STORAGE_KEY);
+            showToast('Your account and data were deleted', 'success');
+            setTimeout(() => window.location.reload(), 900);
         }
     });
 };
@@ -6178,6 +6209,7 @@ const initEvents = () => {
     $('btn-save-profile').addEventListener('click', (e) => withBusy(e.currentTarget, saveProfileChanges));
     $('profile-username').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); $('btn-save-profile').click(); } });
     $('btn-auth-logout').addEventListener('click', handleSignOut);
+    $('btn-delete-my-account').addEventListener('click', deleteMyAccount);
 
     $('btn-toggle-signin').addEventListener('click', () => setAuthMode('signin'));
     $('btn-toggle-signup').addEventListener('click', () => setAuthMode('signup'));

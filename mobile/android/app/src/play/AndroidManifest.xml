@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  "Vela" Google Play edition.
+  Google Play only allows READ_SMS / RECEIVE_SMS after Google approves a Permissions Declaration
+  (e.g. the "SMS-based money management" exception). Until that's approved, this edition leaves SMS out
+  and detects ComBank transactions from the bank app's notifications (Notification access, which the user
+  grants in Android settings), plus sharing or pasting a bank SMS.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <uses-permission android:name="android.permission.READ_SMS" tools:node="remove" />
+    <uses-permission android:name="android.permission.RECEIVE_SMS" tools:node="remove" />
+    <application>
+        <receiver android:name=".SmsReceiver" tools:node="remove" />
+    </application>
+</manifest>
