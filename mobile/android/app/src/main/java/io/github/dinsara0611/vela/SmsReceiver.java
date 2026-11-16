@@ -7,12 +7,15 @@ import android.provider.Telephony;
 import android.telephony.SmsMessage;
 import org.json.JSONObject;
 
-/** Sees each incoming SMS; bank transactions are kept for Vela and shown as a notification or pop-up. */
+/**
+ * Sees each incoming SMS (Android delivers it even when Vela is closed or after a restart). Only when bank SMS
+ * tracking is on and not paused; only bank transactions are kept, everything else is dropped unread.
+ */
 public class SmsReceiver extends BroadcastReceiver {
     @Override
     public void onReceive(Context ctx, Intent intent) {
         if (intent == null || !Telephony.Sms.Intents.SMS_RECEIVED_ACTION.equals(intent.getAction())) return;
-        if (!SmsReaderPlugin.isEnabled(ctx)) return;
+        if (!SmsStore.smsOn(ctx)) return;
         SmsMessage[] parts = Telephony.Sms.Intents.getMessagesFromIntent(intent);
         if (parts == null || parts.length == 0 || parts[0] == null) return;
         String address = parts[0].getOriginatingAddress();
@@ -24,13 +27,15 @@ public class SmsReceiver extends BroadcastReceiver {
         if (info == null) return;
         try {
             JSONObject item = new JSONObject();
-            item.put("id", "sms-" + date + "-" + Math.abs((address + text).hashCode()));
+            item.put("id", "sms-" + date + "-" + Math.abs(((address == null ? "null" : address) + text).hashCode()));
+            item.put("source", "sms");
             item.put("address", address == null ? "" : address);
             item.put("body", text);
             item.put("date", date);
-            SmsStore.add(ctx, item);
+            boolean merged = SmsStore.alreadyNotified(ctx, item, info);
+            if (!SmsStore.add(ctx, item)) return;
             if (SmsReaderPlugin.isForeground()) SmsReaderPlugin.emit(item);
-            else SmsStore.notify(ctx, item, info);
+            else if (!merged) SmsStore.notify(ctx, item, info);
         } catch (Exception e) {
             // Never crash on an odd message.
         }

@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Bank detections stay on this phone: never in cloud backups or device transfers. -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="vela_sms.xml" />
+</full-backup-content>

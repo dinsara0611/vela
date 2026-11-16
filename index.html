@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.15.0">
+    <link rel="stylesheet" href="style.css?v=4.16.0">
 </head>
 <body data-view="dashboard">
 
@@ -482,28 +482,76 @@
                                     <button class="switch" type="button" role="switch" aria-checked="false" id="switch-reminders" aria-label="Bill reminders"></button>
                                 </div>
                             </div>
-                            <div class="setting" id="sms-row" hidden>
-                                <div class="setting-row">
-                                    <div class="setting-text"><span class="setting-title">Bank SMS tracking</span><span class="setting-desc">Reads bank messages (Commercial Bank, BOC, HNB, Sampath and more) on this phone and asks before adding them. Messages never leave your phone.</span></div>
-                                    <button class="switch" type="button" role="switch" aria-checked="false" id="switch-sms" aria-label="Bank SMS tracking"></button>
-                                </div>
-                            </div>
-                            <div class="setting" id="sms-auto-row" hidden>
-                                <div class="setting-row">
-                                    <div class="setting-text"><span class="setting-title">Add confident ones automatically</span><span class="setting-desc">Off: Vela asks before every bank transaction. On: clear, complete messages are added straight away; anything unclear still asks.</span></div>
-                                    <button class="switch" type="button" role="switch" aria-checked="false" id="switch-sms-auto" aria-label="Add confident bank transactions automatically"></button>
-                                </div>
-                            </div>
-                            <button class="row-btn" type="button" id="btn-sms-paste">
-                                <span class="row-icon"><svg class="ic"><use href="#i-file"/></svg></span>
-                                <span class="row-label"><span>Check a bank SMS</span></span>
-                                <svg class="ic chev"><use href="#i-chevron"/></svg>
-                            </button>
                             <button class="row-btn" type="button" id="btn-test-notif" hidden>
                                 <span class="row-icon"><svg class="ic"><use href="#i-bell"/></svg></span>
                                 <span class="row-label"><span>Send a test notification</span></span>
                                 <svg class="ic chev"><use href="#i-chevron"/></svg>
                             </button>
+                        </div>
+                    </div>
+
+                    <div class="settings-group" id="bank-group">
+                        <h2 class="section-label">Bank connections</h2>
+                        <div class="card bank-card" id="bank-card">
+                            <div class="bank-head">
+                                <span class="bank-logo" aria-hidden="true">CB</span>
+                                <div class="bank-id">
+                                    <span class="bank-name">Commercial Bank of Ceylon</span>
+                                    <span class="bank-sub" id="bank-sub">Detects your transactions from SMS and the ComBank app</span>
+                                </div>
+                                <span class="bank-pill" id="bank-overall" data-state="off">Not connected</span>
+                            </div>
+
+                            <p class="bank-web-note" id="bank-web-note" hidden>Automatic detection works in the Vela Android app. Here you can paste a bank SMS to add it.</p>
+
+                            <div class="bank-conns" id="bank-conns">
+                                <div class="bank-conn">
+                                    <div class="bank-conn-row">
+                                        <span class="row-icon"><svg class="ic"><use href="#i-file"/></svg></span>
+                                        <div class="bank-conn-text"><span class="setting-title">SMS tracking</span><span class="bank-state" id="bank-sms-state" data-state="off">Disconnected</span></div>
+                                        <button class="switch" type="button" role="switch" aria-checked="false" id="switch-sms" aria-label="SMS tracking"></button>
+                                    </div>
+                                    <div class="bank-help" id="bank-sms-help" hidden></div>
+                                </div>
+                                <div class="bank-conn">
+                                    <div class="bank-conn-row">
+                                        <span class="row-icon"><svg class="ic"><use href="#i-bell"/></svg></span>
+                                        <div class="bank-conn-text"><span class="setting-title">Bank notification tracking</span><span class="bank-state" id="bank-ntf-state" data-state="off">Disconnected</span></div>
+                                        <button class="switch" type="button" role="switch" aria-checked="false" id="switch-ntf" aria-label="Bank notification tracking"></button>
+                                    </div>
+                                    <div class="bank-apps" id="bank-apps" role="group" aria-label="Commercial Bank apps to listen to"></div>
+                                    <div class="bank-help" id="bank-ntf-help" hidden></div>
+                                </div>
+                            </div>
+
+                            <dl class="bank-facts" id="bank-facts">
+                                <div><dt>Last detected</dt><dd id="bank-last">Nothing yet</dd></div>
+                                <div><dt>Last synced</dt><dd id="bank-sync">Not yet</dd></div>
+                                <div><dt>Waiting for review</dt><dd id="bank-pending">0</dd></div>
+                            </dl>
+
+                            <div class="bank-options" id="bank-options">
+                                <div class="setting" id="sms-auto-row">
+                                    <div class="setting-row">
+                                        <div class="setting-text"><span class="setting-title">Add confident ones automatically</span><span class="setting-desc">Off: Vela asks before every bank transaction. On: clear, complete ones are added straight away; anything unclear still asks.</span></div>
+                                        <button class="switch" type="button" role="switch" aria-checked="false" id="switch-sms-auto" aria-label="Add confident bank transactions automatically"></button>
+                                    </div>
+                                </div>
+                                <div class="setting">
+                                    <div class="setting-row">
+                                        <div class="setting-text"><span class="setting-title">Pause tracking</span><span class="setting-desc">Stops detecting for now; your settings and access stay as they are.</span></div>
+                                        <button class="switch" type="button" role="switch" aria-checked="false" id="switch-bank-pause" aria-label="Pause bank tracking"></button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="bank-actions">
+                                <button type="button" class="btn btn-secondary btn-sm" id="btn-bank-review" hidden>Review waiting</button>
+                                <button type="button" class="btn btn-secondary btn-sm" id="btn-sms-paste">Check a bank SMS</button>
+                                <button type="button" class="btn btn-ghost btn-sm" id="btn-bank-delete">Delete detection records</button>
+                                <button type="button" class="btn btn-danger-ghost btn-sm" id="btn-bank-disconnect">Disconnect bank</button>
+                            </div>
+                            <p class="bank-privacy">Messages and notifications are read on this phone only, kept encrypted until you add or ignore them, and never sent to Vela AI or anywhere else. Vela never asks for your bank password, PIN or codes.</p>
                         </div>
                     </div>
 
@@ -679,6 +727,7 @@
                         <input type="date" id="tx-date" class="input" required>
                         <span class="field-hint date-hint" id="tx-date-hint" hidden></span>
                     </div>
+                    <p class="tx-source" id="tx-source" hidden></p>
                     <div class="field">
                         <label class="field-label" for="tx-note">Note <span class="faint">(optional)</span></label>
                         <textarea id="tx-note" class="input" placeholder="Anything to remember" maxlength="240"></textarea>
@@ -1372,7 +1421,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.15.0"></script>
+    <script src="app.js?v=4.16.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

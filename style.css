@@ -4067,6 +4067,49 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 .chip-count { font-size: 10px; padding: 0 6px; border-radius: var(--r-full); background: var(--surface-2); }
 #sms-auto-row[hidden] { display: none; }
 
+/* Bank connections */
+#confirm-message { white-space: pre-line; }
+.bank-card { padding: var(--sp-4); display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-3); position: relative; overflow: hidden; }
+.bank-conns, .bank-conn, .bank-options, .bank-facts { min-width: 0; }
+.bank-conn { grid-template-columns: minmax(0, 1fr); }
+.bank-conn-text .bank-state { white-space: normal; line-height: 1.35; max-width: 100%; }
+.bank-conn-row .switch { flex: none; }
+.bank-card::before { content: ""; position: absolute; inset: -40% -20% auto auto; width: 220px; height: 220px; border-radius: 50%; background: radial-gradient(circle, rgba(155, 81, 224, .22), transparent 70%); pointer-events: none; }
+.bank-head { display: flex; align-items: center; gap: var(--sp-3); position: relative; }
+.bank-logo { flex: none; width: 44px; height: 44px; border-radius: 14px; display: grid; place-items: center; font-weight: 800; font-size: 15px; letter-spacing: .02em; color: #fff; background: linear-gradient(135deg, #2b59c3, #9b51e0); box-shadow: 0 6px 18px rgba(155, 81, 224, .35); }
+.bank-id { min-width: 0; flex: 1; display: grid; }
+.bank-name { font-weight: 700; font-size: var(--fs-md); }
+.bank-sub { font-size: var(--fs-xs); color: var(--text-3); }
+.bank-pill, .bank-state { font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: var(--r-full); white-space: nowrap; background: var(--surface-2); color: var(--text-3); justify-self: start; }
+.bank-pill[data-state="on"], .bank-state[data-state="on"] { background: var(--income-soft, rgba(46, 204, 113, .15)); color: var(--income); }
+.bank-pill[data-state="warn"], .bank-state[data-state="warn"] { background: var(--warning-soft); color: var(--warning); }
+.bank-pill[data-state="paused"], .bank-state[data-state="paused"] { background: var(--primary-soft); color: var(--primary); }
+.bank-conns { display: grid; gap: var(--sp-2); }
+.bank-conn { border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--sp-3); background: rgba(255, 255, 255, .02); display: grid; gap: var(--sp-2); }
+.bank-conn-row { display: flex; align-items: center; gap: var(--sp-3); }
+.bank-conn-text { flex: 1; min-width: 0; display: grid; gap: 4px; }
+.bank-help { font-size: var(--fs-xs); color: var(--text-2); display: grid; gap: var(--sp-2); padding: 8px 10px; border-radius: var(--r-sm); background: var(--warning-soft); }
+.bank-help strong { color: var(--warning); }
+.bank-help .btn { justify-self: start; }
+.bank-help[hidden], .bank-apps:empty, .bank-web-note[hidden] { display: none; }
+.bank-apps { display: flex; flex-wrap: wrap; gap: 6px; }
+.bank-apps .chip[disabled] { opacity: .45; }
+.bank-facts { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-2); }
+.bank-facts div { display: grid; gap: 2px; min-width: 0; }
+.bank-facts dt { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-3); }
+.bank-facts dd { margin: 0; font-size: var(--fs-xs); font-weight: 600; overflow-wrap: anywhere; }
+.bank-options .setting { padding-left: 0; padding-right: 0; }
+.bank-actions { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
+.btn-danger-ghost { background: transparent; color: var(--expense); border: 1px solid rgba(255, 92, 138, .35); }
+.bank-privacy, .bank-web-note { margin: 0; font-size: var(--fs-xs); color: var(--text-3); }
+.sms-sources { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.sms-source { font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: var(--r-full); background: var(--primary-soft); color: var(--primary); }
+.sms-source[data-source="shared"] { background: var(--warning-soft); color: var(--warning); }
+.sms-move { font-size: var(--fs-xs); justify-self: start; }
+.tx-source { margin: 0; display: flex; gap: 6px; align-items: center; font-size: var(--fs-xs); color: var(--text-2); padding: 8px 10px; border-radius: var(--r-sm); background: var(--surface-2); }
+.tx-source[hidden] { display: none; }
+@media (max-width: 360px) { .bank-facts { grid-template-columns: 1fr 1fr; } }
+
 /* ---------- 17. Motion preferences ---------- */
 @media (prefers-reduced-motion: reduce) {
     *,

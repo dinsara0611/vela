@@ -1,5 +1,6 @@
 package io.github.dinsara0611.vela;
 
+import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
@@ -7,94 +8,224 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.os.Build;
+import android.security.keystore.KeyGenParameterSpec;
+import android.security.keystore.KeyProperties;
+import android.util.Base64;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
+import java.nio.charset.StandardCharsets;
+import java.security.KeyStore;
+import java.util.HashSet;
+import java.util.Set;
+import javax.crypto.Cipher;
+import javax.crypto.KeyGenerator;
+import javax.crypto.SecretKey;
+import javax.crypto.spec.GCMParameterSpec;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
-/** Bank messages that arrived while Vela was closed, kept until the user adds or ignores them. */
+/**
+ * Bank detections (SMS or bank-app notification) waiting for the user to add or ignore them in Vela.
+ * Kept encrypted with a key in the Android Keystore, only until handled, at most 50, and deleted on Disconnect.
+ */
 final class SmsStore {
     private SmsStore() {}
 
-    static final String CHANNEL = "vela-bank";
-    private static final String PREFS = "vela_sms";
-    private static final String KEY = "pending";
+    static final String CHANNEL = "vela-bank-review";
+    static final String PREFS = "vela_sms";
+    private static final String KEY = "pending_enc";
+    private static final String HANDLED = "handled";
+    private static final String KEY_ALIAS = "vela_bank_store";
     private static final int MAX = 50;
+    static final long SAME_WINDOW_MS = 15 * 60 * 1000L;
+
+    static SharedPreferences prefs(Context ctx) {
+        return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+    }
+
+    // ---- settings shared by the receiver, the listener and the plugin ----
+    static boolean smsOn(Context ctx) { return prefs(ctx).getBoolean("enabled", false) && !paused(ctx); }
+    static boolean notifOn(Context ctx) { return prefs(ctx).getBoolean("notifEnabled", false) && !paused(ctx); }
+    static boolean paused(Context ctx) { return prefs(ctx).getBoolean("paused", false); }
+
+    static Set<String> bankApps(Context ctx) {
+        return new HashSet<>(prefs(ctx).getStringSet("bankApps", new HashSet<>()));
+    }
+
+    // ---- encrypted storage ----
+    private static SecretKey key() throws Exception {
+        KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
+        ks.load(null);
+        if (ks.containsAlias(KEY_ALIAS)) return ((KeyStore.SecretKeyEntry) ks.getEntry(KEY_ALIAS, null)).getSecretKey();
+        KeyGenerator kg = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore");
+        kg.init(new KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_ENCRYPT | KeyProperties.PURPOSE_DECRYPT)
+            .setBlockModes(KeyProperties.BLOCK_MODE_GCM)
+            .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
+            .build());
+        return kg.generateKey();
+    }
+
+    private static String seal(String plain) {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return null; // no Keystore AES: don't keep anything
+        try {
+            Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(Cipher.ENCRYPT_MODE, key());
+            byte[] iv = c.getIV();
+            byte[] ct = c.doFinal(plain.getBytes(StandardCharsets.UTF_8));
+            return Base64.encodeToString(iv, Base64.NO_WRAP) + ":" + Base64.encodeToString(ct, Base64.NO_WRAP);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static String open(String sealed) {
+        if (sealed == null || !sealed.contains(":")) return null;
+        try {
+            String[] p = sealed.split(":", 2);
+            Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+            c.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, Base64.decode(p[0], Base64.NO_WRAP)));
+            return new String(c.doFinal(Base64.decode(p[1], Base64.NO_WRAP)), StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            return null;
+        }
+    }
 
     static synchronized JSONArray all(Context ctx) {
+        prefs(ctx).edit().remove("pending").apply(); // older versions kept this unencrypted
         try {
-            return new JSONArray(prefs(ctx).getString(KEY, "[]"));
+            String plain = open(prefs(ctx).getString(KEY, null));
+            return new JSONArray(plain == null ? "[]" : plain);
         } catch (Exception e) {
             return new JSONArray();
         }
     }
 
-    static synchronized void add(Context ctx, JSONObject item) {
-        JSONArray list = all(ctx);
+    private static void save(Context ctx, JSONArray list) {
+        String sealed = seal(list.toString());
+        if (sealed == null) prefs(ctx).edit().remove(KEY).apply();
+        else prefs(ctx).edit().putString(KEY, sealed).apply();
+    }
+
+    private static Set<String> handled(Context ctx) {
+        return new HashSet<>(prefs(ctx).getStringSet(HANDLED, new HashSet<>()));
+    }
+
+    /**
+     * Keeps a detection. Returns false when it's already kept or was already added/ignored (a notification update or
+     * a resent SMS), so no second Vela notification is shown.
+     */
+    static synchronized boolean add(Context ctx, JSONObject item) {
         String id = item.optString("id");
+        if (handled(ctx).contains(id)) return false;
+        JSONArray list = all(ctx);
         for (int i = 0; i < list.length(); i++) {
-            if (id.equals(list.optJSONObject(i).optString("id"))) return;
+            JSONObject o = list.optJSONObject(i);
+            if (o != null && id.equals(o.optString("id"))) return false;
         }
         JSONArray out = new JSONArray();
         out.put(item);
         for (int i = 0; i < list.length() && out.length() < MAX; i++) out.put(list.opt(i));
-        prefs(ctx).edit().putString(KEY, out.toString()).apply();
+        save(ctx, out);
+        prefs(ctx).edit().putLong("lastDetected", System.currentTimeMillis()).apply();
+        return true;
     }
 
-    static synchronized void remove(Context ctx, java.util.Set<String> ids) {
+    /** True when another source already reported what looks like this same transaction (so don't notify twice). */
+    static synchronized boolean alreadyNotified(Context ctx, JSONObject item, BankSms.Info info) {
+        JSONArray list = all(ctx);
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject o = list.optJSONObject(i);
+            if (o == null || o.optString("id").equals(item.optString("id"))) continue;
+            String src = o.optString("source", "sms");
+            BankSms.Info other = "notification".equals(src)
+                ? BankSms.parse(null, o.optString("body"), o.optString("bank", null))
+                : BankSms.parse(o.optString("address"), o.optString("body"));
+            if (BankSms.likelySame(info, item.optString("source", "sms"), item.optLong("date"), other, src, o.optLong("date"), SAME_WINDOW_MS)) return true;
+        }
+        return false;
+    }
+
+    /** Added or ignored in Vela: forget them, remember they're done, remove their notifications. */
+    static synchronized void remove(Context ctx, Set<String> ids) {
         JSONArray list = all(ctx);
         JSONArray out = new JSONArray();
         for (int i = 0; i < list.length(); i++) {
             JSONObject o = list.optJSONObject(i);
             if (o != null && !ids.contains(o.optString("id"))) out.put(o);
         }
-        prefs(ctx).edit().putString(KEY, out.toString()).apply();
+        save(ctx, out);
+        Set<String> done = handled(ctx);
+        done.addAll(ids);
+        if (done.size() > 400) done.clear(); // ids carry timestamps; old ones never come back
+        done.addAll(ids);
+        prefs(ctx).edit().putStringSet(HANDLED, done).apply();
         NotificationManagerCompat nm = NotificationManagerCompat.from(ctx);
         for (String id : ids) nm.cancel(notificationId(id));
+    }
+
+    /** Disconnect / delete: every kept detection and its notification. */
+    static synchronized void clear(Context ctx) {
+        JSONArray list = all(ctx);
+        NotificationManagerCompat nm = NotificationManagerCompat.from(ctx);
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject o = list.optJSONObject(i);
+            if (o != null) nm.cancel(notificationId(o.optString("id")));
+        }
+        prefs(ctx).edit().remove(KEY).remove("pending").remove(HANDLED).remove("lastDetected").remove("hiddenAt").apply();
     }
 
     static int notificationId(String id) {
         return 700000 + Math.abs(id.hashCode() % 100000);
     }
 
-    /** A notification that stays until the message is added or ignored in Vela. */
+    /**
+     * "Bank transaction detected" notification. Respects the user's notification settings, shows no amounts on the
+     * lock screen, opens the review screen when tapped, and can be swiped away (the detection stays in Vela).
+     */
     static void notify(Context ctx, JSONObject item, BankSms.Info info) {
+        if (!NotificationManagerCompat.from(ctx).areNotificationsEnabled()) return;
         NotificationManager manager = (NotificationManager) ctx.getSystemService(Context.NOTIFICATION_SERVICE);
         if (manager == null) return;
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            NotificationChannel ch = new NotificationChannel(CHANNEL, "Bank messages", NotificationManager.IMPORTANCE_HIGH);
-            ch.setDescription("Bank SMS that Vela can add for you");
+            NotificationChannel ch = new NotificationChannel(CHANNEL, "Bank transactions to review", NotificationManager.IMPORTANCE_HIGH);
+            ch.setDescription("When Vela detects a bank transaction it asks you to review it");
+            ch.setLockscreenVisibility(Notification.VISIBILITY_PRIVATE);
             manager.createNotificationChannel(ch);
         }
+        String id = item.optString("id");
         Intent open = new Intent(ctx, MainActivity.class);
         open.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
-        open.putExtra("velaSms", item.optString("id"));
+        open.putExtra("velaReview", id);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
-        PendingIntent tap = PendingIntent.getActivity(ctx, notificationId(item.optString("id")), open, flags);
+        PendingIntent tap = PendingIntent.getActivity(ctx, notificationId(id), open, flags);
         String money = ("USD".equals(info.currency) ? "$" : "Rs. ") + info.amount;
-        String what = "out".equals(info.direction) ? "Expense" : "in".equals(info.direction) ? "Income"
-            : "atm".equals(info.direction) ? "ATM withdrawal" : "Reversal";
-        String title = "New bank transaction detected";
-        String text = info.bank + " \u00b7 " + money + " \u00b7 " + what + ". Tap to review it in Vela; nothing is added until you confirm.";
+        String text = "out".equals(info.direction) ? money + " spent from " + info.bank + "."
+            : "in".equals(info.direction) ? money + " received in " + info.bank + "."
+            : "atm".equals(info.direction) ? money + " ATM withdrawal from " + info.bank + "."
+            : money + " reversal at " + info.bank + ".";
+        Notification publicVersion = new NotificationCompat.Builder(ctx, CHANNEL)
+            .setSmallIcon(R.drawable.ic_stat_vela)
+            .setColor(0xFF9B51E0)
+            .setContentTitle("Vela")
+            .setContentText("Bank transaction detected. Unlock to review.")
+            .build();
         NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_vela)
             .setColor(0xFF9B51E0)
-            .setContentTitle(title)
-            .setContentText(info.bank + " \u00b7 " + money + " \u00b7 " + what)
-            .setStyle(new NotificationCompat.BigTextStyle().bigText(text))
+            .setContentTitle("Bank transaction detected")
+            .setContentText(text + " Tap to review.")
+            .setStyle(new NotificationCompat.BigTextStyle().bigText(text + " Tap to review and add it to Vela. Nothing is added until you confirm."))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_REMINDER)
-            .setOngoing(true)
-            .setAutoCancel(false)
+            .setCategory(NotificationCompat.CATEGORY_STATUS)
+            .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
+            .setOnlyAlertOnce(true)
+            .setAutoCancel(true)
             .setContentIntent(tap);
         try {
-            manager.notify(notificationId(item.optString("id")), b.build());
+            manager.notify(notificationId(id), b.build());
         } catch (SecurityException e) {
-            // Notifications not allowed: the message still waits in Vela.
+            // Notifications not allowed: the detection still waits in Vela.
         }
-    }
-
-    private static SharedPreferences prefs(Context ctx) {
-        return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 }
