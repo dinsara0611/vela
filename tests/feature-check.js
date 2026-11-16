@@ -121,6 +121,98 @@ export async function run() {
         return (upcoming && st.income === 150000) || `upcoming ${upcoming}, income ${st.income}`;
     });
 
+    await T('Waiting entry: not counted until "Received", then counts from today', async () => {
+        const st0 = g('monthStats')();
+        const cash0 = g('accountBalance')(s().accounts[0]);
+        const rent = find('Rent');
+        const waiting = rent.pending === true;
+        g('switchTab')('dashboard'); await wait(300);
+        const btn = document.querySelector(`[data-confirm-tx="${rent.id}"]`);
+        const label = btn && btn.textContent.trim();
+        btn.click(); await wait(300);
+        const st1 = g('monthStats')();
+        const cash1 = g('accountBalance')(s().accounts[0]);
+        return (waiting && /Received/.test(label) && rent.pending === false && rent.date === today && st1.income === st0.income + 30000 && cash1 === cash0 + 30000)
+            || `waiting ${waiting}, button "${label}", pending ${rent.pending}, date ${rent.date}, income ${st0.income}->${st1.income}, cash ${cash0}->${cash1}`;
+    });
+
+    await T('Past waiting entry says "Not confirmed" and still does not count', async () => {
+        const y = iso(addDays(new Date(), -1));
+        s().transactions.push({ id: 'wait-1', type: 'expense', desc: 'Water bill', amount: 1800, currency: 'LKR', category: 'Utilities', date: y, note: '', createdAt: 5, recurringId: null, accountId: 'acc-cash', receipt: null, fixed: true, pending: true });
+        g('saveState')(); g('switchTab')('activity'); await wait(300);
+        const spentBefore = g('expenses')().some((t) => t.id === 'wait-1');
+        const row = document.querySelector('[data-confirm-tx="wait-1"]');
+        const badge = row && row.closest('li').querySelector('.tx-upcoming').textContent;
+        g('confirmTx')('wait-1'); await wait(200);
+        const counted = g('expenses')().some((t) => t.id === 'wait-1');
+        return (!spentBefore && badge === 'Not confirmed' && /Paid/.test(row.textContent) && counted) || `counted before ${spentBefore}, badge ${badge}, after ${counted}`;
+    });
+
+    await T('Bank SMS: Commercial Bank debit/credit read, OTPs ignored', () => {
+        const p = g('parseBankSms');
+        const a = p({ id: 'a', address: 'COMBANK', body: 'Dear Cardholder, your Debit Card ending #4321 has been debited with LKR 2,500.00 at KEELLS SUPER on 16/11/26 10:20.', date: Date.now() });
+        const b = p({ id: 'b', address: 'COMBANK', body: 'Your A/C xxxx5678 has been credited with Rs. 150,000.00 from ABC PVT LTD on 16/11/26. Salary.', date: Date.now() });
+        const c = p({ id: 'c', address: 'COMBANK', body: 'Your OTP for the transaction of LKR 2,500.00 is 123456. Do not share.', date: Date.now() });
+        const d = p({ id: 'd', address: 'HNB', body: 'Purchase of USD 12.99 at NETFLIX.COM on your card ending 1111', date: Date.now() });
+        const ok = a && a.type === 'expense' && a.amount === 2500 && a.desc === 'Keells Super' && a.bank === 'Commercial Bank' && a.last4 === '4321' && a.category === 'Food'
+            && b && b.type === 'income' && b.amount === 150000 && b.category === 'Salary'
+            && c === null
+            && d && d.currency === 'USD' && d.amount === 12.99 && d.bank === 'HNB';
+        return ok || JSON.stringify({ a, b, c, d });
+    });
+
+    await T('Bank SMS: turn on, pop-up, add to chosen account, match a waiting entry', async () => {
+        const calls = { cleared: [] };
+        const msgs = [
+            { id: 'sms-1', address: 'COMBANK', body: 'Your Debit Card ending 4321 has been debited with LKR 1,750.00 at PIZZA HUT on 16/11/26', date: Date.now() - 3600000 },
+            { id: 'sms-2', address: 'COMBANK', body: 'Your A/C has been credited with LKR 45,000.00 from KOTHALAWALA on 16/11/26', date: Date.now() - 1800000 }
+        ];
+        // A waiting income the second message confirms.
+        s().transactions.push({ id: 'wait-2', type: 'income', desc: 'Rent kothalawala', amount: 45000, currency: 'LKR', category: 'OtherIncome', date: today, note: '', createdAt: 6, recurringId: null, accountId: 'acc-cash', receipt: null, fixed: false, pending: true });
+        window.Capacitor = { isNativePlatform: () => true, Plugins: {
+            SmsReader: {
+                checkPermissions: async () => ({ sms: 'granted' }), requestPermissions: async () => ({ sms: 'granted' }),
+                setEnabled: async () => {}, getPending: async () => ({ messages: [] }), readInbox: async () => ({ messages: msgs }),
+                clearHandled: async ({ ids }) => { calls.cleared.push(...ids); }, addListener: () => {}
+            },
+            LocalNotifications: { checkPermissions: async () => ({ display: 'granted' }), requestPermissions: async () => ({ display: 'granted' }) }
+        } };
+        await g('enableSmsTracking')(true); await wait(500);
+        const sheetOpen = g('isSheetOpen')('modal-sms');
+        const cards = document.querySelectorAll('#sms-list .sms-card').length;
+        const matchBtn = document.querySelector('[data-sms-match="sms-2"]');
+        $('sms-account').value = 'acc-cash';
+        document.querySelector('[data-sms-add="sms-1"]').click(); await wait(300);
+        const pizza = s().transactions.find((t) => t.desc === 'Pizza Hut');
+        // The list redraws after each decision: take the button from the current list.
+        document.querySelector('[data-sms-match="sms-2"]').click(); await wait(400);
+        const rent2 = s().transactions.find((t) => t.id === 'wait-2');
+        const dupes = s().transactions.filter((t) => t.amount === 45000).length;
+        // Seen messages are not offered again.
+        const again = await g('scanSms')();
+        delete window.Capacitor;
+        localStorage.removeItem('VELA_SMS');
+        return (sheetOpen && cards === 2 && !!matchBtn && pizza && pizza.amount === 1750 && pizza.accountId === 'acc-cash' && rent2.pending === false && dupes === 1 && calls.cleared.includes('sms-1') && calls.cleared.includes('sms-2') && again === 0 && !g('isSheetOpen')('modal-sms'))
+            || `sheet ${sheetOpen}, cards ${cards}, match ${!!matchBtn}, pizza ${pizza && pizza.amount}/${pizza && pizza.accountId}, rent confirmed ${rent2 && rent2.pending === false}, 45k entries ${dupes}, cleared ${calls.cleared}, again ${again}`;
+    });
+
+    await T('Waiting entries get a notification that stays until confirmed', async () => {
+        const later = iso(addDays(new Date(), 2));
+        s().transactions.push({ id: 'wait-3', type: 'income', desc: 'Freelance job', amount: 20000, currency: 'LKR', category: 'Freelance', date: later, note: '', createdAt: 7, recurringId: null, accountId: 'acc-cash', receipt: null, fixed: false, pending: true });
+        let scheduled = [];
+        window.Capacitor = { isNativePlatform: () => true, Plugins: { LocalNotifications: {
+            checkPermissions: async () => ({ display: 'granted' }), requestPermissions: async () => ({ display: 'granted' }),
+            createChannel: async () => {}, cancel: async () => {}, schedule: async (o) => { scheduled = o.notifications; }
+        } } };
+        s().config.reminders = true;
+        await g('scheduleReminders')();
+        delete window.Capacitor;
+        s().config.reminders = false;
+        const n = scheduled.find((x) => x.extra && x.extra.txId === 'wait-3');
+        s().transactions = s().transactions.filter((t) => t.id !== 'wait-3');
+        return (n && n.ongoing === true && n.autoCancel === false) || `notification ${JSON.stringify(n)}`;
+    });
+
     await T('Delete entry (with confirm)', async () => {
         g('deleteTx')(find('Spotify').id); await confirmOk(); await close('modal-tx');
         return !find('Spotify') || 'still there';

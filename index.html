@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.13.0">
+    <link rel="stylesheet" href="style.css?v=4.14.0">
 </head>
 <body data-view="dashboard">
 
@@ -481,6 +481,12 @@
                                     <button class="switch" type="button" role="switch" aria-checked="false" id="switch-reminders" aria-label="Bill reminders"></button>
                                 </div>
                             </div>
+                            <div class="setting" id="sms-row" hidden>
+                                <div class="setting-row">
+                                    <div class="setting-text"><span class="setting-title">Bank SMS tracking</span><span class="setting-desc">Reads bank messages (Commercial Bank, BOC, HNB, Sampath and more) on this phone and asks before adding them. Messages never leave your phone.</span></div>
+                                    <button class="switch" type="button" role="switch" aria-checked="false" id="switch-sms" aria-label="Bank SMS tracking"></button>
+                                </div>
+                            </div>
                             <button class="row-btn" type="button" id="btn-test-notif" hidden>
                                 <span class="row-icon"><svg class="ic"><use href="#i-bell"/></svg></span>
                                 <span class="row-label"><span>Send a test notification</span></span>
@@ -700,6 +706,28 @@
                     <input type="text" id="bot-input" class="input" placeholder="Ask anything, or “kottu 1200”" maxlength="160" autocomplete="off" enterkeyhint="send">
                     <button type="submit" class="btn btn-primary bot-send" id="bot-send" aria-label="Send"><svg class="ic"><use href="#i-arrow-up"/></svg></button>
                 </form>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bank messages found -->
+    <div class="sheet-overlay" id="modal-sms" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sms-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <div><h2 class="sheet-title" id="sms-title">From your bank</h2><span class="card-sub" id="sms-count"></span></div>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body">
+                <div class="field">
+                    <label class="field-label" for="sms-account">Add to account</label>
+                    <div class="select"><select id="sms-account" class="input"></select></div>
+                </div>
+                <ul class="sms-list" id="sms-list"></ul>
+            </div>
+            <div class="sheet-foot">
+                <button type="button" class="btn btn-secondary" data-close-sheet>Later</button>
+                <button type="button" class="btn btn-primary" id="btn-sms-all">Add all</button>
             </div>
         </div>
     </div>
@@ -1296,7 +1324,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.13.0"></script>
+    <script src="app.js?v=4.14.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

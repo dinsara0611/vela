@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.13.0';
+const APP_VERSION = '4.14.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -176,7 +176,9 @@ const todayFast = () => {
     }
     return todayCache;
 };
-const isUpcoming = (t) => !!t && t.date > todayFast();
+// Not counted yet: dated in the future, or waiting for you to confirm it arrived / was paid.
+const isUpcoming = (t) => !!t && (t.pending === true || t.date > todayFast());
+const isWaiting = (t) => !!t && t.pending === true && t.date <= todayFast();
 
 const relativeDayLabel = (dateStr) => {
     const d = parseDate(dateStr);
@@ -418,7 +420,9 @@ const normalizeTx = (t, forcedType) => {
         createdAt: stamp(t.createdAt) || stamp(t.created_at),
         recurringId: t.recurringId ? String(t.recurringId) : null,
         // Fixed expenses: rent, internet, subscriptions... Entries logged from a bill are always fixed.
-        fixed: type === 'expense' && (t.fixed === true || !!t.recurringId)
+        fixed: type === 'expense' && (t.fixed === true || !!t.recurringId),
+        // Money that hasn't come in / gone out yet: counts once confirmed. Old future-dated entries become waiting.
+        pending: type !== 'transfer' && (t.pending === true || (t.pending === undefined && (cleanDate(t.date) || '') > toISODate()))
     };
 };
 
@@ -1410,6 +1414,22 @@ const scheduleReminders = async ({ ask = false } = {}) => {
                 schedule: { at, allowWhileIdle: true }
             });
         });
+        // Waiting entries: on their day at 9 am, a notification that stays until you confirm in Vela.
+        state.transactions.filter((t) => t.pending && t.type !== 'transfer').forEach((t) => {
+            const d = parseDate(t.date);
+            const at = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 9, 0, 0);
+            if (at.getTime() <= now) return;
+            notifications.push({
+                ...notifStyle,
+                id: pendingNotifId(t.id),
+                title: t.type === 'income' ? `${t.desc}: did ${formatCurrency(t.amount, t.currency)} arrive?` : `${t.desc}: ${formatCurrency(t.amount, t.currency)} due today`,
+                body: t.type === 'income' ? 'Open Vela and tap Received when it arrives.' : 'Open Vela and tap Paid once you pay it.',
+                ongoing: true,
+                autoCancel: false,
+                extra: { txId: t.id },
+                schedule: { at, allowWhileIdle: true }
+            });
+        });
         // Every evening at 8 pm.
         notifications.push({
             ...notifStyle,
@@ -1483,11 +1503,211 @@ const txRow = (t, { showDate = true } = {}) => {
     const signed = formatSigned(t.type === 'income' ? value : -value, dcur());
     const orig = t.currency !== dcur() ? `<span class="tx-orig-inline">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>` : '';
     const label = showDate ? cat.name : (t.note || cat.name);
-    return `<li><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
+    const waitingStrip = t.pending ? `<div class="tx-confirm"><span>${isWaiting(t) ? (t.type === 'income' ? 'Has it arrived?' : 'Has it been paid?') : `Waiting until ${escapeHtml(shortDate(t.date))}`}</span><button type="button" class="btn btn-xs ${t.type === 'income' ? 'btn-income' : 'btn-primary'}" data-confirm-tx="${escapeHtml(t.id)}">${icon('i-check', 'ic ic-sm')} ${t.type === 'income' ? 'Received' : 'Paid'}</button></div>` : '';
+    return `<li class="${t.pending ? 'tx-li-pending' : ''}"><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
         ${catBadge(t.category, t.type)}
-        <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub">${isUpcoming(t) ? '<span class="tx-upcoming">Upcoming</span>' : ''}${t.fixed ? '<span class="tx-fixed">Fixed</span>' : ''}${t.recurringId ? icon('i-repeat') : ''}${t.receipt ? icon('i-image') : ''}<span>${escapeHtml(label)}</span>${orig}</span></span>
+        <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub">${isUpcoming(t) ? `<span class="tx-upcoming">${isWaiting(t) ? 'Not confirmed' : 'Upcoming'}</span>` : ''}${t.fixed ? '<span class="tx-fixed">Fixed</span>' : ''}${t.recurringId ? icon('i-repeat') : ''}${t.receipt ? icon('i-image') : ''}<span>${escapeHtml(label)}</span>${orig}</span></span>
         <span class="tx-amt"><span class="amount ${t.type === 'income' ? 'is-income' : ''}">${escapeHtml(signed)}</span>${when}</span>
-    </button></li>`;
+    </button>${waitingStrip}</li>`;
+};
+
+/* ---- Bank SMS tracking (Android): reads bank messages on this phone and asks before adding ---- */
+const SMS_KEY = 'VELA_SMS';
+const smsPrefs = () => {
+    try { return { enabled: false, since: 0, seen: [], accountId: null, ...(JSON.parse(localStorage.getItem(SMS_KEY) || '{}')) }; } catch (e) { return { enabled: false, since: 0, seen: [], accountId: null }; }
+};
+const saveSmsPrefs = (p) => { try { localStorage.setItem(SMS_KEY, JSON.stringify({ ...p, seen: p.seen.slice(-500) })); } catch (e) { /* storage blocked */ } };
+const smsPlugin = () => nativePlugin('SmsReader');
+let smsQueue = [];
+
+const SMS_AMOUNT = /(LKR|SLR|Rs\.?|USD|US\$)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i;
+const SMS_OUT = /\b(debited|debit|withdrawn|withdrawal|purchase|purchased|spent|paid|payment of|deducted|charged|transferred to|sent to)\b/i;
+const SMS_IN = /\b(credited|deposited|deposit of|received|transferred from|salary)\b/i;
+const SMS_SKIP = /\b(otp|one[- ]time|verification code|password|pin is|offer|win |congratulations)\b/i;
+const SMS_BANKS = [[/combank|commercial/i, 'Commercial Bank'], [/\bboc\b|bank of ceylon/i, 'BOC'], [/\bhnb\b|hatton national/i, 'HNB'], [/sampath/i, 'Sampath Bank'], [/people'?s/i, "People's Bank"], [/\bnsb\b/i, 'NSB'], [/\bntb\b|nations trust/i, 'Nations Trust'], [/seylan/i, 'Seylan Bank'], [/dfcc/i, 'DFCC'], [/\bndb\b/i, 'NDB'], [/pan ?asia|pabc/i, 'Pan Asia Bank'], [/amana/i, 'Amana Bank']];
+const titleCase = (s) => s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
+
+// "Dear Cardholder, your card ending 1234 has been debited with LKR 2,500.00 at KEELLS SUPER on 16/11/26" ->
+// { type: 'expense', amount: 2500, currency: 'LKR', desc: 'Keells Super', bank: 'Commercial Bank', ... }
+const parseBankSms = (msg) => {
+    const body = String(msg.body || '');
+    const address = String(msg.address || '');
+    if (!body || SMS_SKIP.test(body)) return null;
+    const m = SMS_AMOUNT.exec(body);
+    if (!m) return null;
+    const out = SMS_OUT.test(body);
+    const inn = SMS_IN.test(body);
+    if (!out && !inn) return null;
+    const amount = toNumber(m[2], NaN);
+    if (!(amount > 0)) return null;
+    const type = out ? 'expense' : 'income';
+    const currency = /^us/i.test(m[1]) ? 'USD' : 'LKR';
+    const bankHit = SMS_BANKS.find(([re]) => re.test(address) || re.test(body));
+    const bank = bankHit ? bankHit[1] : (address || 'Bank');
+    const place = /\b(?:at|@)\s+([A-Za-z0-9][A-Za-z0-9 &'.*\-\/]{1,40}?)(?=\s+(?:on|for|via|ref|dated|at\s+\d)\b|[.,;]|\s*$)/i.exec(body)
+        || (type === 'income' ? /\bfrom\s+([A-Za-z][A-Za-z0-9 &'.\-]{1,40}?)(?=\s+(?:on|to|ref|dated)\b|[.,;]|\s*$)/i.exec(body) : /\bto\s+([A-Za-z][A-Za-z0-9 &'.\-]{1,40}?)(?=\s+(?:on|from|ref|dated)\b|[.,;]|\s*$)/i.exec(body));
+    const merchant = place ? titleCase(place[1].trim()) : '';
+    const last4 = (/(?:card|a\/c|acct|account)[^0-9]{0,20}(?:x+|\*+|#|ending\s*)?(\d{4})\b/i.exec(body) || [])[1] || null;
+    const date = msg.date ? toISODate(new Date(Number(msg.date))) : todayISO();
+    const desc = merchant || (type === 'income' ? `${bank} deposit` : `${bank} payment`);
+    let category = type === 'income' ? (/salary/i.test(body) ? 'Salary' : 'OtherIncome') : (guessCategory(merchant || body) || 'Other');
+    if (!state.categories.some((c) => c.id === category && c.type === type)) category = FALLBACK_CATEGORY[type];
+    return { id: String(msg.id), type, amount, currency, desc, category, date, bank, last4, merchant, body };
+};
+
+// The account bank SMS go into: the one you picked, else a bank account named like the bank, else your first bank account.
+const smsAccountFor = (item) => {
+    const p = smsPrefs();
+    if (p.accountId && state.accounts.some((a) => a.id === p.accountId)) return p.accountId;
+    const named = state.accounts.find((a) => a.name.toLowerCase().includes(item.bank.toLowerCase().split(' ')[0]));
+    const bank = state.accounts.find((a) => a.kind === 'bank' || a.kind === 'card');
+    return (named || bank || state.accounts[0]).id;
+};
+// A waiting entry this message probably confirms (same direction, amount within 1%, within 5 days).
+const smsMatchFor = (item) => state.transactions.find((t) => t.pending && t.type === item.type
+    && Math.abs(toDisplay(t.amount, t.currency) - toDisplay(item.amount, item.currency)) <= Math.max(1, toDisplay(item.amount, item.currency) * 0.01)
+    && Math.abs(daysBetween(parseDate(t.date), parseDate(item.date))) <= 5);
+
+const renderSmsSheet = () => {
+    const list = $('sms-list');
+    if (!smsQueue.length) { list.innerHTML = ''; return; }
+    const accOpts = state.accounts.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('');
+    $('sms-account').innerHTML = accOpts;
+    $('sms-account').value = smsAccountFor(smsQueue[0]);
+    $('sms-count').textContent = `${plural(smsQueue.length, 'bank message', 'bank messages')} to check`;
+    list.innerHTML = smsQueue.map((i) => {
+        const match = smsMatchFor(i);
+        const signed = formatSigned(i.type === 'income' ? i.amount : -i.amount, i.currency);
+        return `<li class="sms-card" data-sms-card="${escapeHtml(i.id)}">
+            <div class="sms-top">${catBadge(i.category, i.type)}<div class="sms-main"><strong>${escapeHtml(i.desc)}</strong><span>${escapeHtml(i.bank)}${i.last4 ? ` ·· ${escapeHtml(i.last4)}` : ''} · ${escapeHtml(relativeDayLabel(i.date))}</span></div>
+            <span class="amount ${i.type === 'income' ? 'text-income' : ''}">${escapeHtml(signed)}</span></div>
+            <p class="sms-body">${escapeHtml(i.body.slice(0, 220))}</p>
+            ${match ? `<button type="button" class="btn btn-income btn-sm btn-block" data-sms-match="${escapeHtml(i.id)}">${icon('i-check', 'ic ic-sm')} Confirm “${escapeHtml(match.desc)}”</button>` : ''}
+            <div class="sms-actions"><button type="button" class="btn btn-secondary btn-sm" data-sms-ignore="${escapeHtml(i.id)}">Ignore</button><button type="button" class="btn ${i.type === 'income' ? 'btn-income' : 'btn-primary'} btn-sm" data-sms-add="${escapeHtml(i.id)}">Add ${i.type}</button></div>
+        </li>`;
+    }).join('');
+};
+const showSmsSheet = () => {
+    if (!smsQueue.length) return;
+    renderSmsSheet();
+    if (!isSheetOpen('modal-sms')) openOrSwap('modal-sms');
+};
+const smsHandled = async (ids) => {
+    const p = smsPrefs();
+    p.seen = [...new Set(p.seen.concat(ids))];
+    saveSmsPrefs(p);
+    smsQueue = smsQueue.filter((i) => !ids.includes(i.id));
+    const plugin = smsPlugin();
+    if (plugin) { try { await plugin.clearHandled({ ids }); } catch (e) { /* ignore */ } }
+    if (smsQueue.length) renderSmsSheet(); else closeSheet('modal-sms');
+};
+const smsAdd = (id) => {
+    const i = smsQueue.find((x) => x.id === id);
+    if (!i) return;
+    const p = smsPrefs();
+    p.accountId = $('sms-account').value || null;
+    saveSmsPrefs(p);
+    quickSaveTx({ type: i.type, desc: i.desc, amount: i.amount, currency: i.currency, category: i.category, date: i.date, accountId: p.accountId || smsAccountFor(i), note: `From ${i.bank} SMS` });
+    showToast(`Added from ${i.bank}: ${formatCurrency(i.amount, i.currency)}`, 'success');
+    smsHandled([id]);
+};
+const smsIgnore = (id) => smsHandled([id]);
+const smsConfirmMatch = (id) => {
+    const i = smsQueue.find((x) => x.id === id);
+    const match = i && smsMatchFor(i);
+    if (match) confirmTx(match.id);
+    smsHandled([id]);
+};
+const smsTake = (messages) => {
+    const p = smsPrefs();
+    const known = new Set(p.seen.concat(smsQueue.map((i) => i.id)));
+    const fresh = (messages || []).filter((m) => m && !known.has(String(m.id))).map(parseBankSms).filter(Boolean);
+    fresh.sort((a, b) => (a.date < b.date ? 1 : -1));
+    smsQueue = smsQueue.concat(fresh);
+    return fresh.length;
+};
+// On start and whenever Vela comes back: messages that came while it was closed, plus the inbox since last time.
+const scanSms = async () => {
+    const plugin = smsPlugin();
+    const p = smsPrefs();
+    if (!plugin || !p.enabled) return 0;
+    let added = 0;
+    try { added += smsTake((await plugin.getPending()).messages); } catch (e) { /* ignore */ }
+    try {
+        const since = p.since || Date.now() - 3 * 86400000;
+        added += smsTake((await plugin.readInbox({ since, limit: 100 })).messages);
+        const q = smsPrefs();
+        q.since = Date.now();
+        saveSmsPrefs(q);
+    } catch (e) { /* permission removed */ }
+    if (smsQueue.length) showSmsSheet();
+    return added;
+};
+const enableSmsTracking = async (on) => {
+    const plugin = smsPlugin();
+    if (!plugin) { showToast('Bank SMS tracking works in the Android app.', 'info'); setSwitch($('switch-sms'), false); return; }
+    if (on) {
+        let perm = 'prompt';
+        try { perm = (await plugin.checkPermissions()).sms; } catch (e) { /* ignore */ }
+        if (perm !== 'granted') {
+            try { perm = (await plugin.requestPermissions({ permissions: ['sms'] })).sms; } catch (e) { perm = 'denied'; }
+        }
+        if (perm !== 'granted') {
+            setSwitch($('switch-sms'), false);
+            showToast('SMS permission is off. If Android says it is restricted: App info > ⋮ > Allow restricted settings, then try again.', 'warning');
+            return;
+        }
+        const ln = nativePlugin('LocalNotifications');
+        if (ln) await ensureNotifPermission(ln, true);
+    }
+    const p = smsPrefs();
+    p.enabled = on;
+    if (on && !p.since) p.since = Date.now() - 3 * 86400000; // also offer the last 3 days
+    saveSmsPrefs(p);
+    try { await plugin.setEnabled({ enabled: on }); } catch (e) { /* ignore */ }
+    setSwitch($('switch-sms'), on);
+    showToast(on ? 'Bank SMS tracking is on. Vela asks before adding anything.' : 'Bank SMS tracking is off', 'success');
+    if (on) {
+        const n = await scanSms();
+        if (!n) showToast('No new bank messages from the last 3 days.', 'info');
+    }
+};
+const initSms = () => {
+    const plugin = smsPlugin();
+    if (!plugin) return;
+    plugin.addListener('smsReceived', (m) => { if (smsTake([m])) { haptic('MEDIUM'); showSmsSheet(); } });
+    if (smsPrefs().enabled) {
+        plugin.setEnabled({ enabled: true }).catch(() => {});
+        setTimeout(scanSms, 1800);
+    }
+};
+
+/* ---- Confirming money that was waiting ---- */
+const pendingNotifId = (id) => hashToInt(`p-${id}`);
+const confirmTx = (id) => {
+    const t = state.transactions.find((x) => x.id === id);
+    if (!t || !t.pending) return;
+    t.pending = false;
+    if (t.date > todayISO()) t.date = todayISO(); // arrived early: it counts from today
+    saveState();
+    haptic('MEDIUM');
+    queueSync('transaction', t.id, 'upsert');
+    const ln = nativePlugin('LocalNotifications');
+    // Remove its lasting reminder; a failure here must not stop the confirmation.
+    if (ln) { try { Promise.resolve(ln.cancel({ notifications: [{ id: pendingNotifId(t.id) }] })).catch(() => {}); } catch (e) { /* ignore */ } }
+    showToast(`${t.desc} ${t.type === 'income' ? 'received' : 'paid'}: ${formatCurrency(t.amount, t.currency)} now counts in ${accountById(t.accountId).name}`, 'success');
+    renderActive();
+};
+const askConfirmTx = (id) => {
+    const t = state.transactions.find((x) => x.id === id);
+    if (!t || !t.pending) return;
+    showConfirm({
+        title: t.type === 'income' ? `Did ${t.desc} arrive?` : `Did you pay ${t.desc}?`,
+        message: `${formatCurrency(t.amount, t.currency)} ${t.type === 'income' ? 'into' : 'from'} ${accountById(t.accountId).name}. It counts in your balance once you confirm.`,
+        confirmLabel: t.type === 'income' ? 'Yes, received' : 'Yes, paid',
+        danger: false,
+        onConfirm: () => confirmTx(id)
+    });
 };
 
 const emptyState = ({ iconId, title, text, actionLabel, action }) => `
@@ -2025,6 +2245,8 @@ const renderSettings = () => {
             ? 'Blocked by Android. Allow notifications for Vela in Android settings, then turn this on.'
             : 'The day before each bill, and every evening at 8 pm.';
     $('btn-test-notif').hidden = !native;
+    $('sms-row').hidden = !nativePlugin('SmsReader');
+    setSwitch($('switch-sms'), smsPrefs().enabled);
     $('report-month-desc').textContent = `Income, spending and categories for ${monthName(activityMonth.y, activityMonth.m)}`;
     $('app-version').textContent = `Vela ${APP_VERSION}${isNative() ? ' for Android' : ''}. Exchange rates from open.er-api.com`;
 };
@@ -2238,7 +2460,7 @@ const updateDateHint = () => {
     const d = $('tx-date').value;
     const future = isISODate(d) && d > todayISO();
     el.hidden = !future;
-    if (future) el.textContent = `This date is in the future. It shows as Upcoming and counts in your balance from ${relativeDayLabel(d).toLowerCase() === 'tomorrow' ? 'tomorrow' : shortDate(d)}.`;
+    if (future) el.textContent = `This date is in the future. It waits until you tap “${txType === 'income' ? 'Received' : 'Paid'}”, then counts in your balance. Vela reminds you on ${relativeDayLabel(d).toLowerCase() === 'tomorrow' ? 'the day' : shortDate(d)}.`;
 };
 
 const openAddTx = (type = 'expense') => {
@@ -2330,10 +2552,10 @@ const submitTx = async () => {
     let record;
     if (prev) {
         const idx = state.transactions.findIndex((t) => t.id === id);
-        record = { ...prev, type: txType, desc, amount, currency, category, date, note, accountId, receipt, fixed: txType === 'expense' && (txKind === 'fixed' || !!prev.recurringId) };
+        record = { ...prev, type: txType, desc, amount, currency, category, date, note, accountId, receipt, fixed: txType === 'expense' && (txKind === 'fixed' || !!prev.recurringId), pending: date > todayISO() || prev.pending === true };
         state.transactions[idx] = record;
     } else {
-        record = { id: generateId(), type: txType, desc, amount, currency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txType === 'expense' && txKind === 'fixed' };
+        record = { id: generateId(), type: txType, desc, amount, currency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txType === 'expense' && txKind === 'fixed', pending: date > todayISO() };
         // A new fixed expense that repeats becomes a monthly fixed expense (a bill); this entry is its first payment.
         if (record.fixed && isOn($('tx-repeat'))) {
             const day = parseDate(date).getDate();
@@ -2358,9 +2580,9 @@ const submitTx = async () => {
         const c = dcur();
         showToast(f.total > 0
             ? `${monthName(d.getFullYear(), d.getMonth(), { month: 'long' })}: income ${formatCurrency(f.income, c)} − fixed ${formatCurrency(f.total, c)} = ${formatCurrency(f.left, c)} left${isUpcoming(record) ? ` (this income counts from ${shortDate(date)})` : ''}`
-            : (isUpcoming(record) ? `Upcoming income: ${formatCurrency(amount, currency)} on ${shortDate(date)}. It counts in your balance from that day.` : `Income added: ${formatCurrency(amount, currency)}`), 'success');
+            : (isUpcoming(record) ? `Saved as waiting: ${formatCurrency(amount, currency)} on ${shortDate(date)}. Tap “Received” when it arrives and it counts in your balance.` : `Income added: ${formatCurrency(amount, currency)}`), 'success');
     } else if (isUpcoming(record)) {
-        showToast(`Upcoming ${txType}: ${formatCurrency(amount, currency)} on ${shortDate(date)}. It counts in your balance from that day.`, 'info');
+        showToast(`Saved as waiting: ${formatCurrency(amount, currency)} on ${shortDate(date)}. Tap “Paid” when it’s done and it counts in your balance.`, 'info');
     } else {
         showToast(id ? 'Saved' : `${txType === 'income' ? 'Income' : 'Expense'} added: ${formatCurrency(amount, currency)}`, 'success');
         const now = new Date();
@@ -2785,8 +3007,8 @@ const draftCard = (d) => {
 
 const quickSaveTx = (d) => {
     if (!state.accounts.length) ensureAccounts(state);
-    const acc = state.accounts.find((a) => a.id === state.config.lastAccount) || state.accounts[0];
-    const record = { id: generateId(), type: d.type, desc: d.desc, amount: d.amount, currency: d.currency, category: d.category, date: d.date, note: '', createdAt: Date.now(), recurringId: null, accountId: acc.id, receipt: null };
+    const acc = state.accounts.find((a) => a.id === d.accountId) || state.accounts.find((a) => a.id === state.config.lastAccount) || state.accounts[0];
+    const record = { id: generateId(), type: d.type, desc: d.desc, amount: d.amount, currency: d.currency, category: d.category, date: d.date, note: d.note || '', createdAt: Date.now(), recurringId: null, accountId: acc.id, receipt: null, fixed: d.type === 'expense' && !!d.fixed, pending: d.date > todayISO() };
     state.transactions.push(record);
     state.config.lastCategory[d.type] = d.category;
     saveState();
@@ -4819,6 +5041,7 @@ const onAppVisible = () => {
     processRecurring();
     if (pendingCount()) flushSync();
     renderActive();
+    scanSms();
 };
 
 // A soft ink ripple where you touch buttons.
@@ -4871,6 +5094,10 @@ const initEvents = () => {
         if (d.catIcon) { catEditIcon = d.catIcon; renderCategoryEditor(); return; }
         if (d.catType) { catEditType = d.catType; if (!$('category-id').value) catEditIcon = catEditType === 'income' ? 'c-OtherIncome' : 'c-Other'; renderCategoryEditor(); return; }
         if (d.txType) { setTxType(d.txType); return; }
+        if (d.confirmTx) { confirmTx(d.confirmTx); return; }
+        if (d.smsAdd) { smsAdd(d.smsAdd, el); return; }
+        if (d.smsIgnore) { smsIgnore(d.smsIgnore, el); return; }
+        if (d.smsMatch) { smsConfirmMatch(d.smsMatch, el); return; }
         if (d.txKind) { txKindTouched = true; setTxKind(d.txKind); return; }
         if (d.pick) { const p = txPicks[Number(d.pick)]; if (p) applyPick(p); return; }
         if (d.starterPick) { starterPick(d.starterPick); return; }
@@ -5092,6 +5319,8 @@ const initEvents = () => {
     $('switch-biometric').addEventListener('click', toggleBiometric);
     $('switch-reminders').addEventListener('click', (e) => enableReminders(!isOn(e.currentTarget)));
     $('btn-test-notif').addEventListener('click', sendTestNotification);
+    $('switch-sms').addEventListener('click', (e) => enableSmsTracking(!isOn(e.currentTarget)));
+    $('btn-sms-all').addEventListener('click', () => { [...smsQueue].forEach((i) => (smsMatchFor(i) ? smsConfirmMatch(i.id) : smsAdd(i.id))); });
     $('btn-forgot-pin').addEventListener('click', forgotPin);
 
     $('btn-report-pdf').addEventListener('click', (e) => withBusy(e.currentTarget, exportPdf));
@@ -5584,8 +5813,13 @@ const initNative = () => {
         app.addListener('resume', onAppVisible);
     }
     const ln = nativePlugin('LocalNotifications');
-    if (ln) ln.addListener('localNotificationActionPerformed', () => goToPlan('bills'));
+    if (ln) ln.addListener('localNotificationActionPerformed', (a) => {
+        const txId = a && a.notification && a.notification.extra && a.notification.extra.txId;
+        if (txId) setTimeout(() => askConfirmTx(txId), 600);
+        else goToPlan('bills');
+    });
     checkBiometric();
+    initSms();
     if (state.config.reminders) setTimeout(() => scheduleReminders({ ask: true }), 2500);
     const splash = nativePlugin('SplashScreen');
     if (splash) setTimeout(() => splash.hide({ fadeOutDuration: 250 }).catch(() => {}), 150);
