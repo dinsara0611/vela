@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.16.1';
+const APP_VERSION = '4.17.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2070,6 +2070,7 @@ const scanSms = async () => {
 const enableSmsTracking = async (on) => {
     const plugin = smsPlugin();
     if (!plugin) { showToast('Reading bank SMS works in the Android app. Here you can paste a bank SMS instead.', 'info'); setSwitch($('switch-sms'), false); return; }
+    if (on && bankStatus && bankStatus.smsAvailable === false) { setSwitch($('switch-sms'), false); showToast('This version can’t read SMS. Share or paste a bank SMS instead.', 'info'); return; }
     if (on) {
         let perm = 'prompt';
         try { perm = (await plugin.checkPermissions()).sms; } catch (e) { /* ignore */ }
@@ -2180,10 +2181,22 @@ const renderBankConnections = () => {
     $('bank-conns').hidden = !plugin;
     $('bank-options').hidden = !plugin;
     $('btn-bank-disconnect').hidden = !plugin;
-    const sms = smsConnState(s, p);
-    const ntf = ntfConnState(s);
-    setSwitch($('switch-sms'), !!(s ? s.smsEnabled : p.enabled));
-    setSwitch($('switch-ntf'), !!(s ? s.notifEnabled : p.notifEnabled));
+    // The standard edition leaves SMS and notification access out (Play Protect blocks them for apps installed
+    // from WhatsApp or a browser): say so instead of offering switches that can't work.
+    const noSms = !!(s && s.smsAvailable === false);
+    const noNtf = !!(s && s.notifAvailable === false);
+    const notHere = { state: 'off', text: 'Not in this version' };
+    const sms = noSms ? notHere : smsConnState(s, p);
+    const ntf = noNtf ? notHere : ntfConnState(s);
+    $('switch-sms').disabled = noSms;
+    $('switch-ntf').disabled = noNtf;
+    if (plugin && noSms && noNtf) {
+        $('bank-web-note').hidden = false;
+        $('bank-web-note').innerHTML = 'This is the standard Vela, which installs from WhatsApp or a browser. Google Play Protect blocks apps that read SMS or notifications when they are installed that way, so here you add ComBank transactions by <strong>sharing a bank SMS to Vela</strong> or tapping <strong>Check a bank SMS</strong>. Automatic detection needs <strong>Vela Full</strong>, installed from a computer.';
+    } else if (plugin) $('bank-web-note').hidden = true;
+    if (plugin && noSms && noNtf) { $('bank-conns').hidden = true; $('bank-options').hidden = true; $('btn-bank-disconnect').hidden = true; }
+    setSwitch($('switch-sms'), !noSms && !!(s ? s.smsEnabled : p.enabled));
+    setSwitch($('switch-ntf'), !noNtf && !!(s ? s.notifEnabled : p.notifEnabled));
     setSwitch($('switch-bank-pause'), !!(s ? s.paused : p.paused));
     setSwitch($('switch-sms-auto'), p.autoAdd);
     [['bank-sms-state', 'bank-sms-help', sms], ['bank-ntf-state', 'bank-ntf-help', ntf]].forEach(([st, help, c]) => {
@@ -2193,7 +2206,7 @@ const renderBankConnections = () => {
         $(help).innerHTML = c.help || '';
     });
     const on = [sms, ntf].filter((c) => c.state === 'on').length;
-    const overall = !plugin ? { state: 'off', text: 'Android only' } : (s && s.paused) ? { state: 'paused', text: 'Paused' }
+    const overall = !plugin ? { state: 'off', text: 'Android only' } : noSms && noNtf ? { state: 'off', text: 'Share & paste' } : (s && s.paused) ? { state: 'paused', text: 'Paused' }
         : on ? { state: 'on', text: on === 2 ? 'Connected' : 'Partly connected' } : [sms, ntf].some((c) => c.state === 'warn') ? { state: 'warn', text: 'Needs attention' } : { state: 'off', text: 'Not connected' };
     $('bank-overall').dataset.state = overall.state;
     $('bank-overall').textContent = overall.text;
@@ -2231,6 +2244,7 @@ const enableNotifTracking = async (on) => {
         } else showToast('Bank notification tracking is off', 'success');
         return;
     }
+    if (s.notifAvailable === false) { setSwitch($('switch-ntf'), false); showToast('This version can’t read notifications. Share or paste a bank SMS instead.', 'info'); return; }
     const installed = (s.apps || []).filter((a) => a.installed);
     if (!installed.length) {
         setSwitch($('switch-ntf'), false);

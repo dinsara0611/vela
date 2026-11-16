@@ -535,6 +535,20 @@ export async function run() {
         return good || JSON.stringify({ ok, noAccess, stopped, noSms, hidden, noApp, paused, fixBtn, web });
     });
 
+    await T('Standard edition (no SMS / notification access): explains share & paste, offers no dead switches', async () => {
+        g('switchTab')('settings'); await wait(200);
+        const { calls } = fakeBankPlugin({ smsAvailable: false, notifAvailable: false, smsPermission: 'unavailable', smsEnabled: false, notifEnabled: false, notifAccess: false, listenerConnected: false });
+        await g('refreshBankStatus')();
+        const note = !$('bank-web-note').hidden && /Play Protect/.test($('bank-web-note').textContent) && /Check a bank SMS/.test($('bank-web-note').textContent);
+        const hidden = $('bank-conns').hidden && $('btn-bank-disconnect').hidden && !$('btn-sms-paste').hidden;
+        const pill = $('bank-overall').textContent;
+        await g('enableNotifTracking')(true); await wait(100);
+        const noConsent = !g('isConfirmOpen')() && calls.notif.length === 0;
+        delete window.Capacitor;
+        await g('refreshBankStatus')();
+        return (note && hidden && pill === 'Share & paste' && noConsent) || `note ${note}, rows hidden ${hidden}, pill ${pill}, tried to enable ${!noConsent}`;
+    });
+
     await T('Bank connections: notification tracking asks for consent, then opens Android access', async () => {
         const { calls } = fakeBankPlugin({ notifEnabled: false, notifAccess: false, listenerConnected: false });
         await g('enableNotifTracking')(true); await wait(200);

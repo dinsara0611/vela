@@ -7,8 +7,8 @@ android {
         applicationId "io.github.dinsara0611.vela"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 28
-        versionName "4.16.1"
+        versionCode 29
+        versionName "4.17.0"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -29,6 +29,14 @@ android {
                 keyPassword props['keyPassword']
             }
         }
+    }
+    // Two editions with the same app id (Full can be installed over Standard and keeps your data):
+    //  standard: no SMS / notification access, so Play Protect lets it install from WhatsApp or a browser
+    //  full:     automatic bank detection (SMS + ComBank notifications), installed from a computer or Google Play
+    flavorDimensions "edition"
+    productFlavors {
+        standard { dimension "edition" }
+        full { dimension "edition"; versionNameSuffix "-full" }
     }
     buildTypes {
         release {

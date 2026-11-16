@@ -113,6 +113,25 @@ public class SmsReaderPlugin extends Plugin {
         return false;
     }
 
+    private boolean declaresSms() {
+        try {
+            String[] req = getContext().getPackageManager().getPackageInfo(getContext().getPackageName(), PackageManager.GET_PERMISSIONS).requestedPermissions;
+            if (req != null) for (String r : req) if (Manifest.permission.READ_SMS.equals(r)) return true;
+        } catch (Exception e) {
+            // fall through
+        }
+        return false;
+    }
+
+    private boolean hasListener() {
+        try {
+            getContext().getPackageManager().getServiceInfo(BankNotificationListener.component(getContext()), 0);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     private boolean installed(String pkg) {
         try {
             getContext().getPackageManager().getPackageInfo(pkg, 0);
@@ -129,7 +148,14 @@ public class SmsReaderPlugin extends Plugin {
         android.content.SharedPreferences p = SmsStore.prefs(ctx);
         JSObject ret = new JSObject();
         ret.put("sdk", Build.VERSION.SDK_INT);
-        ret.put("smsPermission", getPermissionState("sms").toString().toLowerCase());
+        // What this edition of Vela includes (the standard edition leaves both out so Play Protect allows it).
+        ret.put("smsAvailable", declaresSms());
+        ret.put("notifAvailable", hasListener());
+        String smsPerm = "unavailable";
+        if (declaresSms()) {
+            try { smsPerm = getPermissionState("sms").toString().toLowerCase(); } catch (Exception e) { smsPerm = "denied"; }
+        }
+        ret.put("smsPermission", smsPerm);
         ret.put("smsEnabled", p.getBoolean("enabled", false));
         ret.put("notifEnabled", p.getBoolean("notifEnabled", false));
         ret.put("paused", SmsStore.paused(ctx));
@@ -238,7 +264,7 @@ public class SmsReaderPlugin extends Plugin {
     /** Bank-looking messages in the inbox newer than `since` (ms). */
     @PluginMethod
     public void readInbox(PluginCall call) {
-        if (getPermissionState("sms") != PermissionState.GRANTED) {
+        if (!declaresSms() || getPermissionState("sms") != PermissionState.GRANTED) {
             call.reject("SMS permission not granted");
             return;
         }
