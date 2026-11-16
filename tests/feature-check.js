@@ -127,25 +127,28 @@ export async function run() {
         const rent = find('Rent');
         const waiting = rent.pending === true;
         g('switchTab')('dashboard'); await wait(300);
-        const btn = document.querySelector(`[data-confirm-tx="${rent.id}"]`);
+        const btn = document.querySelector(`[data-pay="tx:${rent.id}"]`);
         const label = btn && btn.textContent.trim();
-        btn.click(); await wait(300);
+        btn.click(); await wait(200);
+        const askText = $('confirm-title').textContent + ' / ' + $('btn-confirm-ok').textContent + ' / ' + $('btn-confirm-cancel').textContent;
+        await confirmOk();
         const st1 = g('monthStats')();
         const cash1 = g('accountBalance')(s().accounts[0]);
-        return (waiting && /Received/.test(label) && rent.pending === false && rent.date === today && st1.income === st0.income + 30000 && cash1 === cash0 + 30000)
+        return (waiting && /received/i.test(label) && /arrived/.test(askText) && /Not yet/.test(askText) && rent.pending === false && rent.dueDate > today && rent.date === today && st1.income === st0.income + 30000 && cash1 === cash0 + 30000)
             || `waiting ${waiting}, button "${label}", pending ${rent.pending}, date ${rent.date}, income ${st0.income}->${st1.income}, cash ${cash0}->${cash1}`;
     });
 
-    await T('Past waiting entry says "Not confirmed" and still does not count', async () => {
+    await T('Unpaid past payment shows OVERDUE, counts only when paid, on the day it was paid', async () => {
         const y = iso(addDays(new Date(), -1));
         s().transactions.push({ id: 'wait-1', type: 'expense', desc: 'Water bill', amount: 1800, currency: 'LKR', category: 'Utilities', date: y, note: '', createdAt: 5, recurringId: null, accountId: 'acc-cash', receipt: null, fixed: true, pending: true });
         g('saveState')(); g('switchTab')('activity'); await wait(300);
         const spentBefore = g('expenses')().some((t) => t.id === 'wait-1');
-        const row = document.querySelector('[data-confirm-tx="wait-1"]');
+        const row = document.querySelector('[data-pay="tx:wait-1"]');
         const badge = row && row.closest('li').querySelector('.tx-upcoming').textContent;
         g('confirmTx')('wait-1'); await wait(200);
         const counted = g('expenses')().some((t) => t.id === 'wait-1');
-        return (!spentBefore && badge === 'Not confirmed' && /Paid/.test(row.textContent) && counted) || `counted before ${spentBefore}, badge ${badge}, after ${counted}`;
+        const paidToday = s().transactions.find((t) => t.id === 'wait-1');
+        return (!spentBefore && badge === 'Overdue' && /paid/i.test(row.textContent) && counted && paidToday.date === today && paidToday.dueDate === y) || `counted before ${spentBefore}, badge ${badge}, after ${counted}`;
     });
 
     await T('Bank SMS: Commercial Bank debit/credit read, OTPs ignored', () => {
@@ -159,6 +162,138 @@ export async function run() {
             && c === null
             && d && d.currency === 'USD' && d.amount === 12.99 && d.bank === 'HNB';
         return ok || JSON.stringify({ a, b, c, d });
+    });
+
+    // ---- Bank SMS accuracy: realistic Commercial Bank formats ----
+    const P = (body, address = 'COMBANK', extra = {}) => g('parseBankSms')({ id: `t-${Math.random()}`, address, body, date: new Date(2026, 10, 16, 12, 0).getTime(), ...extra });
+    const smsCases = [
+        ['card payment', 'Transaction Alert: LKR 3,450.00 POS purchase at KEELLS SUPER COLOMBO 07 on your ComBank Debit Card ending 4321 on 16/11/2026 10:20:15. Avl Bal: LKR 12,345.67',
+            { type: 'expense', kind: 'card', amount: 3450, desc: 'Keells Super Colombo 07', last4: '4321', date: '2026-11-16', time: '10:20', category: 'Food', confidence: 'high' }],
+        ['account debit with ref + balance', 'Dear Customer, Your A/C No.8001234567 has been debited for LKR 3,450.00 on 16/11/2026 at 10:15 Ref:FT2632012345. Avl Bal LKR 45,230.50',
+            { type: 'expense', amount: 3450, ref: 'FT2632012345', last4: '4567', date: '2026-11-16' }],
+        ['salary credit', 'LKR 150,000.00 credited to A/C 8001234567 on 16/11/26 SALARY ABC PVT LTD. Avl Bal LKR 200,000.00',
+            { type: 'income', amount: 150000, category: 'Salary', date: '2026-11-16' }],
+        ['online purchase in USD', 'Your ComBank Card ending 4321 was used for an online transaction of USD 12.99 at NETFLIX.COM on 16/11/2026',
+            { type: 'expense', kind: 'online', amount: 12.99, currency: 'USD', last4: '4321' }],
+        ['ATM withdrawal', 'ATM Cash Withdrawal LKR 10,000.00 from A/C ...1234 at COMBANK ATM KOLLUPITIYA on 16/11/2026 11:02',
+            { type: 'atm', kind: 'atm', amount: 10000, desc: 'ATM withdrawal' }],
+        ['transfer out', 'CEFT transfer of LKR 25,000.00 to NIMAL PERERA from A/C ...1234 successful on 16/11/2026. Ref 778899',
+            { type: 'expense', kind: 'transfer_out', amount: 25000, desc: 'Nimal Perera', ref: '778899' }],
+        ['transfer in', 'Fund transfer LKR 20,000.00 received from KAMAL SILVA via CEFT to A/C ...1234 on 16/11/2026 Ref:FT123456',
+            { type: 'income', kind: 'transfer_in', amount: 20000, desc: 'Kamal Silva', ref: 'FT123456' }],
+        ['refund', 'LKR 2,500.00 refund from DARAZ credited to your card ending 4321 on 15/11/2026',
+            { type: 'income', kind: 'refund', amount: 2500, desc: 'Refund: Daraz', date: '2026-11-15' }],
+        ['reversal', 'Reversal of LKR 2,500.00 transaction at KEELLS SUPER on card ending 4321 on 16/11/2026',
+            { type: 'reversal', kind: 'reversal', amount: 2500 }],
+        ['bank charge', 'Service charge of LKR 150.00 debited from A/C ...1234 for SMS alerts on 16/11/2026',
+            { type: 'expense', kind: 'fee', amount: 150, desc: 'Commercial Bank charges' }],
+        ['two amounts (LKR + USD)', 'LKR 4,320.00 (USD 12.99) debited at NETFLIX.COM on card ending 4321 on 16/11/2026',
+            { type: 'expense', amount: 4320, currency: 'LKR' }],
+        ['no shop name: asks to check', 'Your A/C ...1234 has been debited with LKR 1,200.00 on 16/11/2026',
+            { type: 'expense', amount: 1200, confidence: 'medium' }],
+        ['no date in message: date when it arrived', 'LKR 500.00 POS purchase at CARGILLS on card ending 4321',
+            { amount: 500, date: '2026-11-16', confidence: 'medium' }],
+        ['other bank: reviewed', 'HNB: Purchase of LKR 900.00 at PIZZA HUT on card ending 1111 on 16/11/2026', { type: 'expense', amount: 900, confidence: 'medium' }, 'HNB']
+    ];
+    const ignoredCases = [
+        ['declined', 'Your transaction of LKR 5,000.00 at ABC STORE was declined due to insufficient funds. ComBank'],
+        ['failed', 'ComBank: Fund transfer of LKR 10,000.00 failed. Please try again.'],
+        ['OTP with an amount', 'Your OTP for the transaction of LKR 3,450.00 at DARAZ is 123456. Do not share. ComBank'],
+        ['balance enquiry', 'Your A/C ...1234 Avl Bal is LKR 45,230.50 as at 16/11/2026. ComBank'],
+        ['login alert', 'You have logged in to ComBank Digital on 16/11/2026 10:00. If this was not you call 0112353353'],
+        ['promotion', 'Enjoy 20% off at ODEL with ComBank cards. Spend LKR 10,000 and win! ComBank'],
+        ['payment reminder', 'ComBank: Your credit card payment of LKR 15,000.00 is due on 25/11/2026.'],
+        ['not a bank', 'Hi machan, send me Rs. 500 for the bus', '0771234567']
+    ];
+
+    await T('SMS accuracy: transaction formats read correctly', () => {
+        const bad = [];
+        smsCases.forEach(([name, body, want, address]) => {
+            const r = P(body, address || 'COMBANK');
+            if (!r) { bad.push(`${name}: not read (${g('smsLastReason')})`); return; }
+            Object.entries(want).forEach(([k, v]) => { if (r[k] !== v) bad.push(`${name}: ${k} = ${JSON.stringify(r[k])}, want ${JSON.stringify(v)}`); });
+        });
+        return bad.length ? bad.join(' | ') : true;
+    });
+
+    await T('SMS accuracy: OTPs, declined, failed, balance, login, promotions, reminders and chats are never used', () => {
+        const used = ignoredCases.filter(([, body, address]) => P(body, address || 'COMBANK')).map(([n]) => n);
+        return used.length ? `used: ${used.join(', ')}` : true;
+    });
+
+    await T('SMS accuracy: balance is never taken as the amount; account numbers are masked', () => {
+        const r = P('Dear Customer, Your A/C No.8001234567 has been debited for LKR 3,450.00 on 16/11/2026 Ref:FT1. Avl Bal LKR 45,230.50');
+        return (r.amount === 3450 && !r.masked.includes('8001234567') && r.masked.includes('••4567')) || `amount ${r.amount}, masked "${r.masked}"`;
+    });
+
+    await T('SMS duplicates: same transaction twice (resent or read twice) is offered once; recorded ones never again', async () => {
+        localStorage.removeItem('VELA_SMS');
+        const body = 'Dear Customer, Your A/C ...1234 has been debited for LKR 777.00 at UBER on 16/11/2026 Ref:DUP777';
+        const before = g('smsQueue').length;
+        g('smsTake')([{ id: 'd1', address: 'COMBANK', body, date: Date.now() }, { id: 'd2', address: 'COMBANK', body: body + ' ', date: Date.now() + 5000 }]);
+        const queued = g('smsQueue').length - before;
+        g('smsAdd')('d1'); await wait(300);
+        const added = s().transactions.filter((t) => t.bank && t.bank.ref === 'DUP777').length;
+        const again = g('smsTake')([{ id: 'd3', address: 'COMBANK', body, date: Date.now() + 9000 }]);
+        if (g('isSheetOpen')('modal-sms')) await close('modal-sms');
+        return (queued === 1 && added === 1 && again === 0) || `queued ${queued}, added ${added}, offered again ${again}`;
+    });
+
+    await T('SMS reconcile: an entry you logged by hand is linked (bank-verified), not added again', async () => {
+        await addTx({ amount: 640, desc: 'Lunch at work', category: 'Food' });
+        const n = s().transactions.length;
+        g('smsTake')([{ id: 'l1', address: 'COMBANK', body: 'LKR 640.00 POS purchase at CAFE KOPI on card ending 4321 on ' + new Date().toLocaleDateString('en-GB'), date: Date.now() }]);
+        g('showSmsSheet')(); await wait(400);
+        const linkBtn = document.querySelector('[data-sms-match="l1"]');
+        const text = linkBtn && linkBtn.textContent;
+        linkBtn.click(); await wait(300);
+        const t = find('Lunch at work');
+        return (/Link/.test(text) && s().transactions.length === n && t.bank && t.bank.bank === 'Commercial Bank') || `button "${text}", entries ${n}->${s().transactions.length}, linked ${!!t.bank}`;
+    });
+
+    await T('SMS reversal: removes the reversed payment, never adds income', async () => {
+        await addTx({ amount: 2222, desc: 'Shoes', category: 'Shopping' });
+        const incomeBefore = g('monthStats')().income;
+        g('smsTake')([{ id: 'r1', address: 'COMBANK', body: 'Reversal of LKR 2,222.00 transaction at BATA on card ending 4321', date: Date.now() }]);
+        g('showSmsSheet')(); await wait(400);
+        document.querySelector('[data-sms-match="r1"]').click(); await wait(300);
+        return (!find('Shoes') && g('monthStats')().income === incomeBefore) || `shoes still ${!!find('Shoes')}, income ${incomeBefore}->${g('monthStats')().income}`;
+    });
+
+    await T('SMS ATM withdrawal: moved from bank to Cash (not counted as spending twice)', async () => {
+        if (!s().accounts.some((a) => a.kind === 'bank')) s().accounts.push({ id: 'acc-bank-t', name: 'ComBank', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 1 });
+        const bank = s().accounts.find((a) => a.kind === 'bank');
+        const spent0 = g('monthStats')().spent;
+        g('smsTake')([{ id: 'a1', address: 'COMBANK', body: 'ATM Cash Withdrawal LKR 5,000.00 from A/C ...1234 at COMBANK ATM KANDY on ' + new Date().toLocaleDateString('en-GB'), date: Date.now() }]);
+        g('showSmsSheet')(); await wait(400);
+        $('sms-account').value = bank.id;
+        document.querySelector('[data-sms-add="a1"]').click(); await wait(300);
+        const tr = s().transactions.find((t) => t.bank && t.bank.smsId === 'a1');
+        return (tr && tr.type === 'transfer' && tr.toAccountId === 'acc-cash' && g('monthStats')().spent === spent0) || `entry ${JSON.stringify(tr && { type: tr.type, to: tr.toAccountId })}, spent ${spent0}->${g('monthStats')().spent}`;
+    });
+
+    await T('SMS edit details: the form opens filled in; saving adds it once with the bank details', async () => {
+        g('smsTake')([{ id: 'e1', address: 'COMBANK', body: 'Your A/C ...1234 has been debited with LKR 3,000.00 on ' + new Date().toLocaleDateString('en-GB'), date: Date.now() }]);
+        g('showSmsSheet')(); await wait(400);
+        document.querySelector('[data-sms-edit="e1"]').click(); await wait(400);
+        const filled = $('tx-amount').value;
+        $('tx-desc').value = 'Electricity bill';
+        await g('submitTx')(); await wait(400);
+        const t = find('Electricity bill');
+        const queued = g('smsQueue').some((i) => i.id === 'e1');
+        return (filled === '3,000' && t && t.bank && t.bank.smsId === 'e1' && !queued) || `filled ${filled}, saved ${!!t}, bank ${t && !!t.bank}, still queued ${queued}`;
+    });
+
+    await T('SMS paste: works without SMS permission; non-bank text is refused', async () => {
+        g('openSmsPaste')(); await wait(300);
+        $('sms-paste-text').value = 'hello, call me later';
+        g('checkPastedSms')(); await wait(100);
+        const refused = /doesn.t look like/.test($('sms-paste-result').textContent);
+        $('sms-paste-text').value = 'ComBank: LKR 1,111.00 POS purchase at ARPICO on card ending 4321 on ' + new Date().toLocaleDateString('en-GB');
+        g('checkPastedSms')(); await wait(700);
+        const queued = g('smsQueue').find((i) => i.amount === 1111);
+        if (g('isSheetOpen')('modal-sms')) { g('smsIgnore')(queued.id); await wait(300); }
+        return (refused && queued && queued.confidence === 'medium') || `refused ${refused}, queued ${JSON.stringify(queued && queued.confidence)}`;
     });
 
     await T('Bank SMS: turn on, pop-up, add to chosen account, match a waiting entry', async () => {
@@ -208,9 +343,72 @@ export async function run() {
         await g('scheduleReminders')();
         delete window.Capacitor;
         s().config.reminders = false;
-        const n = scheduled.find((x) => x.extra && x.extra.txId === 'wait-3');
+        const n = scheduled.find((x) => x.extra && x.extra.payKey === 'tx:wait-3' && x.ongoing);
         s().transactions = s().transactions.filter((t) => t.id !== 'wait-3');
         return (n && n.ongoing === true && n.autoCancel === false) || `notification ${JSON.stringify(n)}`;
+    });
+
+    await T('Payments: Home card, pop-up on open, fixed expense paid with "Not yet" / "Yes"', async () => {
+        const y = iso(addDays(new Date(), -2));
+        s().recurring.push({ id: 'pay-bill', type: 'expense', name: 'Boarding fee', amount: 12000, currency: 'LKR', category: 'Rent', frequency: 'monthly', nextDate: y, anchorDay: new Date(y).getDate(), autoLog: false, accountId: 'acc-cash', createdAt: 1 });
+        g('saveState')(); g('switchTab')('dashboard'); await wait(400);
+        const card = $('due-section');
+        const shows = !card.hidden && /overdue/i.test($('pay-summary').textContent) && (!!card.querySelector('[data-pay="bill:pay-bill"]') || !!card.querySelector('.pay-more'));
+        (0, eval)('payPopupShownAt = 0');
+        await g('showPaymentsPopup')(); await wait(400);
+        const popup = g('isSheetOpen')('modal-payments') && /Boarding fee/.test($('pay-popup-list').innerText);
+        // "Not yet" keeps it unpaid.
+        document.querySelector('#pay-popup-list [data-pay="bill:pay-bill"]').click(); await wait(200);
+        $('btn-confirm-cancel').click(); await wait(200);
+        const stillUnpaid = s().recurring.find((b) => b.id === 'pay-bill').nextDate === y;
+        // "Yes" pays it today, keeps the due date, moves the bill to next month.
+        document.querySelector('#pay-popup-list [data-pay="bill:pay-bill"]').click(); await wait(200);
+        await confirmOk();
+        const bill = s().recurring.find((b) => b.id === 'pay-bill');
+        const tx = s().transactions.find((t) => t.recurringId === 'pay-bill');
+        const ok = shows && popup && stillUnpaid && tx && tx.date === today && tx.dueDate === y && bill.nextDate > today && !g('isSheetOpen')('modal-payments');
+        s().recurring = s().recurring.filter((b) => b.id !== 'pay-bill');
+        return ok || `card ${shows}, popup ${popup}, not-yet kept ${stillUnpaid}, paid ${tx && tx.date}/${tx && tx.dueDate}, next ${bill.nextDate}`;
+    });
+
+    await T('Reminders stay: rescheduling never cancels an unpaid reminder; paying cancels it', async () => {
+        const later = iso(addDays(new Date(), 3));
+        s().transactions.push({ id: 'keep-1', type: 'expense', desc: 'Insurance', amount: 9000, currency: 'LKR', category: 'Other', date: later, note: '', createdAt: 9, recurringId: null, accountId: 'acc-cash', receipt: null, fixed: true, pending: true });
+        const cancelled = [];
+        let scheduled = [];
+        window.Capacitor = { isNativePlatform: () => true, Plugins: { LocalNotifications: {
+            checkPermissions: async () => ({ display: 'granted' }), requestPermissions: async () => ({ display: 'granted' }), createChannel: async () => {},
+            cancel: async ({ notifications }) => { cancelled.push(...notifications.map((n) => n.id)); }, schedule: async (o) => { scheduled = o.notifications; }
+        } } };
+        s().config.reminders = true;
+        await g('scheduleReminders')();
+        const ids = g('reminderIdsFor')('tx:keep-1');
+        const first = scheduled.filter((n) => ids.includes(n.id));
+        await g('scheduleReminders')(); // e.g. the app opened again
+        const wipedOnReschedule = cancelled.filter((id) => ids.includes(id)).length;
+        g('confirmTx')('keep-1'); await wait(100);
+        await g('scheduleReminders')();
+        const cancelledOnPay = ids.every((id) => cancelled.includes(id));
+        delete window.Capacitor;
+        s().config.reminders = false;
+        const persistent = first.filter((n) => n.ongoing && n.autoCancel === false).length;
+        return (first.length === 3 && persistent === 2 && wipedOnReschedule === 0 && cancelledOnPay) || `reminders ${first.length}, persistent ${persistent}, cancelled on reschedule ${wipedOnReschedule}, cancelled when paid ${cancelledOnPay}`;
+    });
+
+    await T('Activity filters: paid, unpaid, upcoming, overdue, from bank', async () => {
+        s().transactions.push({ id: 'f-up', type: 'expense', desc: 'Future thing', amount: 100, currency: 'LKR', category: 'Other', date: iso(addDays(new Date(), 40)), note: '', createdAt: 1, recurringId: null, accountId: 'acc-cash', receipt: null, pending: true });
+        s().transactions.push({ id: 'f-od', type: 'expense', desc: 'Old unpaid', amount: 100, currency: 'LKR', category: 'Other', date: iso(addDays(new Date(), -40)), note: '', createdAt: 1, recurringId: null, accountId: 'acc-cash', receipt: null, pending: true });
+        g('switchTab')('activity'); await wait(300);
+        const rows = async (v) => { document.querySelector(`[data-activity-status="${v}"]`).click(); await wait(200); return [...document.querySelectorAll('#activity-entries .tx-title')].map((e) => e.textContent); };
+        const up = await rows('upcoming');
+        const od = await rows('overdue');
+        const un = await rows('unpaid');
+        const bk = await rows('bank');
+        const pd = await rows('paid');
+        await rows('all');
+        s().transactions = s().transactions.filter((t) => !['f-up', 'f-od'].includes(t.id));
+        return (up.includes('Future thing') && !up.includes('Old unpaid') && od.includes('Old unpaid') && !od.includes('Future thing') && un.includes('Future thing') && un.includes('Old unpaid') && bk.length > 0 && !pd.includes('Old unpaid'))
+            || `upcoming ${up}, overdue ${od}, unpaid ${un.length}, bank ${bk.length}, paid has old ${pd.includes('Old unpaid')}`;
     });
 
     await T('Delete entry (with confirm)', async () => {
@@ -649,7 +847,7 @@ export async function run() {
         await g('enableReminders')(true);
         delete window.Capacitor;
         const slt = s().recurring.find((b) => b.name === 'SLT');
-        const ok = calls.includes(900001) && calls.includes(g('hashToInt')(slt.id));
+        const ok = calls.includes(900001) && (calls.includes(g('hashToInt')(slt.id)) || g('reminderIdsFor')(`bill:${slt.id}`).some((id) => calls.includes(id)));
         s().config.reminders = false;
         return ok || `scheduled ${calls.join(',')}`;
     });

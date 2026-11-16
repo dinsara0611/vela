@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.14.0">
+    <link rel="stylesheet" href="style.css?v=4.15.0">
 </head>
 <body data-view="dashboard">
 
@@ -270,8 +270,8 @@
 
                     <section id="due-section" hidden>
                         <div class="section-head" style="margin-bottom:var(--sp-2)">
-                            <h2>Bills due soon</h2>
-                            <button class="link-btn" type="button" data-goto-plan="bills">All bills <svg class="ic ic-sm"><use href="#i-chevron"/></svg></button>
+                            <h2>Payments <span class="pay-summary" id="pay-summary"></span></h2>
+                            <button class="link-btn" type="button" data-goto-plan="bills">Fixed <svg class="ic ic-sm"><use href="#i-chevron"/></svg></button>
                         </div>
                         <div class="h-scroller" id="due-list"></div>
                     </section>
@@ -332,6 +332,7 @@
                         <label class="sr-only" for="activity-account">Account</label>
                         <select id="activity-account" class="input"></select>
                     </div>
+                    <div class="chip-scroller" id="activity-status" role="group" aria-label="Filter by payment status"></div>
                     <div class="chip-scroller" id="activity-chips" role="group" aria-label="Filter by category"></div>
                     <div class="day-groups" id="activity-list">
                         <div class="card calendar" id="activity-calendar" hidden></div>
@@ -487,6 +488,17 @@
                                     <button class="switch" type="button" role="switch" aria-checked="false" id="switch-sms" aria-label="Bank SMS tracking"></button>
                                 </div>
                             </div>
+                            <div class="setting" id="sms-auto-row" hidden>
+                                <div class="setting-row">
+                                    <div class="setting-text"><span class="setting-title">Add confident ones automatically</span><span class="setting-desc">Off: Vela asks before every bank transaction. On: clear, complete messages are added straight away; anything unclear still asks.</span></div>
+                                    <button class="switch" type="button" role="switch" aria-checked="false" id="switch-sms-auto" aria-label="Add confident bank transactions automatically"></button>
+                                </div>
+                            </div>
+                            <button class="row-btn" type="button" id="btn-sms-paste">
+                                <span class="row-icon"><svg class="ic"><use href="#i-file"/></svg></span>
+                                <span class="row-label"><span>Check a bank SMS</span></span>
+                                <svg class="ic chev"><use href="#i-chevron"/></svg>
+                            </button>
                             <button class="row-btn" type="button" id="btn-test-notif" hidden>
                                 <span class="row-icon"><svg class="ic"><use href="#i-bell"/></svg></span>
                                 <span class="row-label"><span>Send a test notification</span></span>
@@ -715,7 +727,7 @@
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sms-title">
             <div class="sheet-grabber" aria-hidden="true"></div>
             <div class="sheet-head">
-                <div><h2 class="sheet-title" id="sms-title">From your bank</h2><span class="card-sub" id="sms-count"></span></div>
+                <div><h2 class="sheet-title" id="sms-title">New bank transaction detected</h2><span class="card-sub" id="sms-count"></span></div>
                 <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
             </div>
             <div class="sheet-body">
@@ -727,8 +739,44 @@
             </div>
             <div class="sheet-foot">
                 <button type="button" class="btn btn-secondary" data-close-sheet>Later</button>
-                <button type="button" class="btn btn-primary" id="btn-sms-all">Add all</button>
+                <button type="button" class="btn btn-primary" id="btn-sms-all">Add all confident</button>
             </div>
+        </div>
+    </div>
+
+    <!-- Paste a bank SMS -->
+    <div class="sheet-overlay" id="modal-sms-paste" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sms-paste-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <h2 class="sheet-title" id="sms-paste-title">Check a bank SMS</h2>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body">
+                <div class="field">
+                    <label class="field-label" for="sms-paste-text">Paste the message from your bank</label>
+                    <textarea id="sms-paste-text" class="input" rows="5" placeholder="e.g. Your ComBank Debit Card ending 4321 was used for LKR 3,450.00 at ..."></textarea>
+                    <span class="field-hint">Vela reads it on this phone and shows what it found before adding anything. Don't paste messages with codes or passwords.</span>
+                    <p class="field-hint sms-paste-result" id="sms-paste-result" role="status"></p>
+                </div>
+            </div>
+            <div class="sheet-foot">
+                <button type="button" class="btn btn-secondary" data-close-sheet>Cancel</button>
+                <button type="button" class="btn btn-primary" id="btn-sms-check">Check message</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Payments needing attention (shown when Vela opens) -->
+    <div class="sheet-overlay" id="modal-payments" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pay-popup-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <div><h2 class="sheet-title" id="pay-popup-title">Payments to check</h2><span class="card-sub" id="pay-popup-sub"></span></div>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body"><ul class="pay-list" id="pay-popup-list"></ul></div>
+            <div class="sheet-foot"><button type="button" class="btn btn-secondary btn-block" data-close-sheet>Later</button></div>
         </div>
     </div>
 
@@ -1324,7 +1372,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.14.0"></script>
+    <script src="app.js?v=4.15.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

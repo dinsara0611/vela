@@ -72,13 +72,15 @@ final class SmsStore {
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
         PendingIntent tap = PendingIntent.getActivity(ctx, notificationId(item.optString("id")), open, flags);
         String money = ("USD".equals(info.currency) ? "$" : "Rs. ") + info.amount;
-        String title = info.bank + ": " + money + ("out".equals(info.direction) ? " spent" : " received");
-        String text = "Tap to add it to Vela. " + item.optString("body");
+        String what = "out".equals(info.direction) ? "Expense" : "in".equals(info.direction) ? "Income"
+            : "atm".equals(info.direction) ? "ATM withdrawal" : "Reversal";
+        String title = "New bank transaction detected";
+        String text = info.bank + " \u00b7 " + money + " \u00b7 " + what + ". Tap to review it in Vela; nothing is added until you confirm.";
         NotificationCompat.Builder b = new NotificationCompat.Builder(ctx, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_vela)
             .setColor(0xFF9B51E0)
             .setContentTitle(title)
-            .setContentText("Tap to add it to Vela")
+            .setContentText(info.bank + " \u00b7 " + money + " \u00b7 " + what)
             .setStyle(new NotificationCompat.BigTextStyle().bigText(text))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_REMINDER)

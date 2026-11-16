@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.14.0';
+const APP_VERSION = '4.15.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -102,6 +102,7 @@ let supabaseClient = null;
 let currentTab = 'dashboard';
 let planTab = 'budgets';
 let activityType = 'all';
+let activityStatus = 'all'; // all | paid | unpaid | upcoming | overdue | bank
 let activityCategory = 'all';
 let activityAccount = 'all';
 let activityView = 'list';
@@ -179,6 +180,11 @@ const todayFast = () => {
 // Not counted yet: dated in the future, or waiting for you to confirm it arrived / was paid.
 const isUpcoming = (t) => !!t && (t.pending === true || t.date > todayFast());
 const isWaiting = (t) => !!t && t.pending === true && t.date <= todayFast();
+// Where an unpaid payment stands today.
+const payStatus = (due) => { const t = todayFast(); return due > t ? 'upcoming' : due === t ? 'due' : 'overdue'; };
+const payStatusLabel = (status, type) => (type === 'income'
+    ? { upcoming: 'Expected', due: 'Expected today', overdue: 'Late' }[status]
+    : { upcoming: 'Upcoming', due: 'Due today', overdue: 'Overdue' }[status]);
 
 const relativeDayLabel = (dateStr) => {
     const d = parseDate(dateStr);
@@ -788,10 +794,11 @@ const showToast = (message, type = 'success') => {
     setTimeout(dismiss, type === 'error' || type === 'warning' ? 5000 : 3200);
 };
 
-const showConfirm = ({ title, message, confirmLabel = 'Delete', danger = true, onConfirm }) => {
+const showConfirm = ({ title, message, confirmLabel = 'Delete', cancelLabel = 'Cancel', danger = true, onConfirm }) => {
     const overlay = $('modal-confirm');
     $('confirm-title').textContent = title;
     $('confirm-message').textContent = message;
+    $('btn-confirm-cancel').textContent = cancelLabel;
     const ok = $('btn-confirm-ok');
     ok.textContent = confirmLabel;
     ok.className = danger ? 'btn btn-danger-solid' : 'btn btn-primary';
@@ -1338,8 +1345,11 @@ const processRecurring = () => {
 const markBillPaid = (id) => {
     const bill = state.recurring.find((b) => b.id === id);
     if (!bill) return;
-    const date = bill.nextDate < todayISO() ? bill.nextDate : todayISO();
-    logBill(bill, date);
+    // Recorded on the day it was really paid; the due date is kept on the entry.
+    const tx = logBill(bill, todayISO());
+    tx.dueDate = bill.nextDate;
+    tx.paidAt = new Date().toISOString();
+    cancelPaymentReminders(`bill:${bill.id}`);
     bill.nextDate = advanceDate(bill.nextDate, bill.frequency, bill.anchorDay);
     queueSync('recurring', bill.id, 'upsert', false);
     saveState();
@@ -1348,6 +1358,7 @@ const markBillPaid = (id) => {
     scheduleReminders();
     showToast(`${bill.name} ${bill.type === 'income' ? 'received' : 'paid'}: ${formatCurrency(bill.amount, bill.currency)}. Next ${shortDate(bill.nextDate)}.`, 'success');
     renderActive();
+    if (isSheetOpen('modal-payments')) refreshPaymentsPopup();
 };
 
 /* =========================================================================
@@ -1391,44 +1402,37 @@ const scheduleReminders = async ({ ask = false } = {}) => {
     const ln = nativePlugin('LocalNotifications');
     if (!ln) return;
     try {
-        if (state.config.reminderIds.length) {
-            await ln.cancel({ notifications: state.config.reminderIds.map((id) => ({ id })) });
+        if (!state.config.reminders) {
+            if (state.config.reminderIds.length) await ln.cancel({ notifications: state.config.reminderIds.map((id) => ({ id })) });
+            state.config.reminderIds = [];
+            saveState();
+            return;
         }
-        state.config.reminderIds = [];
-        if (!state.config.reminders) { saveState(); return; }
         if (!(await ensureNotifPermission(ln, ask))) { saveState(); if (currentTab === 'settings') renderSettings(); return; }
         await ensureChannel(ln);
         const now = Date.now();
         const notifications = [];
-        state.recurring.filter((b) => b.type === 'expense').forEach((bill) => {
-            const due = parseDate(bill.nextDate);
-            const dayBefore = new Date(due.getFullYear(), due.getMonth(), due.getDate() - 1, 9, 0, 0);
-            const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate(), 9, 0, 0);
-            const at = dayBefore.getTime() > now ? dayBefore : (dueDay.getTime() > now ? dueDay : null);
-            if (!at) return;
-            notifications.push({
-                ...notifStyle,
-                id: hashToInt(bill.id),
-                title: `${bill.name} is due ${at === dayBefore ? 'tomorrow' : 'today'}`,
-                body: `${formatCurrency(bill.amount, bill.currency)}${bill.autoLog ? '. Vela will log it automatically.' : '. Open Vela to mark it paid.'}`,
-                schedule: { at, allowWhileIdle: true }
-            });
+        const nineAm = (iso, addD = 0) => { const d = parseDate(iso); return new Date(d.getFullYear(), d.getMonth(), d.getDate() + addD, 9, 0, 0); };
+        // Payments you pay yourself: the day before, on the day, and once overdue. The last two stay
+        // (ongoing) until the payment is marked as paid; tapping one asks to confirm.
+        paymentItems({ horizonDays: 36500 }).forEach((i) => {
+            const [soonId, dueId, lateId] = reminderIdsFor(i.key);
+            const money = formatCurrency(i.amount, i.currency);
+            const income = i.type === 'income';
+            const extra = { payKey: i.key };
+            const soon = nineAm(i.due, -1);
+            if (soon.getTime() > now) notifications.push({ ...notifStyle, id: soonId, title: income ? `${i.name} expected tomorrow` : `${i.name} is due tomorrow`, body: `${money} · due ${shortDate(i.due)}`, extra, schedule: { at: soon, allowWhileIdle: true } });
+            const due = nineAm(i.due);
+            if (due.getTime() > now) notifications.push({ ...notifStyle, id: dueId, title: income ? `${i.name}: has ${money} arrived?` : `${i.name}: ${money} due today`, body: 'Open Vela and mark it as paid once it’s done. This reminder stays until then.', ongoing: true, autoCancel: false, extra, schedule: { at: due, allowWhileIdle: true } });
+            let late = nineAm(i.due, 1);
+            if (late.getTime() <= now) { const t = new Date(); late = new Date(t.getFullYear(), t.getMonth(), t.getDate() + (t.getHours() >= 9 ? 1 : 0), 9, 0, 0); }
+            notifications.push({ ...notifStyle, id: lateId, title: `${income ? 'Late' : 'Overdue'}: ${i.name} (${money})`, body: `Was due ${shortDate(i.due)}. Open Vela and mark it as paid when it’s done. This reminder stays until then.`, ongoing: true, autoCancel: false, extra, schedule: { at: late, allowWhileIdle: true } });
         });
-        // Waiting entries: on their day at 9 am, a notification that stays until you confirm in Vela.
-        state.transactions.filter((t) => t.pending && t.type !== 'transfer').forEach((t) => {
-            const d = parseDate(t.date);
-            const at = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 9, 0, 0);
+        // Fixed expenses Vela logs by itself: a heads-up the day before.
+        state.recurring.filter((b) => b.type === 'expense' && b.autoLog).forEach((bill) => {
+            const at = nineAm(bill.nextDate, -1);
             if (at.getTime() <= now) return;
-            notifications.push({
-                ...notifStyle,
-                id: pendingNotifId(t.id),
-                title: t.type === 'income' ? `${t.desc}: did ${formatCurrency(t.amount, t.currency)} arrive?` : `${t.desc}: ${formatCurrency(t.amount, t.currency)} due today`,
-                body: t.type === 'income' ? 'Open Vela and tap Received when it arrives.' : 'Open Vela and tap Paid once you pay it.',
-                ongoing: true,
-                autoCancel: false,
-                extra: { txId: t.id },
-                schedule: { at, allowWhileIdle: true }
-            });
+            notifications.push({ ...notifStyle, id: hashToInt(bill.id), title: `${bill.name} is due tomorrow`, body: `${formatCurrency(bill.amount, bill.currency)}. Vela will log it automatically.`, schedule: { at, allowWhileIdle: true } });
         });
         // Every evening at 8 pm.
         notifications.push({
@@ -1438,6 +1442,11 @@ const scheduleReminders = async ({ ask = false } = {}) => {
             body: 'Take 10 seconds to add what you spent today. Tell Vela AI, like “kottu 1200”.',
             schedule: { on: { hour: 20, minute: 0 }, allowWhileIdle: true }
         });
+        // Only remove reminders that no longer apply (paid, deleted, changed). Cancelling everything and
+        // scheduling again would wipe a persistent overdue reminder that is already showing.
+        const keep = new Set(notifications.map((n) => n.id));
+        const stale = state.config.reminderIds.filter((id) => !keep.has(id));
+        if (stale.length) await ln.cancel({ notifications: stale.map((id) => ({ id })) });
         await ln.schedule({ notifications });
         state.config.reminderIds = notifications.map((n) => n.id);
         saveState();
@@ -1503,89 +1512,227 @@ const txRow = (t, { showDate = true } = {}) => {
     const signed = formatSigned(t.type === 'income' ? value : -value, dcur());
     const orig = t.currency !== dcur() ? `<span class="tx-orig-inline">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>` : '';
     const label = showDate ? cat.name : (t.note || cat.name);
-    const waitingStrip = t.pending ? `<div class="tx-confirm"><span>${isWaiting(t) ? (t.type === 'income' ? 'Has it arrived?' : 'Has it been paid?') : `Waiting until ${escapeHtml(shortDate(t.date))}`}</span><button type="button" class="btn btn-xs ${t.type === 'income' ? 'btn-income' : 'btn-primary'}" data-confirm-tx="${escapeHtml(t.id)}">${icon('i-check', 'ic ic-sm')} ${t.type === 'income' ? 'Received' : 'Paid'}</button></div>` : '';
+    const st = t.pending ? payStatus(t.date) : null;
+    const waitingStrip = t.pending ? `<div class="tx-confirm" data-status="${st}"><span>${st === 'overdue' ? `${t.type === 'income' ? 'Expected' : 'Was due'} ${escapeHtml(shortDate(t.date))}` : st === 'due' ? (t.type === 'income' ? 'Expected today' : 'Due today') : `Due ${escapeHtml(shortDate(t.date))}`}</span><button type="button" class="btn btn-xs ${t.type === 'income' ? 'btn-income' : 'btn-primary'}" data-pay="tx:${escapeHtml(t.id)}">${icon('i-check', 'ic ic-sm')} ${t.type === 'income' ? 'Mark as received' : 'Mark as paid'}</button></div>` : '';
     return `<li class="${t.pending ? 'tx-li-pending' : ''}"><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
         ${catBadge(t.category, t.type)}
-        <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub">${isUpcoming(t) ? `<span class="tx-upcoming">${isWaiting(t) ? 'Not confirmed' : 'Upcoming'}</span>` : ''}${t.fixed ? '<span class="tx-fixed">Fixed</span>' : ''}${t.recurringId ? icon('i-repeat') : ''}${t.receipt ? icon('i-image') : ''}<span>${escapeHtml(label)}</span>${orig}</span></span>
+        <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub">${t.pending ? `<span class="tx-upcoming" data-status="${st}">${payStatusLabel(st, t.type)}</span>` : (t.dueDate || t.paidAt ? `<span class="tx-paid">${t.type === 'income' ? 'Received' : 'Paid'}</span>` : '')}${t.bank ? `<span class="tx-bank" title="Matched with a ${escapeHtml(t.bank.bank)} message">${icon('i-check', 'ic ic-sm')}Bank</span>` : ''}${t.fixed ? '<span class="tx-fixed">Fixed</span>' : ''}${t.recurringId ? icon('i-repeat') : ''}${t.receipt ? icon('i-image') : ''}<span>${escapeHtml(label)}</span>${orig}</span></span>
         <span class="tx-amt"><span class="amount ${t.type === 'income' ? 'is-income' : ''}">${escapeHtml(signed)}</span>${when}</span>
     </button>${waitingStrip}</li>`;
 };
 
-/* ---- Bank SMS tracking (Android): reads bank messages on this phone and asks before adding ---- */
+/* ---- Bank SMS tracking (Android): a structured parser for bank transaction messages ----
+   Starts with Commercial Bank of Ceylon; other Sri Lankan banks are read too but always shown for review.
+   Nothing is added without the user's confirmation unless they turn on automatic adding for confident
+   messages. OTPs, promotions, login alerts, balance messages and failed or declined payments are never used. */
 const SMS_KEY = 'VELA_SMS';
 const smsPrefs = () => {
-    try { return { enabled: false, since: 0, seen: [], accountId: null, ...(JSON.parse(localStorage.getItem(SMS_KEY) || '{}')) }; } catch (e) { return { enabled: false, since: 0, seen: [], accountId: null }; }
+    try { return { enabled: false, autoAdd: false, since: 0, seen: [], accountId: null, ...(JSON.parse(localStorage.getItem(SMS_KEY) || '{}')) }; } catch (e) { return { enabled: false, autoAdd: false, since: 0, seen: [], accountId: null }; }
 };
-const saveSmsPrefs = (p) => { try { localStorage.setItem(SMS_KEY, JSON.stringify({ ...p, seen: p.seen.slice(-500) })); } catch (e) { /* storage blocked */ } };
+const saveSmsPrefs = (p) => { try { localStorage.setItem(SMS_KEY, JSON.stringify({ ...p, seen: p.seen.slice(-800) })); } catch (e) { /* storage blocked */ } };
 const smsPlugin = () => nativePlugin('SmsReader');
 let smsQueue = [];
+let smsEditing = null; // the message being edited in the entry form
 
-const SMS_AMOUNT = /(LKR|SLR|Rs\.?|USD|US\$)\s*([0-9][0-9,]*(?:\.[0-9]{1,2})?)/i;
-const SMS_OUT = /\b(debited|debit|withdrawn|withdrawal|purchase|purchased|spent|paid|payment of|deducted|charged|transferred to|sent to)\b/i;
-const SMS_IN = /\b(credited|deposited|deposit of|received|transferred from|salary)\b/i;
-const SMS_SKIP = /\b(otp|one[- ]time|verification code|password|pin is|offer|win |congratulations)\b/i;
-const SMS_BANKS = [[/combank|commercial/i, 'Commercial Bank'], [/\bboc\b|bank of ceylon/i, 'BOC'], [/\bhnb\b|hatton national/i, 'HNB'], [/sampath/i, 'Sampath Bank'], [/people'?s/i, "People's Bank"], [/\bnsb\b/i, 'NSB'], [/\bntb\b|nations trust/i, 'Nations Trust'], [/seylan/i, 'Seylan Bank'], [/dfcc/i, 'DFCC'], [/\bndb\b/i, 'NDB'], [/pan ?asia|pabc/i, 'Pan Asia Bank'], [/amana/i, 'Amana Bank']];
+// Sender IDs and names. Commercial Bank is the bank this parser is tuned for.
+const SMS_BANKS = [
+    { name: 'Commercial Bank', sender: /^(combank|com ?bank|commercial|cbc|combnk)/i, body: /\b(combank|com ?bank|commercial bank)\b/i, tuned: true },
+    { name: 'BOC', sender: /^boc\b|bankofceylon/i, body: /\bbank of ceylon\b/i },
+    { name: 'HNB', sender: /^hnb\b/i, body: /\bhatton national\b/i },
+    { name: 'Sampath Bank', sender: /^sampath/i, body: /\bsampath bank\b/i },
+    { name: "People's Bank", sender: /^people'?s/i, body: /\bpeople'?s bank\b/i },
+    { name: 'NSB', sender: /^nsb\b/i, body: /\bnational savings bank\b/i },
+    { name: 'Nations Trust', sender: /^(ntb|nations)/i, body: /\bnations trust\b/i },
+    { name: 'Seylan Bank', sender: /^seylan/i, body: /\bseylan\b/i },
+    { name: 'DFCC', sender: /^dfcc/i, body: /\bdfcc\b/i },
+    { name: 'NDB', sender: /^ndb\b/i, body: /\bndb bank\b/i },
+    { name: 'Pan Asia Bank', sender: /^(pabc|panasia)/i, body: /\bpan asia bank\b/i },
+    { name: 'Amana Bank', sender: /^amana/i, body: /\bamana bank\b/i }
+];
+// Messages that are never transactions.
+const SMS_IGNORE = [
+    [/\b(otp|one[- ]?time (pass(word|code)?|pin)|verification code|security code|passcode)\b/i, 'one-time code'],
+    [/\b(declined|was not successful|unsuccessful|failed|rejected|could not be (processed|completed)|insufficient (funds|balance))\b/i, 'failed or declined'],
+    [/\b(log(ged)?[- ]?in|sign(ed)?[- ]?in|login attempt|new device|password (was )?changed|pin (was )?changed)\b/i, 'login or security alert'],
+    [/(\d+ ?% ?off|\boffer\b|\bdiscount\b|\bcashback\b|\bwin\b|\bcongratulations\b|\bapply now\b|\binstalment plan\b|\bpromo)/i, 'promotion'],
+    [/\b(will be debited|is due on|payment due|due date|minimum (payment|due)|reminder)\b/i, 'reminder, not a transaction']
+];
+const SMS_AMOUNT_RE = /(LKR|SLR|Rs\.?|USD|US\$)\s*([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/gi;
+// Numbers that are a balance or a limit, not what moved.
+const SMS_BALANCE_BEFORE = /(bal(ance)?|avl|avail(able)?|a\/?v ?bal|limit|outstanding|o\/s|current bal|ledger)[^0-9]{0,18}$/i;
+// Kinds of transaction, most specific first. dir: 'out' expense, 'in' income, 'move' transfer to cash, 'rev' reversal.
+const SMS_KINDS = [
+    { kind: 'reversal', dir: 'rev', label: 'Reversal', re: /\b(revers(al|ed)|reverted|void(ed)?|cancell?ed transaction|transaction cancell?ed)\b/i },
+    { kind: 'refund', dir: 'in', label: 'Refund', re: /\brefund(ed)?\b/i },
+    { kind: 'fee', dir: 'out', label: 'Bank charge', re: /\b((service|annual|sms|alert|ledger|maintenance|card|stamp|commission|bank|atm)[ -]?(fee|fees|charge|charges)|charges? (of|debited|levied)|fee (of|debited))\b/i },
+    { kind: 'atm', dir: 'move', label: 'ATM withdrawal', re: /\b(atm|cash withdrawal|cash wdl|withdrawn at|cdm)\b/i },
+    { kind: 'transfer_in', dir: 'in', label: 'Transfer in', re: /\b((fund|ceft|slips|online|inward|ib) ?transfer|transfer(red)?)\b.{0,60}\b(received|credited)\b|\b(received|credited)\b.{0,60}\b(from|via ceft|by transfer)\b|\binward (fund )?transfer\b|\btransfer(red)? from\b(?!.{0,60}\bto\b)/i },
+    { kind: 'transfer_out', dir: 'out', label: 'Transfer out', re: /\b((fund|ceft|slips|online|outward|ib) ?transfer|transfer(red)?|sent)\b.{0,60}\bto\b/i },
+    { kind: 'online', dir: 'out', label: 'Online payment', re: /\b(online|e-?commerce|internet|card not present|ecom|web)\b.{0,40}\b(purchase|payment|transaction|txn|debited|spent)\b|\b(purchase|payment|transaction)\b.{0,30}\b(online|internet)\b|\bat\s+[A-Z0-9 .*]*\.(COM|LK|NET)\b/i },
+    { kind: 'card', dir: 'out', label: 'Card payment', re: /\b(pos|purchase|purchased|card (was )?used|spent|paid at|payment at|txn at|transaction at)\b/i },
+    { kind: 'bill', dir: 'out', label: 'Bill payment', re: /\b(bill payment|utility payment|paid to|payment to)\b/i },
+    { kind: 'salary', dir: 'in', label: 'Salary', re: /\bsalary\b/i },
+    { kind: 'deposit', dir: 'in', label: 'Deposit', re: /\b(cash deposit|deposited|deposit of|cdm deposit)\b/i },
+    { kind: 'debit', dir: 'out', label: 'Debit', re: /\b(debited|debit of|withdrawn|deducted|charged|has been debited)\b/i, generic: true },
+    { kind: 'credit', dir: 'in', label: 'Credit', re: /\b(credited|credit of|has been credited)\b/i, generic: true }
+];
+const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
 const titleCase = (s) => s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
-
-// "Dear Cardholder, your card ending 1234 has been debited with LKR 2,500.00 at KEELLS SUPER on 16/11/26" ->
-// { type: 'expense', amount: 2500, currency: 'LKR', desc: 'Keells Super', bank: 'Commercial Bank', ... }
-const parseBankSms = (msg) => {
-    const body = String(msg.body || '');
-    const address = String(msg.address || '');
-    if (!body || SMS_SKIP.test(body)) return null;
-    const m = SMS_AMOUNT.exec(body);
-    if (!m) return null;
-    const out = SMS_OUT.test(body);
-    const inn = SMS_IN.test(body);
-    if (!out && !inn) return null;
-    const amount = toNumber(m[2], NaN);
-    if (!(amount > 0)) return null;
-    const type = out ? 'expense' : 'income';
-    const currency = /^us/i.test(m[1]) ? 'USD' : 'LKR';
-    const bankHit = SMS_BANKS.find(([re]) => re.test(address) || re.test(body));
-    const bank = bankHit ? bankHit[1] : (address || 'Bank');
-    const place = /\b(?:at|@)\s+([A-Za-z0-9][A-Za-z0-9 &'.*\-\/]{1,40}?)(?=\s+(?:on|for|via|ref|dated|at\s+\d)\b|[.,;]|\s*$)/i.exec(body)
-        || (type === 'income' ? /\bfrom\s+([A-Za-z][A-Za-z0-9 &'.\-]{1,40}?)(?=\s+(?:on|to|ref|dated)\b|[.,;]|\s*$)/i.exec(body) : /\bto\s+([A-Za-z][A-Za-z0-9 &'.\-]{1,40}?)(?=\s+(?:on|from|ref|dated)\b|[.,;]|\s*$)/i.exec(body));
-    const merchant = place ? titleCase(place[1].trim()) : '';
-    const last4 = (/(?:card|a\/c|acct|account)[^0-9]{0,20}(?:x+|\*+|#|ending\s*)?(\d{4})\b/i.exec(body) || [])[1] || null;
-    const date = msg.date ? toISODate(new Date(Number(msg.date))) : todayISO();
-    const desc = merchant || (type === 'income' ? `${bank} deposit` : `${bank} payment`);
-    let category = type === 'income' ? (/salary/i.test(body) ? 'Salary' : 'OtherIncome') : (guessCategory(merchant || body) || 'Other');
-    if (!state.categories.some((c) => c.id === category && c.type === type)) category = FALLBACK_CATEGORY[type];
-    return { id: String(msg.id), type, amount, currency, desc, category, date, bank, last4, merchant, body };
+// Account and card numbers are shown as their last 4 digits only.
+const maskSms = (body) => String(body || '')
+    .replace(/\b(?:[0-9][0-9 *xX#-]{6,}[0-9])\b/g, (m) => { const d = m.replace(/\D/g, ''); return d.length >= 8 ? `••${d.slice(-4)}` : m; })
+    .replace(/\b[xX*#]{2,}\s?([0-9]{3,4})\b/g, '••$1');
+// Date written in the message (Sri Lankan banks use day/month), checked against when it arrived.
+const smsDateTime = (body, receivedMs) => {
+    const got = new Date(receivedMs || Date.now());
+    let d = null;
+    let m = /\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})\b/.exec(body);
+    if (m) { const y = Number(m[3].length === 2 ? `20${m[3]}` : m[3]); d = new Date(y, Number(m[2]) - 1, Number(m[1])); }
+    if (!d && (m = /\b(\d{4})-(\d{2})-(\d{2})\b/.exec(body))) d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+    if (!d && (m = /\b(\d{1,2})[\s-]([A-Za-z]{3})[a-z]*[\s,-]+(\d{2,4})\b/.exec(body)) && MONTHS[m[2].toLowerCase()] !== undefined) d = new Date(Number(m[3].length === 2 ? `20${m[3]}` : m[3]), MONTHS[m[2].toLowerCase()], Number(m[1]));
+    const t = /\b(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp][Mm])?\b/.exec(body);
+    let time = null;
+    if (t) { let hh = Number(t[1]); if (t[3] && /p/i.test(t[3]) && hh < 12) hh += 12; if (t[3] && /a/i.test(t[3]) && hh === 12) hh = 0; if (hh < 24) time = `${pad2(hh)}:${t[2]}`; }
+    const valid = d && !isNaN(d) && Math.abs(daysBetween(d, got)) <= 45;
+    return { date: toISODate(valid ? d : got), time, fromMessage: !!valid };
 };
 
-// The account bank SMS go into: the one you picked, else a bank account named like the bank, else your first bank account.
+/* Reads one SMS. Returns null (with the reason in smsLastReason) when it isn't a transaction, or
+   { type: 'expense' | 'income' | 'atm' | 'reversal', kind, amount, currency, bank, desc, merchant, date, time,
+     ref, last4, confidence: 'high' | 'medium', checks: [...], dedupe, masked } */
+let smsLastReason = '';
+const parseBankSms = (msg) => {
+    smsLastReason = '';
+    const body = String(msg.body || '').replace(/\s+/g, ' ').trim();
+    const address = String(msg.address || '').trim();
+    const no = (why) => { smsLastReason = why; return null; };
+    if (!body) return no('empty');
+    const ignored = SMS_IGNORE.find(([re]) => re.test(body));
+    if (ignored) return no(ignored[1]);
+    const bankBySender = SMS_BANKS.find((b) => b.sender.test(address.replace(/[^A-Za-z']/g, '')));
+    const bankByBody = SMS_BANKS.find((b) => b.body.test(body));
+    const bank = bankBySender || bankByBody;
+    const shared = !!msg.shared || /^shared|^pasted/i.test(address);
+    if (!bank && !shared) return no('not from a known bank');
+
+    // Amounts: drop the ones that are a balance or a limit.
+    const all = [];
+    let m;
+    SMS_AMOUNT_RE.lastIndex = 0;
+    while ((m = SMS_AMOUNT_RE.exec(body))) all.push({ cur: /^us/i.test(m[1]) ? 'USD' : 'LKR', value: toNumber(m[2], NaN), at: m.index, before: body.slice(Math.max(0, m.index - 30), m.index) });
+    const moved = all.filter((a) => a.value > 0 && !SMS_BALANCE_BEFORE.test(a.before));
+    if (!moved.length) return no(all.length ? 'only a balance, no transaction' : 'no amount');
+    const kindHit = SMS_KINDS.find((k) => k.re.test(body));
+    if (!kindHit) return no('no transaction wording');
+    const checks = [];
+    // Two different amounts (e.g. LKR and the USD it was charged in): take the first, ask to check.
+    const amt = moved[0];
+    if (moved.some((a) => a.cur === amt.cur && Math.abs(a.value - amt.value) > 0.005)) checks.push('more than one amount in the message');
+
+    const when = smsDateTime(body, msg.date);
+    if (!when.fromMessage) checks.push('date taken from when the message arrived');
+    const ref = (/\b(?:ref(?:erence)?(?: ?no\.?| ?number)?|txn ?(?:id|no)|trx ?(?:id|no)|transaction (?:id|no)|auth(?:orization)? code|approval code|rrn|trace no)\s*[:#.\-]?\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/i.exec(body) || [])[1] || null;
+    const last4 = (/(?:card|a\/c|acc(?:oun)?t|acct)\b[^0-9]{0,25}(?:[0-9xX*#•]{0,14})?([0-9]{4})\b/i.exec(body) || /\bending(?: in| with)?\s*#?\s*([0-9]{4})\b/i.exec(body) || [])[1] || null;
+    const place = /\b(?:at|@)\s+([A-Za-z0-9][A-Za-z0-9 &'.*\-\/]{1,40}?)(?=\s+(?:on|for|via|ref|dated|from|using|with|\d{1,2}[\/.-])\b|\s*[.,;(]|\s*$)/i.exec(body);
+    const party = kindHit.dir === 'in'
+        ? /\bfrom\s+([A-Za-z][A-Za-z0-9 &'.\-]{1,40}?)(?=\s+(?:on|to|ref|dated|via|into|credited|a\/c|acc)\b|\s*[.,;(]|\s*$)/i.exec(body)
+        : /\bto\s+([A-Za-z][A-Za-z0-9 &'.\-]{1,40}?)(?=\s+(?:on|from|ref|dated|via|a\/c|acc)\b|\s*[.,;(]|\s*$)/i.exec(body);
+    let merchant = place && !/^(atm|your|the|a\/c)\b/i.test(place[1]) ? place[1].trim() : (party && !/^(your|the|a\/c|acc)/i.test(party[1]) ? party[1].trim() : '');
+    if (/^\d|^(on|ref)$/i.test(merchant)) merchant = '';
+    merchant = merchant ? titleCase(merchant.replace(/\s{2,}/g, ' ')) : '';
+    if (!merchant && (kindHit.kind === 'card' || kindHit.kind === 'online')) checks.push('no shop name in the message');
+    if (kindHit.generic) checks.push('the message does not say what kind of payment it was');
+    if (!bank || !bank.tuned) checks.push(bank ? `${bank.name} messages are read with general rules` : 'sender not recognised as a bank');
+    // Pasted or shared text didn't come straight from the bank's number: always look before adding.
+    else if (shared) checks.push('pasted or shared message, so check it matches your bank app');
+
+    const bankName = bank ? bank.name : 'Bank';
+    const type = kindHit.dir === 'in' ? 'income' : kindHit.dir === 'out' ? 'expense' : kindHit.dir === 'move' ? 'atm' : 'reversal';
+    const desc = kindHit.kind === 'atm' ? 'ATM withdrawal'
+        : kindHit.kind === 'fee' ? `${bankName} charges`
+        : kindHit.kind === 'refund' ? `Refund${merchant ? `: ${merchant}` : ''}`
+        : kindHit.kind === 'reversal' ? `Reversal${merchant ? `: ${merchant}` : ''}`
+        : merchant || (kindHit.kind === 'salary' ? 'Salary' : `${bankName} ${kindHit.label.toLowerCase()}`);
+    let category = type === 'income'
+        ? (kindHit.kind === 'salary' || /\bsalary\b/i.test(body) ? 'Salary' : 'OtherIncome')
+        : kindHit.kind === 'fee' ? 'Other' : (guessCategory(merchant) || (kindHit.kind === 'bill' ? 'Utilities' : 'Other'));
+    const catType = type === 'income' ? 'income' : 'expense';
+    if (!state.categories.some((c) => c.id === category && c.type === catType)) category = FALLBACK_CATEGORY[catType];
+    const confidence = checks.length ? 'medium' : 'high';
+    const dedupe = ref ? `ref:${bankName}:${ref.toUpperCase()}` : `sig:${bankName}:${kindHit.dir}:${amt.cur}:${amt.value}:${when.date}:${when.time || ''}:${last4 || ''}`;
+    return {
+        id: String(msg.id), type, kind: kindHit.kind, kindLabel: kindHit.label, amount: amt.value, currency: amt.cur,
+        bank: bankName, desc: desc.slice(0, 80), merchant, category, date: when.date, time: when.time, ref, last4,
+        confidence, checks, dedupe, masked: maskSms(body).slice(0, 400)
+    };
+};
+
+// What a confirmed message is saved with, for checking later.
+const bankMeta = (i) => ({ bank: i.bank, kind: i.kind, ref: i.ref, last4: i.last4, smsId: i.id, dedupe: i.dedupe, time: i.time, sms: i.masked, confidence: i.confidence, verifiedAt: new Date().toISOString() });
+const smsAlreadyRecorded = (i) => state.transactions.some((t) => t.bank && (t.bank.smsId === i.id || t.bank.dedupe === i.dedupe || (i.ref && t.bank.ref && t.bank.ref.toUpperCase() === i.ref.toUpperCase() && t.bank.bank === i.bank)));
+const sameMoney = (a, cur, b, curB, tol = 0.005) => Math.abs(convertAmount(a, cur, 'USD') - convertAmount(b, curB, 'USD')) <= Math.max(0.01, convertAmount(b, curB, 'USD') * tol);
+
+// The account bank messages go into: the one picked last, else one named like the bank, else a bank/card account.
 const smsAccountFor = (item) => {
     const p = smsPrefs();
     if (p.accountId && state.accounts.some((a) => a.id === p.accountId)) return p.accountId;
-    const named = state.accounts.find((a) => a.name.toLowerCase().includes(item.bank.toLowerCase().split(' ')[0]));
+    const first = item.bank.toLowerCase().split(' ')[0];
+    const named = state.accounts.find((a) => a.name.toLowerCase().includes(first));
     const bank = state.accounts.find((a) => a.kind === 'bank' || a.kind === 'card');
     return (named || bank || state.accounts[0]).id;
 };
-// A waiting entry this message probably confirms (same direction, amount within 1%, within 5 days).
-const smsMatchFor = (item) => state.transactions.find((t) => t.pending && t.type === item.type
-    && Math.abs(toDisplay(t.amount, t.currency) - toDisplay(item.amount, item.currency)) <= Math.max(1, toDisplay(item.amount, item.currency) * 0.01)
-    && Math.abs(daysBetween(parseDate(t.date), parseDate(item.date))) <= 5);
+// An existing entry this message is about.
+//  - a waiting payment (same direction, amount within 1%, due within 7 days): mark it paid, bank-verified
+//  - an entry already logged by hand (same direction and amount, within 2 days, not yet linked): link it
+//  - for a reversal: the payment it cancels
+const smsMatchFor = (i) => {
+    if (i.type === 'reversal') {
+        const t = state.transactions.filter((x) => x.type === 'expense' && !x.pending && sameMoney(x.amount, x.currency, i.amount, i.currency) && Math.abs(daysBetween(parseDate(x.date), parseDate(i.date))) <= 30)
+            .sort((a, b) => Math.abs(daysBetween(parseDate(a.date), parseDate(i.date))) - Math.abs(daysBetween(parseDate(b.date), parseDate(i.date))))[0];
+        return t ? { how: 'reverse', tx: t } : null;
+    }
+    if (i.type === 'atm') return null;
+    const pay = paymentItems({ horizonDays: 7 }).find((p) => p.type === i.type && sameMoney(p.amount, p.currency, i.amount, i.currency, 0.01) && Math.abs(daysBetween(parseDate(p.due), parseDate(i.date))) <= 7);
+    if (pay) return { how: 'pay', pay };
+    const t = state.transactions.find((x) => x.type === i.type && !x.pending && !x.bank && sameMoney(x.amount, x.currency, i.amount, i.currency) && Math.abs(daysBetween(parseDate(x.date), parseDate(i.date))) <= 2);
+    return t ? { how: 'link', tx: t } : null;
+};
 
+const smsCardHtml = (i) => {
+    const match = smsMatchFor(i);
+    const typeText = i.type === 'atm' ? 'ATM withdrawal (moved to Cash)' : i.type === 'reversal' ? 'Reversal (cancels an earlier payment)' : `${i.type === 'income' ? 'Income' : 'Expense'} · ${i.kindLabel}`;
+    const amountText = `${i.type === 'income' ? '+' : i.type === 'reversal' ? '' : '−'}${formatCurrency(i.amount, i.currency)}`;
+    const rows = [
+        ['Amount', `<strong class="amount ${i.type === 'income' ? 'text-income' : ''}">${escapeHtml(amountText)}</strong>`],
+        ['Bank', escapeHtml(`${i.bank}${i.last4 ? ` · ••${i.last4}` : ''}`)],
+        ['Type', escapeHtml(typeText)],
+        ['Description', escapeHtml(i.desc)],
+        ['Date', escapeHtml(`${relativeDayLabel(i.date)}${i.time ? `, ${i.time}` : ''}`)],
+        ...(i.ref ? [['Reference', escapeHtml(i.ref)]] : [])
+    ];
+    let actions;
+    if (i.type === 'reversal') {
+        actions = match
+            ? `<button type="button" class="btn btn-secondary btn-sm" data-sms-ignore="${escapeHtml(i.id)}">Ignore</button><button type="button" class="btn btn-primary btn-sm" data-sms-match="${escapeHtml(i.id)}">Remove “${escapeHtml(match.tx.desc)}”</button>`
+            : `<span class="sms-note">No matching payment found to reverse, so nothing is added.</span><button type="button" class="btn btn-secondary btn-sm" data-sms-ignore="${escapeHtml(i.id)}">OK</button>`;
+    } else {
+        const matchBtn = match ? `<button type="button" class="btn ${i.type === 'income' ? 'btn-income' : 'btn-primary'} btn-sm btn-block" data-sms-match="${escapeHtml(i.id)}">${icon('i-check', 'ic ic-sm')} ${match.how === 'pay' ? `Mark “${escapeHtml(match.pay.name)}” as ${i.type === 'income' ? 'received' : 'paid'}` : `Link to “${escapeHtml(match.tx.desc)}” (already recorded)`}</button>` : '';
+        actions = `${matchBtn}<div class="sms-actions"><button type="button" class="btn btn-secondary btn-sm" data-sms-ignore="${escapeHtml(i.id)}">Ignore</button><button type="button" class="btn btn-secondary btn-sm" data-sms-edit="${escapeHtml(i.id)}">Edit details</button>${match ? '' : `<button type="button" class="btn ${i.type === 'income' ? 'btn-income' : 'btn-primary'} btn-sm" data-sms-add="${escapeHtml(i.id)}">Confirm &amp; add</button>`}</div>`;
+    }
+    return `<li class="sms-card" data-confidence="${i.confidence}">
+        ${i.confidence === 'medium' ? `<p class="sms-check">${icon('i-alert', 'ic ic-sm')}<span>Please check these details: ${escapeHtml(i.checks.join('; '))}.</span></p>` : ''}
+        <dl class="sms-fields">${rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>
+        <details class="sms-original"><summary>Original message</summary><p>${escapeHtml(i.masked)}</p></details>
+        ${actions}
+    </li>`;
+};
 const renderSmsSheet = () => {
     const list = $('sms-list');
     if (!smsQueue.length) { list.innerHTML = ''; return; }
-    const accOpts = state.accounts.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('');
-    $('sms-account').innerHTML = accOpts;
+    $('sms-account').innerHTML = state.accounts.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('');
     $('sms-account').value = smsAccountFor(smsQueue[0]);
-    $('sms-count').textContent = `${plural(smsQueue.length, 'bank message', 'bank messages')} to check`;
-    list.innerHTML = smsQueue.map((i) => {
-        const match = smsMatchFor(i);
-        const signed = formatSigned(i.type === 'income' ? i.amount : -i.amount, i.currency);
-        return `<li class="sms-card" data-sms-card="${escapeHtml(i.id)}">
-            <div class="sms-top">${catBadge(i.category, i.type)}<div class="sms-main"><strong>${escapeHtml(i.desc)}</strong><span>${escapeHtml(i.bank)}${i.last4 ? ` ·· ${escapeHtml(i.last4)}` : ''} · ${escapeHtml(relativeDayLabel(i.date))}</span></div>
-            <span class="amount ${i.type === 'income' ? 'text-income' : ''}">${escapeHtml(signed)}</span></div>
-            <p class="sms-body">${escapeHtml(i.body.slice(0, 220))}</p>
-            ${match ? `<button type="button" class="btn btn-income btn-sm btn-block" data-sms-match="${escapeHtml(i.id)}">${icon('i-check', 'ic ic-sm')} Confirm “${escapeHtml(match.desc)}”</button>` : ''}
-            <div class="sms-actions"><button type="button" class="btn btn-secondary btn-sm" data-sms-ignore="${escapeHtml(i.id)}">Ignore</button><button type="button" class="btn ${i.type === 'income' ? 'btn-income' : 'btn-primary'} btn-sm" data-sms-add="${escapeHtml(i.id)}">Add ${i.type}</button></div>
-        </li>`;
-    }).join('');
+    $('sms-count').textContent = `${plural(smsQueue.length, 'transaction', 'transactions')} to review`;
+    list.innerHTML = smsQueue.map(smsCardHtml).join('');
 };
 const showSmsSheet = () => {
     if (!smsQueue.length) return;
@@ -1601,13 +1748,47 @@ const smsHandled = async (ids) => {
     if (plugin) { try { await plugin.clearHandled({ ids }); } catch (e) { /* ignore */ } }
     if (smsQueue.length) renderSmsSheet(); else closeSheet('modal-sms');
 };
+const smsChosenAccount = (i) => {
+    const sel = $('sms-account');
+    const id = sel && sel.value ? sel.value : smsAccountFor(i);
+    const p = smsPrefs();
+    p.accountId = id;
+    saveSmsPrefs(p);
+    return id;
+};
+// Adds one confirmed message. ATM withdrawals become a move from the bank account to Cash, so the cash
+// isn't counted as spent twice (once when withdrawn, again when spent).
+const smsApply = (i, accountId) => {
+    if (i.type === 'atm') {
+        const from = accountById(accountId);
+        const cash = state.accounts.find((a) => a.kind === 'cash' && a.id !== from.id);
+        if (cash) {
+            const record = { id: generateId(), type: 'transfer', desc: 'ATM withdrawal', amount: i.amount, currency: i.currency, accountId: from.id, toAccountId: cash.id, toAmount: round2(convertAmount(i.amount, i.currency, cash.currency)), toCurrency: cash.currency, category: 'Transfer', date: i.date, note: `From ${i.bank} SMS`, createdAt: Date.now(), recurringId: null, receipt: null, bank: bankMeta(i) };
+            state.transactions.push(record);
+            saveState();
+            queueSync('transaction', record.id, 'upsert');
+            renderActive();
+            return record;
+        }
+        const rec = quickSaveTx({ type: 'expense', desc: 'ATM withdrawal', amount: i.amount, currency: i.currency, category: 'Other', date: i.date, accountId, note: `From ${i.bank} SMS` });
+        rec.bank = bankMeta(i);
+        saveState();
+        queueSync('transaction', rec.id, 'upsert');
+        return rec;
+    }
+    const rec = quickSaveTx({ type: i.type, desc: i.desc, amount: i.amount, currency: i.currency, category: i.category, date: i.date, accountId, note: `From ${i.bank} SMS` });
+    rec.pending = false; // it already happened: the bank says so
+    rec.bank = bankMeta(i);
+    saveState();
+    queueSync('transaction', rec.id, 'upsert');
+    renderActive();
+    return rec;
+};
 const smsAdd = (id) => {
     const i = smsQueue.find((x) => x.id === id);
     if (!i) return;
-    const p = smsPrefs();
-    p.accountId = $('sms-account').value || null;
-    saveSmsPrefs(p);
-    quickSaveTx({ type: i.type, desc: i.desc, amount: i.amount, currency: i.currency, category: i.category, date: i.date, accountId: p.accountId || smsAccountFor(i), note: `From ${i.bank} SMS` });
+    if (smsAlreadyRecorded(i)) { showToast('That transaction is already in Vela.', 'info'); smsHandled([id]); return; }
+    smsApply(i, smsChosenAccount(i));
     showToast(`Added from ${i.bank}: ${formatCurrency(i.amount, i.currency)}`, 'success');
     smsHandled([id]);
 };
@@ -1615,37 +1796,124 @@ const smsIgnore = (id) => smsHandled([id]);
 const smsConfirmMatch = (id) => {
     const i = smsQueue.find((x) => x.id === id);
     const match = i && smsMatchFor(i);
-    if (match) confirmTx(match.id);
+    if (!match) { smsHandled([id]); return; }
+    if (match.how === 'pay') {
+        markPaid(match.pay.key);
+        // The entry that payment created/confirmed is now bank-verified.
+        const t = match.pay.kind === 'tx' ? state.transactions.find((x) => x.id === match.pay.id)
+            : sortByNewest(state.transactions.filter((x) => x.recurringId === match.pay.id))[0];
+        if (t) { t.bank = bankMeta(i); saveState(); queueSync('transaction', t.id, 'upsert'); }
+    } else if (match.how === 'link') {
+        match.tx.bank = bankMeta(i);
+        saveState();
+        queueSync('transaction', match.tx.id, 'upsert');
+        showToast(`“${match.tx.desc}” is now bank-verified`, 'success');
+    } else if (match.how === 'reverse') {
+        const t = match.tx;
+        if (t.receipt) removeReceipt(t.receipt);
+        state.transactions = state.transactions.filter((x) => x.id !== t.id);
+        saveState();
+        queueSync('transaction', t.id, 'delete');
+        showToast(`Removed “${t.desc}”: the bank reversed it`, 'success');
+    }
+    renderActive();
     smsHandled([id]);
 };
+// Edit before adding: opens the normal form, filled in; saving it marks the message as done.
+const smsEdit = (id) => {
+    const i = smsQueue.find((x) => x.id === id);
+    if (!i) return;
+    const accountId = smsChosenAccount(i);
+    if (i.type === 'atm') {
+        openTransfer();
+        smsEditing = i;
+        $('transfer-from').value = accountId;
+        const cash = state.accounts.find((a) => a.kind === 'cash' && a.id !== accountId);
+        if (cash) $('transfer-to').value = cash.id;
+        $('transfer-amount').value = i.amount;
+        $('transfer-date').value = i.date;
+        $('transfer-note').value = 'ATM withdrawal';
+        updateTransferFields();
+        return;
+    }
+    openAddTx(i.type === 'income' ? 'income' : 'expense');
+    smsEditing = i;
+    $('tx-account').value = accountId;
+    fillCurrencySelect($('tx-currency'), i.currency);
+    $('tx-amount').value = i.amount;
+    $('tx-desc').value = i.desc;
+    $('tx-date').value = i.date;
+    $('tx-note').value = `From ${i.bank} SMS`;
+    selectTxCategory(i.category);
+    txCatTouched = true;
+    updateDateHint();
+};
+// After the form saves an entry that came from a message.
+const smsEditSaved = (record) => {
+    if (!smsEditing || !record) return;
+    const i = smsEditing;
+    smsEditing = null;
+    record.pending = false;
+    record.bank = bankMeta(i);
+    saveState();
+    queueSync('transaction', record.id, 'upsert');
+    smsHandled([i.id]);
+};
+
 const smsTake = (messages) => {
     const p = smsPrefs();
     const known = new Set(p.seen.concat(smsQueue.map((i) => i.id)));
-    const fresh = (messages || []).filter((m) => m && !known.has(String(m.id))).map(parseBankSms).filter(Boolean);
+    const queuedKeys = new Set(smsQueue.map((i) => i.dedupe));
+    const fresh = [];
+    const skipped = [];
+    (messages || []).forEach((m) => {
+        if (!m || known.has(String(m.id))) return;
+        const i = parseBankSms(m);
+        if (!i) { skipped.push(String(m.id)); return; }
+        // The same transaction twice (resent, or read from the inbox and from the live alert): keep one.
+        if (queuedKeys.has(i.dedupe) || fresh.some((f) => f.dedupe === i.dedupe) || smsAlreadyRecorded(i)) { skipped.push(i.id); return; }
+        fresh.push(i);
+    });
+    if (skipped.length) { const q = smsPrefs(); q.seen = [...new Set(q.seen.concat(skipped))]; saveSmsPrefs(q); }
     fresh.sort((a, b) => (a.date < b.date ? 1 : -1));
+    // Optional: confident messages with nothing to match are added straight away.
+    if (p.autoAdd) {
+        const auto = fresh.filter((i) => i.confidence === 'high' && i.type !== 'reversal' && !smsMatchFor(i));
+        auto.forEach((i) => smsApply(i, smsAccountFor(i)));
+        if (auto.length) {
+            showToast(`Added ${plural(auto.length, 'bank transaction')} automatically`, 'success');
+            const ids = auto.map((i) => i.id);
+            const q = smsPrefs(); q.seen = [...new Set(q.seen.concat(ids))]; saveSmsPrefs(q);
+            const plugin = smsPlugin();
+            if (plugin) plugin.clearHandled({ ids }).catch(() => {});
+        }
+        smsQueue = smsQueue.concat(fresh.filter((i) => !auto.includes(i)));
+        return fresh.length;
+    }
     smsQueue = smsQueue.concat(fresh);
     return fresh.length;
 };
 // On start and whenever Vela comes back: messages that came while it was closed, plus the inbox since last time.
 const scanSms = async () => {
     const plugin = smsPlugin();
-    const p = smsPrefs();
-    if (!plugin || !p.enabled) return 0;
     let added = 0;
-    try { added += smsTake((await plugin.getPending()).messages); } catch (e) { /* ignore */ }
-    try {
-        const since = p.since || Date.now() - 3 * 86400000;
-        added += smsTake((await plugin.readInbox({ since, limit: 100 })).messages);
-        const q = smsPrefs();
-        q.since = Date.now();
-        saveSmsPrefs(q);
-    } catch (e) { /* permission removed */ }
+    if (plugin) { try { added += smsTake((await plugin.getPending()).messages); } catch (e) { /* ignore */ } }
+    const p = smsPrefs();
+    if (plugin && p.enabled) {
+        try {
+            const since = p.since || Date.now() - 3 * 86400000;
+            added += smsTake((await plugin.readInbox({ since, limit: 150 })).messages);
+            const q = smsPrefs();
+            q.since = Date.now();
+            saveSmsPrefs(q);
+        } catch (e) { /* permission removed */ }
+    }
     if (smsQueue.length) showSmsSheet();
     return added;
 };
 const enableSmsTracking = async (on) => {
     const plugin = smsPlugin();
-    if (!plugin) { showToast('Bank SMS tracking works in the Android app.', 'info'); setSwitch($('switch-sms'), false); return; }
+    if (!plugin) { showToast('Reading bank SMS works in the Android app. Here you can paste a bank SMS instead.', 'info'); setSwitch($('switch-sms'), false); return; }
     if (on) {
         let perm = 'prompt';
         try { perm = (await plugin.checkPermissions()).sms; } catch (e) { /* ignore */ }
@@ -1654,7 +1922,7 @@ const enableSmsTracking = async (on) => {
         }
         if (perm !== 'granted') {
             setSwitch($('switch-sms'), false);
-            showToast('SMS permission is off. If Android says it is restricted: App info > ⋮ > Allow restricted settings, then try again.', 'warning');
+            showSmsHelp();
             return;
         }
         const ln = nativePlugin('LocalNotifications');
@@ -1666,20 +1934,124 @@ const enableSmsTracking = async (on) => {
     saveSmsPrefs(p);
     try { await plugin.setEnabled({ enabled: on }); } catch (e) { /* ignore */ }
     setSwitch($('switch-sms'), on);
+    renderSettings();
     showToast(on ? 'Bank SMS tracking is on. Vela asks before adding anything.' : 'Bank SMS tracking is off', 'success');
     if (on) {
         const n = await scanSms();
-        if (!n) showToast('No new bank messages from the last 3 days.', 'info');
+        if (!n) showToast('No new bank transactions in the last 3 days.', 'info');
     }
+};
+// When Android won't give SMS access: say how to allow it, and offer sharing or pasting instead.
+const showSmsHelp = () => showConfirm({
+    title: 'SMS access is off',
+    message: 'Android didn’t allow Vela to read SMS. To allow it: Android Settings > Apps > Vela > ⋮ (top right) > Allow restricted settings, then Permissions > SMS > Allow. You can also share a bank SMS to Vela from your Messages app, or paste one in Settings > Check a bank SMS.',
+    confirmLabel: 'Paste a bank SMS',
+    cancelLabel: 'OK',
+    danger: false,
+    onConfirm: () => openSmsPaste()
+});
+// Paste or share a bank SMS (works without SMS permission).
+const openSmsPaste = () => {
+    $('sms-paste-text').value = '';
+    $('sms-paste-result').textContent = '';
+    openOrSwap('modal-sms-paste');
+};
+const checkPastedSms = () => {
+    const text = $('sms-paste-text').value.trim();
+    if (!text) { fieldError($('sms-paste-text'), 'Paste the bank message here.'); return; }
+    const msg = { id: `paste-${hashToInt(text)}`, address: 'Pasted', body: text, date: Date.now(), shared: true };
+    const i = parseBankSms(msg);
+    if (!i) { $('sms-paste-result').textContent = `This doesn’t look like a bank transaction (${smsLastReason}), so nothing will be added.`; return; }
+    if (smsAlreadyRecorded(i)) { $('sms-paste-result').textContent = 'That transaction is already in Vela.'; return; }
+    smsQueue = smsQueue.filter((x) => x.id !== i.id).concat(i);
+    closeSheet('modal-sms-paste');
+    setTimeout(showSmsSheet, 350);
 };
 const initSms = () => {
     const plugin = smsPlugin();
     if (!plugin) return;
     plugin.addListener('smsReceived', (m) => { if (smsTake([m])) { haptic('MEDIUM'); showSmsSheet(); } });
-    if (smsPrefs().enabled) {
-        plugin.setEnabled({ enabled: true }).catch(() => {});
-        setTimeout(scanSms, 1800);
-    }
+    if (smsPrefs().enabled) plugin.setEnabled({ enabled: true }).catch(() => {});
+    setTimeout(scanSms, 1800);
+};
+
+/* ---- Payments: entries waiting to be paid, and fixed expenses you pay yourself ---- */
+const paymentItems = ({ horizonDays = 7 } = {}) => {
+    const horizon = toISODate(addDays(new Date(), horizonDays));
+    const items = [];
+    state.transactions.filter((t) => t.pending && t.type !== 'transfer').forEach((t) => items.push({
+        key: `tx:${t.id}`, kind: 'tx', id: t.id, name: t.desc, type: t.type, amount: t.amount, currency: t.currency, category: t.category, due: t.date, status: payStatus(t.date)
+    }));
+    state.recurring.filter((b) => !b.autoLog).forEach((b) => items.push({
+        key: `bill:${b.id}`, kind: 'bill', id: b.id, name: b.name, type: b.type, amount: b.amount, currency: b.currency, category: b.category, due: b.nextDate, status: payStatus(b.nextDate)
+    }));
+    return items.filter((i) => i.status !== 'upcoming' || i.due <= horizon).sort((a, b) => (a.due > b.due ? 1 : a.due < b.due ? -1 : 0));
+};
+const paymentByKey = (key) => paymentItems({ horizonDays: 36500 }).find((i) => i.key === key);
+const reminderIdsFor = (key) => [hashToInt(`soon:${key}`), hashToInt(`due:${key}`), hashToInt(`late:${key}`)];
+// Once a payment is paid, its reminders go away (and only then).
+const cancelPaymentReminders = (key) => {
+    const ln = nativePlugin('LocalNotifications');
+    if (!ln) return;
+    try { Promise.resolve(ln.cancel({ notifications: reminderIdsFor(key).concat(key.startsWith('tx:') ? [pendingNotifId(key.slice(3))] : []).map((id) => ({ id })) })).catch(() => {}); } catch (e) { /* ignore */ }
+};
+const askMarkPaid = (key) => {
+    const i = paymentByKey(key);
+    if (!i) return;
+    const income = i.type === 'income';
+    showConfirm({
+        title: income ? 'Has this money arrived?' : 'Have you completed this payment?',
+        message: `${i.name} · ${formatCurrency(i.amount, i.currency)} · ${i.status === 'overdue' ? 'was due' : 'due'} ${shortDate(i.due)}. It will be recorded as ${income ? 'received' : 'paid'} today and counted in your balance.`,
+        confirmLabel: income ? 'Yes, mark as received' : 'Yes, mark as paid',
+        cancelLabel: 'Not yet',
+        danger: false,
+        onConfirm: () => markPaid(key)
+    });
+};
+const markPaid = (key) => {
+    if (key.startsWith('tx:')) confirmTx(key.slice(3));
+    else if (key.startsWith('bill:')) markBillPaid(key.slice(5));
+    scheduleReminders();
+};
+const paymentRowHtml = (i) => {
+    const income = i.type === 'income';
+    const when = i.status === 'overdue' ? `${income ? 'Expected' : 'Was due'} ${shortDate(i.due)}` : i.status === 'due' ? (income ? 'Expected today' : 'Due today') : `${income ? 'Expected' : 'Due'} ${shortDate(i.due)}`;
+    return `<li class="pay-row" data-status="${i.status}">
+        ${catBadge(i.category, i.type)}
+        <div class="pay-main"><span class="pay-name">${escapeHtml(i.name)}</span><span class="pay-meta"><span class="pay-pill" data-status="${i.status}">${payStatusLabel(i.status, i.type)}</span>${escapeHtml(when)}</span></div>
+        <div class="pay-end"><span class="amount ${income ? 'text-income' : ''}">${escapeHtml(formatCurrency(i.amount, i.currency))}</span>
+        <button type="button" class="btn btn-xs ${income ? 'btn-income' : 'btn-primary'}" data-pay="${escapeHtml(i.key)}">${income ? 'Mark received' : 'Mark as paid'}</button></div>
+    </li>`;
+};
+const paymentSummary = (items) => {
+    const n = (s) => items.filter((i) => i.status === s).length;
+    return [n('overdue') ? `${n('overdue')} overdue` : '', n('due') ? `${n('due')} due today` : '', n('upcoming') ? `${n('upcoming')} upcoming` : ''].filter(Boolean).join(' · ');
+};
+const renderPaymentsHome = () => {
+    const items = paymentItems();
+    const autoSoon = state.recurring.filter((b) => b.autoLog && b.type === 'expense' && b.nextDate <= toISODate(addDays(new Date(), 7))).sort((a, b) => (a.nextDate > b.nextDate ? 1 : -1));
+    $('due-section').hidden = !items.length && !autoSoon.length;
+    const worst = items.some((i) => i.status === 'overdue') ? 'overdue' : items.some((i) => i.status === 'due') ? 'due' : 'upcoming';
+    $('pay-summary').textContent = items.length ? paymentSummary(items) : 'Nothing to pay by hand';
+    $('pay-summary').dataset.status = items.length ? worst : 'ok';
+    const shown = items.slice(0, 4);
+    $('due-list').innerHTML = `${shown.length ? `<ul class="pay-list">${shown.map(paymentRowHtml).join('')}</ul>` : ''}
+        ${items.length > shown.length ? `<button type="button" class="link-btn pay-more" data-status-filter="unpaid">See all ${items.length} unpaid payments</button>` : ''}
+        ${autoSoon.length ? `<p class="pay-auto">${icon('i-repeat', 'ic ic-sm')} Logs itself: ${autoSoon.map((b) => `${escapeHtml(b.name)} ${escapeHtml(dueLabel(b.nextDate).text.toLowerCase())}`).join(' · ')}</p>` : ''}`;
+};
+// When Vela opens with payments due today or overdue: a pop-up listing them (once per opening).
+let payPopupShownAt = 0;
+const showPaymentsPopup = async () => {
+    await splashDone;
+    if (Date.now() - payPopupShownAt < 30 * 60000) return;
+    if (isLocked()) { setTimeout(showPaymentsPopup, 1500); return; }
+    if (openSheets.length || isConfirmOpen()) return;
+    const items = paymentItems().filter((i) => i.status !== 'upcoming');
+    if (!items.length) return;
+    payPopupShownAt = Date.now();
+    $('pay-popup-sub').textContent = paymentSummary(items);
+    $('pay-popup-list').innerHTML = items.map(paymentRowHtml).join('');
+    openOrSwap('modal-payments');
 };
 
 /* ---- Confirming money that was waiting ---- */
@@ -1688,15 +2060,25 @@ const confirmTx = (id) => {
     const t = state.transactions.find((x) => x.id === id);
     if (!t || !t.pending) return;
     t.pending = false;
-    if (t.date > todayISO()) t.date = todayISO(); // arrived early: it counts from today
+    // Paid on the day it was really paid; the original due date is kept for the record.
+    t.dueDate = t.dueDate || t.date;
+    t.date = todayISO();
+    t.paidAt = new Date().toISOString();
     saveState();
     haptic('MEDIUM');
     queueSync('transaction', t.id, 'upsert');
     const ln = nativePlugin('LocalNotifications');
-    // Remove its lasting reminder; a failure here must not stop the confirmation.
-    if (ln) { try { Promise.resolve(ln.cancel({ notifications: [{ id: pendingNotifId(t.id) }] })).catch(() => {}); } catch (e) { /* ignore */ } }
+    // Remove its lasting reminders; a failure here must not stop the confirmation.
+    if (ln) cancelPaymentReminders(`tx:${t.id}`);
+    if (isSheetOpen('modal-payments')) refreshPaymentsPopup();
     showToast(`${t.desc} ${t.type === 'income' ? 'received' : 'paid'}: ${formatCurrency(t.amount, t.currency)} now counts in ${accountById(t.accountId).name}`, 'success');
     renderActive();
+};
+const refreshPaymentsPopup = () => {
+    const items = paymentItems().filter((i) => i.status !== 'upcoming');
+    if (!items.length) { closeSheet('modal-payments'); return; }
+    $('pay-popup-sub').textContent = paymentSummary(items);
+    $('pay-popup-list').innerHTML = items.map(paymentRowHtml).join('');
 };
 const askConfirmTx = (id) => {
     const t = state.transactions.find((x) => x.id === id);
@@ -1829,18 +2211,7 @@ const renderDashboard = () => {
         ? (owedToYou && youOwe ? `Owed ${formatCompact(owedToYou, cur)}, you owe ${formatCompact(youOwe, cur)}` : owedToYou ? `${formatCompact(owedToYou, cur)} owed to you` : `You owe ${formatCompact(youOwe, cur)}`)
         : 'Nothing owed';
 
-    // Bills due in the next 7 days (or overdue).
-    const horizon = toISODate(addDays(new Date(), 7));
-    const due = state.recurring.filter((b) => b.type === 'expense' && b.nextDate <= horizon).sort((a, b) => (a.nextDate > b.nextDate ? 1 : -1));
-    $('due-section').hidden = !due.length;
-    $('due-list').innerHTML = due.map((b) => {
-        const dl = dueLabel(b.nextDate);
-        return `<div class="card due-card glow" style="--glow:${catColor(catById(b.category))}">
-            <div class="due-top">${catBadge(b.category, 'expense')}<div style="min-width:0"><div class="due-name">${escapeHtml(b.name)}</div><div class="due-when" data-urgent="${dl.tone === 'soon'}" data-overdue="${dl.tone === 'late'}">${escapeHtml(dl.text)}</div></div></div>
-            <div class="due-bottom"><span class="amount">${escapeHtml(formatDisplay(b.amount, b.currency))}</span>
-            ${b.autoLog ? '<span class="badge-due" data-tone="auto">Auto</span>' : `<button type="button" class="btn btn-primary btn-xs" data-bill-paid="${escapeHtml(b.id)}">Mark paid</button>`}</div>
-        </div>`;
-    }).join('');
+    renderPaymentsHome();
 
     const fx = fixedForMonth();
     $('dash-fixed').innerHTML = (fx.income > 0 || fx.total > 0) ? fixedSummaryHtml({ link: true }) : '';
@@ -1892,8 +2263,22 @@ const renderActivity = () => {
         .join('');
 
     const scoped = state.transactions.filter((t) => inAccount(t, activityAccount));
-    const base = query ? scoped : scoped.filter((t) => inMonth(t, y, m));
+    // Unpaid, upcoming, overdue and bank filters look across all months.
+    const allMonths = ['unpaid', 'upcoming', 'overdue', 'bank'].includes(activityStatus);
+    const base = query || allMonths ? scoped : scoped.filter((t) => inMonth(t, y, m));
     let list = base;
+    const today = todayISO();
+    const STATUS_TEST = {
+        paid: (t) => !t.pending,
+        unpaid: (t) => t.pending === true && t.type !== 'transfer',
+        upcoming: (t) => t.pending === true && t.date > today,
+        overdue: (t) => t.pending === true && t.date < today,
+        bank: (t) => !!t.bank
+    };
+    if (STATUS_TEST[activityStatus]) list = list.filter(STATUS_TEST[activityStatus]);
+    $('activity-status').innerHTML = [['all', 'All'], ['paid', 'Paid'], ['unpaid', 'Unpaid'], ['upcoming', 'Upcoming'], ['overdue', 'Overdue'], ['bank', 'From bank']]
+        .map(([v, label]) => `<button type="button" class="chip" data-activity-status="${v}" aria-pressed="${activityStatus === v}">${label}${v !== 'all' && v !== 'paid' ? ` <span class="chip-count">${scoped.filter(STATUS_TEST[v]).length}</span>` : ''}</button>`).join('');
+    if (allMonths && !query) $('month-label').innerHTML = `${escapeHtml({ unpaid: 'Unpaid', upcoming: 'Upcoming', overdue: 'Overdue', bank: 'From your bank' }[activityStatus])}<small>All months</small>`;
     if (activityType !== 'all') list = list.filter((t) => t.type === activityType);
     if (activityCategory !== 'all') list = list.filter((t) => t.category === activityCategory);
     if (query) {
@@ -2247,6 +2632,8 @@ const renderSettings = () => {
     $('btn-test-notif').hidden = !native;
     $('sms-row').hidden = !nativePlugin('SmsReader');
     setSwitch($('switch-sms'), smsPrefs().enabled);
+    $('sms-auto-row').hidden = !(nativePlugin('SmsReader') && smsPrefs().enabled);
+    setSwitch($('switch-sms-auto'), smsPrefs().autoAdd);
     $('report-month-desc').textContent = `Income, spending and categories for ${monthName(activityMonth.y, activityMonth.m)}`;
     $('app-version').textContent = `Vela ${APP_VERSION}${isNative() ? ' for Android' : ''}. Exchange rates from open.er-api.com`;
 };
@@ -2464,6 +2851,7 @@ const updateDateHint = () => {
 };
 
 const openAddTx = (type = 'expense') => {
+    smsEditing = null;
     $('tx-form').reset();
     txHistory = historyStats();
     txCatTouched = false;
@@ -2482,6 +2870,7 @@ const openAddTx = (type = 'expense') => {
 };
 
 const openEditTx = (id) => {
+    smsEditing = null;
     const t = state.transactions.find((x) => x.id === id);
     if (!t) return;
     if (t.type === 'transfer') { openTransfer(t.id); return; }
@@ -2569,6 +2958,7 @@ const submitTx = async () => {
     }
     state.config.lastCategory[txType] = category;
     state.config.lastAccount = accountId;
+    if (smsEditing && !id) smsEditSaved(record);
     saveState();
     haptic('MEDIUM');
     queueSync('transaction', record.id, 'upsert');
@@ -5042,6 +5432,7 @@ const onAppVisible = () => {
     if (pendingCount()) flushSync();
     renderActive();
     scanSms();
+    setTimeout(showPaymentsPopup, 900);
 };
 
 // A soft ink ripple where you touch buttons.
@@ -5086,7 +5477,8 @@ const initEvents = () => {
         if (d.editBudget) { openBudget(d.editBudget); return; }
         if (d.newBudget) { openBudget(); $('budget-category').value = d.newBudget; return; }
         if (d.editBill) { openEditBill(d.editBill); return; }
-        if (d.billPaid) { markBillPaid(d.billPaid); return; }
+        if (d.billPaid) { askMarkPaid(`bill:${d.billPaid}`); return; }
+        if (d.pay) { askMarkPaid(d.pay); return; }
         if (d.editDebt) { openEditDebt(d.editDebt); return; }
         if (d.repayDebt) { openRepay(d.repayDebt); return; }
         if (d.editCategory) { catReturnToTx = false; catReturnToManager = true; openCategoryEditor(d.editCategory); return; }
@@ -5094,10 +5486,13 @@ const initEvents = () => {
         if (d.catIcon) { catEditIcon = d.catIcon; renderCategoryEditor(); return; }
         if (d.catType) { catEditType = d.catType; if (!$('category-id').value) catEditIcon = catEditType === 'income' ? 'c-OtherIncome' : 'c-Other'; renderCategoryEditor(); return; }
         if (d.txType) { setTxType(d.txType); return; }
-        if (d.confirmTx) { confirmTx(d.confirmTx); return; }
+        if (d.confirmTx) { askMarkPaid(`tx:${d.confirmTx}`); return; }
         if (d.smsAdd) { smsAdd(d.smsAdd, el); return; }
         if (d.smsIgnore) { smsIgnore(d.smsIgnore, el); return; }
         if (d.smsMatch) { smsConfirmMatch(d.smsMatch, el); return; }
+        if (d.smsEdit) { smsEdit(d.smsEdit); return; }
+        if (d.activityStatus) { activityStatus = d.activityStatus; renderActivity(); return; }
+        if (d.statusFilter) { activityStatus = d.statusFilter; activityType = 'all'; activityCategory = 'all'; activityView = 'list'; switchTab('activity'); return; }
         if (d.txKind) { txKindTouched = true; setTxKind(d.txKind); return; }
         if (d.pick) { const p = txPicks[Number(d.pick)]; if (p) applyPick(p); return; }
         if (d.starterPick) { starterPick(d.starterPick); return; }
@@ -5320,7 +5715,16 @@ const initEvents = () => {
     $('switch-reminders').addEventListener('click', (e) => enableReminders(!isOn(e.currentTarget)));
     $('btn-test-notif').addEventListener('click', sendTestNotification);
     $('switch-sms').addEventListener('click', (e) => enableSmsTracking(!isOn(e.currentTarget)));
-    $('btn-sms-all').addEventListener('click', () => { [...smsQueue].forEach((i) => (smsMatchFor(i) ? smsConfirmMatch(i.id) : smsAdd(i.id))); });
+    $('switch-sms-auto').addEventListener('click', (e) => {
+        const on = !isOn(e.currentTarget);
+        const q = smsPrefs(); q.autoAdd = on; saveSmsPrefs(q);
+        setSwitch(e.currentTarget, on);
+        showToast(on ? 'Confident bank transactions will be added automatically. Anything unclear still asks you.' : 'Vela will ask before adding every bank transaction.', 'success');
+    });
+    $('btn-sms-paste').addEventListener('click', openSmsPaste);
+    $('btn-sms-check').addEventListener('click', checkPastedSms);
+    // "Add all" only takes confident messages; anything that needs a check stays for review.
+    $('btn-sms-all').addEventListener('click', () => { [...smsQueue].filter((i) => i.confidence === 'high' && i.type !== 'reversal').forEach((i) => (smsMatchFor(i) ? smsConfirmMatch(i.id) : smsAdd(i.id))); });
     $('btn-forgot-pin').addEventListener('click', forgotPin);
 
     $('btn-report-pdf').addEventListener('click', (e) => withBusy(e.currentTarget, exportPdf));
@@ -5564,6 +5968,7 @@ const updateTransferFields = (fromAmount) => {
 };
 
 const openTransfer = (id) => {
+    smsEditing = null;
     if (state.accounts.length < 2) {
         showToast('Add a second account first, like a bank account or card, then move money between them.', 'info');
         openAccountEditor();
@@ -5616,6 +6021,7 @@ const submitTransfer = () => {
     haptic('MEDIUM');
     queueSync('transaction', record.id, 'upsert');
     closeSheet('modal-transfer');
+    if (smsEditing && !id) smsEditSaved(record);
     showToast(`Moved ${formatCurrency(amount, from.currency)} from ${from.name} to ${to.name}`, 'success');
     renderActive();
     return true;
@@ -5814,8 +6220,9 @@ const initNative = () => {
     }
     const ln = nativePlugin('LocalNotifications');
     if (ln) ln.addListener('localNotificationActionPerformed', (a) => {
-        const txId = a && a.notification && a.notification.extra && a.notification.extra.txId;
-        if (txId) setTimeout(() => askConfirmTx(txId), 600);
+        const extra = (a && a.notification && a.notification.extra) || {};
+        const key = extra.payKey || (extra.txId ? `tx:${extra.txId}` : null);
+        if (key) splashDone.then(() => setTimeout(() => { payPopupShownAt = Date.now(); askMarkPaid(key); }, 400));
         else goToPlan('bills');
     });
     checkBiometric();
@@ -5888,6 +6295,7 @@ const init = () => {
     processRecurring();
     scheduleReminders();
     fetchLiveExchangeRate();
+    setTimeout(showPaymentsPopup, 1200);
 };
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);

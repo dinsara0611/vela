@@ -34,6 +34,33 @@ public class SmsReaderPlugin extends Plugin {
     public void load() {
         instance = this;
         foreground = true;
+        if (getActivity() != null) takeShared(getActivity().getIntent());
+    }
+
+    @Override
+    protected void handleOnNewIntent(android.content.Intent intent) {
+        super.handleOnNewIntent(intent);
+        takeShared(intent);
+    }
+
+    /** A bank SMS shared to Vela from another app: kept like a received one and shown for review. */
+    private void takeShared(android.content.Intent intent) {
+        if (intent == null || !android.content.Intent.ACTION_SEND.equals(intent.getAction())) return;
+        String text = intent.getStringExtra(android.content.Intent.EXTRA_TEXT);
+        intent.setAction(null); // handle it once
+        if (text == null || text.trim().isEmpty()) return;
+        try {
+            JSONObject item = new JSONObject();
+            item.put("id", "shared-" + Math.abs(text.trim().hashCode()));
+            item.put("address", "Shared");
+            item.put("body", text.trim());
+            item.put("date", System.currentTimeMillis());
+            item.put("shared", true);
+            SmsStore.add(getContext(), item);
+            emit(item);
+        } catch (Exception e) {
+            // ignore
+        }
     }
 
     @Override
