@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.20.1">
+    <link rel="stylesheet" href="style.css?v=4.20.2">
 </head>
 <body data-view="dashboard">
 
@@ -702,7 +702,11 @@
                     </div>
                     <div class="field">
                         <label class="field-label" for="tx-desc" id="tx-desc-label">What was it for?</label>
-                        <input type="text" id="tx-desc" class="input" placeholder="e.g. Groceries" maxlength="80" autocomplete="off" enterkeyhint="next" required>
+                        <div class="desc-wrap" id="tx-desc-wrap">
+                            <span class="desc-logo" id="tx-desc-logo" aria-hidden="true"></span>
+                            <input type="text" id="tx-desc" class="input" placeholder="e.g. Groceries" maxlength="80" autocomplete="off" enterkeyhint="next" required>
+                        </div>
+                        <div class="brand-suggest" id="tx-brand-suggest" role="group" aria-label="Shops matching what you typed" hidden></div>
                     </div>
                     <fieldset class="field">
                         <legend class="field-label" style="margin-bottom:6px">Category</legend>
@@ -1427,7 +1431,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.20.1"></script>
+    <script src="app.js?v=4.20.2"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

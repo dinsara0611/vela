@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.20.1';
+const APP_VERSION = '4.20.2';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2450,6 +2450,7 @@ const smsEdit = (id, asMove = false) => {
     $('tx-desc').value = i.desc;
     $('tx-date').value = i.date;
     $('tx-note').value = `From ${i.bank} (${sourceShort(i.sources)})`;
+    updateDescLogo();
     selectTxCategory(i.category);
     txCatTouched = true;
     updateDateHint();
@@ -3952,7 +3953,45 @@ const selectTxCategory = (id) => {
     if (input) input.checked = true;
 };
 
+// The name box: the shop's real logo appears inside it as soon as the name matches a known brand, and while
+// typing, brands whose name starts with the letters typed are offered with their logos (tap to fill the name).
+const descBrands = (text) => {
+    const q = String(text || '').trim().toLowerCase();
+    if (q.length < 2) return [];
+    const exact = brandFor(text);
+    const seen = new Set();
+    return BRANDS.filter((b) => {
+        if (b.cat === null && txType === 'expense') return false; // banks aren't shops
+        if (txType === 'income' && b.cat !== null) return false;
+        if (exact && exact.name === b.name) return false;
+        const name = b.name.toLowerCase();
+        const hit = name.startsWith(q) || name.split(/[\s\-&.]+/).some((w) => w.length > 1 && w.startsWith(q));
+        if (!hit || seen.has(b.name)) return false;
+        seen.add(b.name);
+        return true;
+    }).sort((a, b) => (logoSlug(b.slug) ? 1 : 0) - (logoSlug(a.slug) ? 1 : 0)).slice(0, 4);
+};
+const updateDescLogo = () => {
+    const input = $('tx-desc');
+    const b = input.value.trim() ? brandFor(input.value) : null;
+    $('tx-desc-logo').innerHTML = b ? brandBadge(b, ' is-field') : '';
+    $('tx-desc-wrap').classList.toggle('has-brand', !!b);
+    const list = document.activeElement === input || input.dataset.typing === '1' ? descBrands(input.value) : [];
+    const box = $('tx-brand-suggest');
+    box.hidden = !list.length;
+    box.innerHTML = list.map((x) => `<button type="button" class="brand-pick" data-brand-pick="${escapeHtml(x.name)}">${brandBadge(x, ' is-mini')}<span>${escapeHtml(x.name)}</span></button>`).join('');
+};
+const pickDescBrand = (name) => {
+    const input = $('tx-desc');
+    input.value = name;
+    delete input.dataset.typing;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    $('tx-brand-suggest').hidden = true;
+    haptic();
+};
+
 const renderTxSuggest = () => {
+    updateDescLogo();
     const wrap = $('tx-suggest');
     const show = txType === 'expense' && !$('tx-id').value;
     wrap.hidden = !show;
@@ -3999,6 +4038,8 @@ const guessCategory = (desc) => {
     if (g && expenseCatExists(g.last.category)) return g.last.category;
     const item = priceList(normCur($('tx-currency').value)).items.find((i) => normDesc(i.name) === key);
     if (item) return item.category;
+    const brand = brandFor(desc);
+    if (brand && brand.cat && expenseCatExists(brand.cat)) return brand.cat;
     const hit = CATEGORY_HINTS.find(([, re]) => re.test(key));
     return hit && expenseCatExists(hit[0]) ? hit[0] : null;
 };
@@ -6376,6 +6417,7 @@ const initEvents = () => {
         if (d.txKind) { txKindTouched = true; setTxKind(d.txKind); return; }
         if (d.txStatus) { setTxStatus(d.txStatus === 'waiting'); return; }
         if (d.pick) { const p = txPicks[Number(d.pick)]; if (p) applyPick(p); return; }
+        if (d.brandPick) { pickDescBrand(d.brandPick); return; }
         if (d.starterPick) { starterPick(d.starterPick); return; }
         if (d.budgetMode) { budgetModeDraft = d.budgetMode; syncBudgetModeUi(); return; }
         if (d.budgetSave !== undefined) { budgetSaveDraft = Number(d.budgetSave); syncBudgetModeUi(); return; }
@@ -6567,7 +6609,8 @@ const initEvents = () => {
         updatePriceHint();
     });
     $('tx-currency').addEventListener('change', () => { renderTxSuggest(); updatePriceHint(); });
-    $('tx-desc').addEventListener('input', onTxDescInput);
+    $('tx-desc').addEventListener('input', (e) => { if (e.isTrusted) $('tx-desc').dataset.typing = '1'; onTxDescInput(); });
+    $('tx-desc').addEventListener('blur', () => setTimeout(() => { delete $('tx-desc').dataset.typing; updateDescLogo(); }, 200));
     $('tx-date').addEventListener('input', updateDateHint);
     $('tx-repeat').addEventListener('click', (e) => setSwitch(e.currentTarget, !isOn(e.currentTarget)));
     $('budget-category').addEventListener('change', syncBudgetModeUi);

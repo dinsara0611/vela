@@ -277,6 +277,25 @@ export async function run() {
         return used.length ? `used: ${used.join(', ')}` : true;
     });
 
+    await T('Add form: typing a shop name shows its real logo, offers matching shops and picks the category', async () => {
+        g('openAddTx')('expense'); await wait(300);
+        const input = $('tx-desc');
+        input.focus();
+        input.dataset.typing = '1';
+        input.value = 'dia'; input.dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
+        const offered = [...document.querySelectorAll('#tx-brand-suggest [data-brand-pick]')].map((b) => b.dataset.brandPick);
+        document.querySelector('#tx-brand-suggest [data-brand-pick="Dialog"]').click(); await wait(80);
+        const logo = $('tx-desc-logo').querySelector('img');
+        const cat = document.querySelector('#tx-category-picker input:checked');
+        input.value = 'Keells super'; input.dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
+        const keells = !!$('tx-desc-logo').querySelector('img[src="logos/keells.png"]');
+        input.value = 'Kottu'; input.dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
+        const none = !$('tx-desc-wrap').classList.contains('has-brand');
+        await close('modal-tx');
+        return (offered.includes('Dialog') && input.value === 'Kottu' && logo && /dialog\.png/.test(logo.src) && cat && cat.value === 'Utilities' && keells && none)
+            || JSON.stringify({ offered, logo: logo && logo.src, cat: cat && cat.value, keells, none });
+    });
+
     await T('Shared sample messages (tests/sms-corpus.tsv): the app reads each one as the Android filter must', async () => {
         const text = await (await fetch('tests/sms-corpus.tsv', { cache: 'no-store' })).text();
         const lines = text.split(/\r?\n/).filter((l) => l && !l.startsWith('#'));
