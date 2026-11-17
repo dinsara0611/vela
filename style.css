@@ -4398,3 +4398,8 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 .brand-suggest[hidden] { display: none; }
 .brand-pick { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 4px 12px 4px 5px; border-radius: var(--r-full); background: var(--surface-2); border: 1px solid var(--border); font-size: var(--fs-sm); font-weight: 600; color: var(--text); }
 .brand-pick:active { background: var(--surface-pressed); }
+
+/* Bank review footer: "Add all confident" on its own row, Later and Ignore all side by side under it. */
+#modal-sms .sheet-foot { flex-wrap: wrap; }
+#modal-sms .sheet-foot #btn-sms-all { order: -1; flex-basis: 100%; }
+#modal-sms .sheet-foot #btn-sms-all[hidden] { display: none; }

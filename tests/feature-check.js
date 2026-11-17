@@ -536,6 +536,21 @@ export async function run() {
         return (reversals === 1 && flagged && twoCash && twoShops) || `reversal pair kept ${reversals} (want 1), look-alike flagged ${flagged}, two withdrawals separate ${twoCash}, two shops separate ${twoShops}`;
     });
 
+    await T('Review screen: Ignore all asks first, then clears every detection without adding anything', async () => {
+        freshEngine();
+        const n0 = s().transactions.length;
+        g('smsTake')([smsMsg('ia-1', 'Dear Cardholder, Purchase at NETFLIX.COM for LKR 1,500.00 on 16/11/26 01:23 PM has been authorised on your debit card ending #5370.', NOW),
+            smsMsg('ia-2', 'Dear Cardholder, Purchase at KEELLS SUPER LK for LKR 2,200.00 on 16/11/26 02:23 PM has been authorised on your debit card ending #5370.', NOW + 60000)]);
+        g('showSmsSheet')(); await wait(300);
+        const logo = !!document.querySelector('#sms-list .sms-card img[src="logos/netflix.png"]');
+        $('btn-sms-ignore-all').click(); await wait(150);
+        const asked = g('smsQueue').length === 2;
+        await confirmOk();
+        const left = g('smsQueue').length;
+        freshEngine();
+        return (logo && asked && left === 0 && s().transactions.length === n0) || JSON.stringify({ logo, asked, left, added: s().transactions.length - n0 });
+    });
+
     await T('Payment to your own card: offered as a transfer or ignored, never added as income', async () => {
         freshEngine();
         const inc0 = g('monthStats')().income;

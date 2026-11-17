@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.20.2';
+const APP_VERSION = '4.21.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1797,7 +1797,7 @@ const BRANDS = [
     ['canva', 'canva', 'Canva', 'Other', '#00C4CC', '#ffffff', 'C'],
     ['microsoft', 'microsoft|msft\\b', 'Microsoft', 'Other', '#ffffff', '#737373', 'M'],
     ['github', 'github', 'GitHub', 'Other', '#181717', '#ffffff', 'GH'],
-    ['meta', 'facebk|facebook|meta ?(?:ads|platforms)', 'Meta', 'Other', '#0866FF', '#ffffff', 'M'],
+    ['meta', 'meta ?(?:ads|platforms)', 'Meta', 'Other', '#0866FF', '#ffffff', 'M'],
     ['paypal', 'paypal', 'PayPal', 'Other', '#003087', '#ffffff', 'PP'],
     ['apple', 'apple\\.com|itunes|apple(?: (?:music|tv|store|one|pay|services|icloud))?$', 'Apple', 'Entertainment', '#1D1D1F', '#ffffff', ''],
     ['amazon', 'amazon|amzn', 'Amazon', 'Shopping', '#232F3E', '#FF9900', 'a'],
@@ -1828,6 +1828,77 @@ const BRANDS = [
     ['nawaloka', 'nawaloka', 'Nawaloka', 'Health', '#0054A6', '#ffffff', 'N'],
     ['durdans', 'durdans', 'Durdans', 'Health', '#00529B', '#ffffff', 'D'],
     ['osusala', 'osu ?sala|state pharm', 'Osu Sala', 'Health', '#00843D', '#ffffff', 'O'],
+    // Worldwide brands (logos: each one's official app icon)
+    ['hbomax', 'hbo ?max|max\\.com|wbd ?max', 'HBO Max', 'Entertainment', '#002BE7', '#ffffff', 'HBO'],
+    ['crunchyroll', 'crunchyroll', 'Crunchyroll', 'Entertainment', '#F47521', '#ffffff', 'CR'],
+    ['deezer', 'deezer', 'Deezer', 'Entertainment', '#A238FF', '#ffffff', 'D'],
+    ['soundcloud', 'soundcloud', 'SoundCloud', 'Entertainment', '#FF5500', '#ffffff', 'SC'],
+    ['twitch', 'twitch', 'Twitch', 'Entertainment', '#9146FF', '#ffffff', 'T'],
+    ['audible', 'audible', 'Audible', 'Entertainment', '#F7991C', '#ffffff', 'A'],
+    ['xbox', 'xbox', 'Xbox', 'Entertainment', '#107C10', '#ffffff', 'X'],
+    ['nintendo', 'nintendo', 'Nintendo', 'Entertainment', '#E60012', '#ffffff', 'N'],
+    ['roblox', 'roblox', 'Roblox', 'Entertainment', '#111111', '#ffffff', 'R'],
+    ['pubg', 'pubg', 'PUBG Mobile', 'Entertainment', '#F2A900', '#111111', 'PUBG'],
+    ['freefire', 'free ?fire|garena', 'Free Fire', 'Entertainment', '#FF6A00', '#ffffff', 'FF'],
+    ['facebook', 'facebk|facebook|fb\\.me', 'Facebook', 'Other', '#0866FF', '#ffffff', 'f'],
+    ['instagram', 'instagram', 'Instagram', 'Other', '#E1306C', '#ffffff', 'IG'],
+    ['tiktok', 'tiktok', 'TikTok', 'Entertainment', '#000000', '#ffffff', 'T'],
+    ['twitter', 'twitter|x corp|x\\.com', 'X', 'Other', '#000000', '#ffffff', 'X'],
+    ['snapchat', 'snapchat|snap inc', 'Snapchat', 'Other', '#FFFC00', '#111111', 'S'],
+    ['discord', 'discord', 'Discord', 'Entertainment', '#5865F2', '#ffffff', 'D'],
+    ['telegram', 'telegram', 'Telegram', 'Other', '#26A5E4', '#ffffff', 'T'],
+    ['linkedin', 'linkedin', 'LinkedIn', 'Other', '#0A66C2', '#ffffff', 'in'],
+    ['pinterest', 'pinterest', 'Pinterest', 'Other', '#E60023', '#ffffff', 'P'],
+    ['reddit', 'reddit', 'Reddit', 'Other', '#FF4500', '#ffffff', 'R'],
+    ['tinder', 'tinder', 'Tinder', 'Entertainment', '#FE3C72', '#ffffff', 'T'],
+    ['gemini', 'gemini|google one ai', 'Gemini', 'Other', '#1A73E8', '#ffffff', 'G'],
+    ['perplexity', 'perplexity', 'Perplexity', 'Other', '#20808D', '#ffffff', 'P'],
+    ['zoom', 'zoom\\.us|zoom video|zoom com', 'Zoom', 'Other', '#0B5CFF', '#ffffff', 'Z'],
+    ['dropbox', 'dropbox', 'Dropbox', 'Other', '#0061FF', '#ffffff', 'D'],
+    ['notion', 'notion', 'Notion', 'Other', '#ffffff', '#111111', 'N'],
+    ['grammarly', 'grammarly', 'Grammarly', 'Other', '#15C39A', '#ffffff', 'G'],
+    ['figma', 'figma', 'Figma', 'Other', '#1E1E1E', '#ffffff', 'F'],
+    ['capcut', 'capcut', 'CapCut', 'Other', '#000000', '#ffffff', 'CC'],
+    ['duolingo', 'duolingo', 'Duolingo', 'Other', '#58CC02', '#ffffff', 'D'],
+    ['coursera', 'coursera', 'Coursera', 'Other', '#0056D2', '#ffffff', 'C'],
+    ['udemy', 'udemy', 'Udemy', 'Other', '#A435F0', '#ffffff', 'U'],
+    ['shopify', 'shopify', 'Shopify', 'Other', '#95BF47', '#ffffff', 'S'],
+    ['fiverr', 'fiverr', 'Fiverr', 'Other', '#1DBF73', '#ffffff', 'fi'],
+    ['upwork', 'upwork', 'Upwork', 'Other', '#14A800', '#ffffff', 'Up'],
+    ['aws', 'aws|amazon web services', 'AWS', 'Other', '#232F3E', '#FF9900', 'AWS'],
+    ['cloudflare', 'cloudflare', 'Cloudflare', 'Other', '#F38020', '#ffffff', 'CF'],
+    ['alibaba', 'alibaba', 'Alibaba', 'Shopping', '#FF6A00', '#ffffff', 'A'],
+    ['etsy', 'etsy', 'Etsy', 'Shopping', '#F1641E', '#ffffff', 'E'],
+    ['ikea', 'ikea', 'IKEA', 'Shopping', '#0058A3', '#FFDB00', 'IKEA'],
+    ['hm', 'h ?& ?m\\b|hennes', 'H&M', 'Shopping', '#E50010', '#ffffff', 'H&M'],
+    ['nike', 'nike\\b', 'Nike', 'Shopping', '#111111', '#ffffff', 'N'],
+    ['adidas', 'adidas', 'adidas', 'Shopping', '#000000', '#ffffff', 'a'],
+    ['walmart', 'walmart', 'Walmart', 'Shopping', '#0071CE', '#FFC220', 'W'],
+    ['lazada', 'lazada', 'Lazada', 'Shopping', '#0F146D', '#ffffff', 'L'],
+    ['flipkart', 'flipkart', 'Flipkart', 'Shopping', '#2874F0', '#FFE500', 'F'],
+    ['myntra', 'myntra', 'Myntra', 'Shopping', '#FF3F6C', '#ffffff', 'M'],
+    ['starbucks', 'starbucks', 'Starbucks', 'Food', '#00704A', '#ffffff', 'S'],
+    ['foodpanda', 'food ?panda', 'foodpanda', 'Food', '#D70F64', '#ffffff', 'fp'],
+    ['deliveroo', 'deliveroo', 'Deliveroo', 'Food', '#00CCBC', '#ffffff', 'D'],
+    ['talabat', 'talabat', 'talabat', 'Food', '#FF5A00', '#ffffff', 't'],
+    ['swiggy', 'swiggy', 'Swiggy', 'Food', '#FC8019', '#ffffff', 'S'],
+    ['zomato', 'zomato', 'Zomato', 'Food', '#E23744', '#ffffff', 'Z'],
+    ['grab', 'grab\\b|grabtaxi', 'Grab', 'Travel', '#00B14F', '#ffffff', 'G'],
+    ['bolt', 'bolt\\b|bolt\\.eu', 'Bolt', 'Travel', '#34D186', '#111111', 'B'],
+    ['careem', 'careem', 'Careem', 'Travel', '#4BA647', '#ffffff', 'C'],
+    ['expedia', 'expedia', 'Expedia', 'Travel', '#FDDB32', '#191E3B', 'E'],
+    ['tripcom', 'trip\\.com|ctrip', 'Trip.com', 'Travel', '#287DFA', '#ffffff', 'T'],
+    ['skyscanner', 'skyscanner', 'Skyscanner', 'Travel', '#0062E3', '#ffffff', 'S'],
+    ['emirates', 'emirates', 'Emirates', 'Travel', '#D71921', '#ffffff', 'EK'],
+    ['qatarairways', 'qatar air', 'Qatar Airways', 'Travel', '#5C0632', '#ffffff', 'QR'],
+    ['airasia', 'air ?asia', 'AirAsia', 'Travel', '#FF0000', '#ffffff', 'AA'],
+    ['indigo', 'indigo\\b|interglobe', 'IndiGo', 'Travel', '#001B94', '#ffffff', '6E'],
+    ['marriott', 'marriott', 'Marriott', 'Travel', '#8B1D41', '#ffffff', 'M'],
+    ['hilton', 'hilton', 'Hilton', 'Travel', '#104C97', '#ffffff', 'H'],
+    ['wise', 'wise\\b|transferwise', 'Wise', 'Other', '#9FE870', '#163300', 'W'],
+    ['revolut', 'revolut', 'Revolut', 'Other', '#191C1F', '#ffffff', 'R'],
+    ['payoneer', 'payoneer', 'Payoneer', 'Other', '#FF4800', '#ffffff', 'P'],
+    ['binance', 'binance', 'Binance', 'Other', '#F0B90B', '#111111', 'B'],
     // Banks and wallets (badge only)
     ['combank', 'combank|commercial bank', 'Commercial Bank', null, '#0B4EA2', '#ffffff', 'CB'],
     ['sampath', 'sampath', 'Sampath Bank', null, '#F58220', '#ffffff', 'S'],
@@ -1930,7 +2001,7 @@ const tidyBankEntryNames = () => {
 // Real logos bundled with the app in logos/: each brand's official Google Play app icon (or its site icon when it has
 // no app), fetched once by scripts/fetch-logos.mjs and checked by eye, so showing them never contacts anyone.
 // Brands without a verified logo get a badge in their colours.
-const LOGO_SLUGS = new Set(['abans', 'agoda', 'airbnb', 'airtel', 'aliexpress', 'amana', 'amazon', 'apple', 'arpico', 'boc', 'booking', 'burgerking', 'canva', 'cargills', 'cargillsbank', 'ceb', 'ceypetco', 'claude', 'combank', 'daraz', 'dfcc', 'dialog', 'disney', 'dominos', 'ebay', 'frimi', 'github', 'glomark', 'google', 'hdfc', 'hnb', 'hsbc', 'hutch', 'kapruka', 'keells', 'kfc', 'koko', 'lankaioc', 'laugfsgas', 'leco', 'litro', 'lolc', 'mcash', 'mcb', 'mcdonalds', 'mintpay', 'mobitel', 'nawaloka', 'ndb', 'netflix', 'nsb', 'ntb', 'openai', 'pabc', 'paypal', 'peoples', 'pickme', 'pizzahut', 'playstation', 'primevideo', 'rdb', 'sampath', 'seylan', 'singer', 'slt', 'softlogic', 'spar', 'spotify', 'srilankan', 'steam', 'subway', 'tacobell', 'temu', 'uber', 'ubereats', 'unionbank', 'waterboard', 'youtube']);
+const LOGO_SLUGS = new Set(['abans', 'adidas', 'agoda', 'airasia', 'airbnb', 'airtel', 'alibaba', 'aliexpress', 'amana', 'amazon', 'apple', 'arpico', 'audible', 'aws', 'binance', 'boc', 'bolt', 'booking', 'burgerking', 'canva', 'capcut', 'careem', 'cargills', 'cargillsbank', 'ceb', 'ceypetco', 'claude', 'combank', 'coursera', 'crunchyroll', 'daraz', 'deezer', 'deliveroo', 'dfcc', 'dialog', 'discord', 'disney', 'dominos', 'dropbox', 'duolingo', 'ebay', 'emirates', 'etsy', 'expedia', 'facebook', 'figma', 'fiverr', 'flipkart', 'foodpanda', 'freefire', 'frimi', 'gemini', 'github', 'glomark', 'google', 'grab', 'grammarly', 'hbomax', 'hdfc', 'hilton', 'hm', 'hnb', 'hsbc', 'hutch', 'ikea', 'indigo', 'instagram', 'kapruka', 'keells', 'kfc', 'koko', 'lankaioc', 'laugfsgas', 'leco', 'linkedin', 'litro', 'lolc', 'marriott', 'mcash', 'mcb', 'mcdonalds', 'mintpay', 'mobitel', 'myntra', 'nawaloka', 'ndb', 'netflix', 'nike', 'nintendo', 'notion', 'nsb', 'ntb', 'openai', 'pabc', 'payoneer', 'paypal', 'peoples', 'perplexity', 'pickme', 'pinterest', 'pizzahut', 'playstation', 'primevideo', 'pubg', 'qatarairways', 'rdb', 'reddit', 'revolut', 'roblox', 'sampath', 'seylan', 'shopify', 'singer', 'skyscanner', 'slt', 'snapchat', 'softlogic', 'soundcloud', 'spar', 'spotify', 'srilankan', 'starbucks', 'steam', 'subway', 'swiggy', 'tacobell', 'talabat', 'telegram', 'temu', 'tiktok', 'tinder', 'tripcom', 'twitch', 'twitter', 'uber', 'ubereats', 'udemy', 'unionbank', 'upwork', 'walmart', 'waterboard', 'wise', 'xbox', 'youtube', 'zomato', 'zoom']);
 const LOGO_ALIAS = { pickmefood: 'pickme' };
 const logoSlug = (slug) => { const k = LOGO_SLUGS.has(slug) ? slug : LOGO_ALIAS[slug]; return k && LOGO_SLUGS.has(k) ? k : null; };
 const logoImg = (slug, alt = '') => `<img src="logos/${slug}.png" alt="${escapeHtml(alt)}" decoding="async" draggable="false" onerror="this.parentNode.classList.remove('has-logo');this.remove()">`;
@@ -2270,7 +2341,7 @@ const smsCardHtml = (i) => {
         ['Amount', `<strong class="amount ${i.type === 'income' ? 'text-income' : ''}">${escapeHtml(amountText)}</strong>`],
         ['Bank', `<span class="sms-bank">${bankBrand && logoSlug(bankBrand.slug) ? brandBadge(bankBrand, ' is-mini') : ''}${escapeHtml(`${i.bank}${i.last4 ? ` · ••${i.last4}` : ''}`)}</span>`],
         ['Type', escapeHtml(typeText)],
-        ['Description', escapeHtml(i.desc)],
+        ['Description', (() => { const b = i.type === 'expense' || i.kind === 'refund' ? brandFor(i.merchant || i.desc) : null; return `<span class="sms-bank">${b ? brandBadge(b, ' is-mini') : ''}${escapeHtml(i.desc)}</span>`; })()],
         ['Date', escapeHtml(`${relativeDayLabel(i.date)}${i.time ? `, ${i.time}` : ''}`)],
         ...(i.fx ? [['Charged in', escapeHtml(formatCurrency(i.fx.amount, i.fx.currency))]] : []),
         ...(i.ref ? [['Reference', escapeHtml(i.ref)]] : []),
@@ -6652,6 +6723,16 @@ const initEvents = () => {
     $('btn-bank-review').addEventListener('click', showSmsSheet);
     $('btn-sms-check').addEventListener('click', checkPastedSms);
     // "Add all" only takes confident messages; anything that needs a check stays for review.
+    $('btn-sms-ignore-all').addEventListener('click', () => {
+        const n = smsQueue.length;
+        if (!n) return;
+        showConfirm({
+            title: `Ignore ${plural(n, 'transaction', 'transactions')}?`,
+            message: 'None of them will be added. You can still add any of them yourself later.',
+            confirmLabel: 'Ignore all',
+            onConfirm: () => smsHandled(smsQueue.map((i) => i.id))
+        });
+    });
     $('btn-sms-all').addEventListener('click', () => { [...smsQueue].filter((i) => i.confidence === 'high' && i.type !== 'reversal' && i.type !== 'cardpay').forEach((i) => (smsMatchFor(i) ? smsConfirmMatch(i.id) : smsAdd(i.id))); });
     $('btn-forgot-pin').addEventListener('click', forgotPin);
 
