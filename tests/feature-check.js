@@ -711,6 +711,28 @@ export async function run() {
         return (merged && again === 0) || JSON.stringify({ queued, merged, again });
     });
 
+    await T('ATM withdrawal: cash goes to a real cash wallet, never to an account named after a bank (and old ones are repaired)', async () => {
+        freshEngine();
+        const before = { accounts: s().accounts.slice(), tx: s().transactions.slice() };
+        // The owner's setup: "Commercial bank" saved as type Cash, and BOC.
+        s().accounts = [{ id: 'cb', name: 'Commercial bank', kind: 'cash', currency: 'LKR', opening: 100000, createdAt: 0 }, { id: 'boc', name: 'BOC', kind: 'bank', currency: 'LKR', opening: 100000, createdAt: 0 }];
+        // An old wrong withdrawal (BOC -> Commercial bank) gets moved to the cash wallet.
+        s().transactions.push({ id: 'atm-old', type: 'transfer', desc: 'ATM withdrawal', amount: 1500, currency: 'LKR', toAmount: 1500, toCurrency: 'LKR', category: 'Transfer', date: today, note: '', createdAt: 1, accountId: 'boc', toAccountId: 'cb', bank: { bank: 'Unknown sender', smsId: 'x' } });
+        g('repairAccountKinds')();
+        const kindFixed = s().accounts.find((a) => a.id === 'cb').kind === 'bank';
+        const wallet = s().accounts.find((a) => a.kind === 'cash' && a.name === 'Cash');
+        const oldMoved = !!wallet && s().transactions.find((t) => t.id === 'atm-old').toAccountId === wallet.id;
+        // A new withdrawal from BOC goes to that wallet too.
+        g('smsTake')([{ id: 'atm-new', address: 'BOC', date: NOW, body: 'ATM Cash Withdrawal LKR 2,000.00 from A/C ...1234 at BOC ATM HOMAGAMA on ' + new Date().toLocaleDateString('en-GB') }]);
+        const i = g('smsQueue').find((x) => x.id === 'atm-new');
+        i.accountId = 'boc';
+        g('smsAdd')('atm-new'); await wait(200);
+        const tr = s().transactions.find((t) => t.bank && t.bank.smsId === 'atm-new');
+        const ok = kindFixed && oldMoved && tr && tr.type === 'transfer' && tr.accountId === 'boc' && tr.toAccountId === wallet.id;
+        s().accounts = before.accounts; s().transactions = before.tx; freshEngine(); g('renderActive')();
+        return ok || JSON.stringify({ kindFixed, oldMoved, wallet: !!wallet, tr: tr && { from: tr.accountId, to: tr.toAccountId } });
+    });
+
     await T('Review screen: Ignore all asks first, then clears every detection without adding anything', async () => {
         freshEngine();
         const n0 = s().transactions.length;

@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.33.0';
+const APP_VERSION = '4.33.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -438,6 +438,38 @@ const ACCOUNT_KINDS = {
 };
 const accountById = (id) => state.accounts.find((a) => a.id === id) || state.accounts[0];
 const accountIcon = (a) => (ACCOUNT_KINDS[a && a.kind] || ACCOUNT_KINDS.cash).icon;
+// Named after a bank ("Commercial bank", "BOC"): never treated as your cash wallet, whatever type it was given.
+function isBankNamed(a) { const b = a && accountBrand(a); return !!(b && b.cat === null && !/frimi|ez ?cash|mcash/i.test(b.name)); }
+function cashWallet(exceptId) { return state.accounts.find((a) => a.kind === 'cash' && a.id !== exceptId && !isBankNamed(a)) || null; }
+// An ATM withdrawal moves money from the bank into your cash wallet; without one, a "Cash" wallet is made.
+function ensureCashWallet(currency, exceptId) {
+    const have = cashWallet(exceptId);
+    if (have) return have;
+    const wallet = { id: generateId(), name: 'Cash', kind: 'cash', currency: normCur(currency), opening: 0, createdAt: Date.now() };
+    state.accounts.push(wallet);
+    state.syncSettings = true;
+    return wallet;
+}
+// Accounts named after a bank but saved as "Cash" are bank accounts; ATM withdrawals that went into one of them
+// (instead of your cash wallet) are moved to the cash wallet. Runs on start; changes nothing when all is right.
+function repairAccountKinds() {
+    let changed = false;
+    state.accounts.forEach((a) => { if (a.kind === 'cash' && isBankNamed(a)) { a.kind = 'bank'; changed = true; } });
+    state.transactions.forEach((t) => {
+        if (t.type !== 'transfer' || t.desc !== 'ATM withdrawal' || !t.bank) return;
+        const to = state.accounts.find((a) => a.id === t.toAccountId);
+        if (to && isBankNamed(to)) {
+            const wallet = ensureCashWallet(t.currency, t.accountId);
+            t.toAccountId = wallet.id;
+            t.toCurrency = wallet.currency;
+            t.toAmount = round2(convertAmount(t.amount, t.currency, wallet.currency));
+            queueSync('transaction', t.id, 'upsert', false);
+            changed = true;
+        }
+    });
+    if (changed) { state.syncSettings = true; saveState(); }
+    return changed;
+}
 // An account named after a bank, card or wallet ("Commercial Bank", "Boc", "FriMi", "Koko") shows that brand's logo.
 function accountBrand(a) {
     if (!a || !a.name) return null;
@@ -865,7 +897,7 @@ const applyCloudSettings = (d) => {
     // Per-account budgets from the cloud: use this phone's account's. Settings saved by an older Vela have one
     // budget only: it becomes the budget of the account this phone is in.
     if (d.accountBudgets && typeof d.accountBudgets === 'object' && Object.keys(d.accountBudgets).length) applyViewBudget();
-    else stashBudget();
+    else stashBudget();    repairAccountKinds(); // accounts from the cloud too: bank-named ones aren't the cash wallet
 };
 
 const saveState = () => {
@@ -2795,7 +2827,9 @@ const smsApply = (i, accountId) => {
     const note = `From ${i.bank} (${sourceShort(i.sources)})${i.fx ? ` · ${formatCurrency(i.fx.amount, i.fx.currency)}` : ''}`;
     if (i.type === 'atm') {
         const from = accountById(accountId);
-        const cash = state.accounts.find((a) => a.kind === 'cash' && a.id !== from.id);
+        const hadWallet = !!cashWallet(from.id);
+        const cash = ensureCashWallet(from.currency, from.id);
+        if (!hadWallet) showToast('Made a Cash wallet for the money you took out', 'info');
         if (cash) {
             const record = { id: generateId(), type: 'transfer', desc: 'ATM withdrawal', amount: i.amount, currency: i.currency, accountId: from.id, toAccountId: cash.id, toAmount: round2(convertAmount(i.amount, i.currency, cash.currency)), toCurrency: cash.currency, category: 'Transfer', date: i.date, note: `From ${i.bank} (${sourceShort(i.sources)})`, createdAt: Date.now(), recurringId: null, receipt: null, bank: bankMeta(i) };
             state.transactions.push(record);
@@ -5646,6 +5680,7 @@ const pullFromCloud = async () => {
         state.categories = mergeCategories(by.category);
         // Tidy bank-SMS entries in the account too (shop names, lost bank details); the changes sync back.
         tidyBankEntryNames();
+        repairAccountKinds();
         const hadSettings = !set.error && set.data && set.data.data;
         if (hadSettings) applyCloudSettings(set.data.data);
         recoverAccounts();
@@ -7738,6 +7773,7 @@ const runSplash = () => {
 const init = () => {
     runSplash();
     loadState();
+    repairAccountKinds();
     applyViewBudget();
     migrateBudgets();
     fixAccountCurrencies();
