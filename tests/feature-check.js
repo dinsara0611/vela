@@ -562,22 +562,28 @@ export async function run() {
             || JSON.stringify({ r: r && [r.bank, r.confidence, r.checks, r.amount], chat });
     });
 
-    await T('Switching account: Home, Activity and Insights show only that account until Show all', async () => {
+    await T('Accounts are kept apart: always one account shown, switching changes Home, Activity, payments and new entries', async () => {
         const before = s().accounts.slice();
         const txBefore = s().transactions.slice();
         s().accounts = before.concat([{ id: 'acc-sw', name: 'BOC', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 0 }]);
         s().transactions.push({ id: 'sw-1', type: 'expense', desc: 'Keells', amount: 7777, currency: 'LKR', category: 'Food', date: today, note: '', createdAt: Date.now(), accountId: 'acc-sw', recurringId: null, receipt: null, fixed: false, pending: false });
-        const allSpent = g('monthStats')().spent;
         g('switchTab')('dashboard'); await wait(200);
-        document.querySelector('[data-view-account="acc-sw"]').click(); await wait(300);
-        const oneSpent = g('monthStats')().spent;
-        const bar = /Showing\s+BOC only/.test((document.querySelector('#tab-dashboard .view-bar') || {}).innerText || '');
+        const firstId = g('viewId')();
+        const startSpent = g('monthStats')().spent;
+        document.querySelector('.account-chip[data-view-account="acc-sw"]').click(); await wait(300);
+        const bocSpent = g('monthStats')().spent;
+        const bar = /BOC/.test((document.querySelector('#tab-dashboard .view-bar') || {}).innerText || '');
+        const noAll = !document.querySelector('[data-view-account="all"]');
+        g('openAddTx')('expense'); await wait(250);
+        const newGoesHere = $('tx-account').value === 'acc-sw';
+        await close('modal-tx');
         g('switchTab')('activity'); await wait(300);
-        const actOnly = g('activityAccount') === 'acc-sw' && !!document.querySelector('#tab-activity .view-bar');
-        document.querySelector('#tab-activity .view-bar [data-view-account="all"]').click(); await wait(300);
-        const back = g('monthStats')().spent === allSpent && !document.querySelector('.view-bar');
+        const actOnly = [...document.querySelectorAll('#tab-activity .tx')].every((r) => !/Kottu|Salary/.test(r.innerText));
+        g('setViewAccount')(firstId); await wait(200);
+        const back = g('monthStats')().spent === startSpent;
         s().accounts = before; s().transactions = txBefore; g('renderActive')();
-        return (oneSpent === 7777 && allSpent > 7777 && bar && actOnly && back) || JSON.stringify({ allSpent, oneSpent, bar, actOnly, back });
+        return (firstId !== 'all' && firstId !== 'acc-sw' && bocSpent === 7777 && startSpent !== 7777 && bar && noAll && newGoesHere && actOnly && back)
+            || JSON.stringify({ firstId, startSpent, bocSpent, bar, noAll, newGoesHere, actOnly, back });
     });
 
     await T('Your own shop logo: pick a photo once, shown for that shop everywhere, kept in backups, removable', async () => {

@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.25.0">
+    <link rel="stylesheet" href="style.css?v=4.26.0">
 </head>
 <body data-view="dashboard">
 
@@ -261,7 +261,7 @@
                         <div class="card-head">
                             <div>
                                 <h2 class="card-title">Accounts</h2>
-                                <div class="card-sub">Total <span class="amount" id="networth">$0.00</span></div>
+                                <div class="card-sub">Tap one to switch</div><span class="amount" id="networth" hidden></span>
                             </div>
                             <button class="btn btn-secondary btn-xs" type="button" data-action="add-transfer"><svg class="ic ic-sm"><use href="#i-swap"/></svg> Transfer</button>
                         </div>
@@ -1440,7 +1440,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.25.0"></script>
+    <script src="app.js?v=4.26.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

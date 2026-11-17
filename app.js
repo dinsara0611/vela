@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.25.0';
+const APP_VERSION = '4.26.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1181,17 +1181,19 @@ const switchTab = (tab, { fromHistory = false } = {}) => {
     renderActive();
 };
 
-// "Showing BOC only · Show all" at the top of Home, Activity and Insights while one account is switched to.
+// The account bar at the top of Home, Activity and Insights: which account you're in, its balance, and Switch.
 const renderViewBar = () => {
-    const v = viewId();
     document.querySelectorAll('.view-bar').forEach((el) => el.remove());
-    if (v === 'all' || !['dashboard', 'activity', 'analytics'].includes(currentTab)) return;
-    const a = state.accounts.find((x) => x.id === v);
+    const a = viewAccountObj();
     const view = $(`tab-${currentTab}`);
-    if (!a || !view) return;
-    const bar = document.createElement('div');
+    if (!a || !view || !['dashboard', 'activity', 'analytics'].includes(currentTab)) return;
+    const bal = accountBalance(a);
+    const bar = document.createElement('button');
+    bar.type = 'button';
     bar.className = 'view-bar';
-    bar.innerHTML = `${accountBadge(a, 'is-acc', 'account-icon')}<span class="view-bar-text">Showing <strong>${escapeHtml(a.name)}</strong> only</span><button type="button" class="btn btn-secondary btn-xs" data-view-account="all">Show all</button>`;
+    bar.dataset.action = 'switch-account';
+    bar.setAttribute('aria-label', `${a.name}, ${formatCurrency(bal, a.currency)}. Switch account`);
+    bar.innerHTML = `${accountBadge(a, 'is-acc', 'account-icon')}<span class="view-bar-text"><strong>${escapeHtml(a.name)}</strong><span class="amount ${bal < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(bal, a.currency))}</span></span>${state.accounts.length > 1 ? `<span class="view-bar-switch">Switch${icon('i-chevron-down', 'ic ic-sm')}</span>` : ''}`;
     view.prepend(bar);
 };
 const renderActive = () => {
@@ -1225,23 +1227,32 @@ const goToActivity = (type, keepAccount = false) => {
    ========================================================================= */
 const expenses = () => viewTx().filter((t) => t.type === 'expense' && !isUpcoming(t));
 const inAccount = (t, accId) => accId === 'all' || t.accountId === accId || (t.type === 'transfer' && t.toAccountId === accId);
-// Switching account (Accounts list or an account card on Home): Home, Activity and Insights then show only that
-// account until "Show all". Remembered on this phone only.
+// Accounts are kept apart: Vela always shows one account (its balance, entries, insights, bills and payments)
+// and you switch between them (the bar at the top of Home, Activity and Insights, the Accounts list, or an account
+// card on Home). The chosen account is remembered on this phone.
 const VIEW_KEY = 'VELA_VIEW_ACCOUNT';
 const viewId = () => {
-    let v = 'all';
-    try { v = localStorage.getItem(VIEW_KEY) || 'all'; } catch (e) { /* storage blocked */ }
-    return v !== 'all' && state.accounts.some((a) => a.id === v) ? v : 'all';
+    if (!state.accounts.length) return 'all';
+    let v = null;
+    try { v = localStorage.getItem(VIEW_KEY); } catch (e) { /* storage blocked */ }
+    if (v && state.accounts.some((a) => a.id === v)) return v;
+    // First time (or that account was deleted): the first account, kept until you switch, so saving an entry
+    // to another account never moves you there by itself.
+    const first = state.accounts[0].id;
+    try { localStorage.setItem(VIEW_KEY, first); } catch (e) { /* storage blocked */ }
+    return first;
 };
+const viewAccountObj = () => state.accounts.find((a) => a.id === viewId()) || null;
 const viewTx = () => { const v = viewId(); return v === 'all' ? state.transactions : state.transactions.filter((t) => inAccount(t, v)); };
+const viewBills = () => { const v = viewId(); return v === 'all' ? state.recurring : state.recurring.filter((b) => (b.accountId || (state.accounts[0] && state.accounts[0].id)) === v); };
 const setViewAccount = (id) => {
-    const v = id && state.accounts.some((a) => a.id === id) ? id : 'all';
-    try { if (v === 'all') localStorage.removeItem(VIEW_KEY); else localStorage.setItem(VIEW_KEY, v); } catch (e) { /* storage blocked */ }
-    activityAccount = v;
+    if (!id || !state.accounts.some((a) => a.id === id)) return;
+    const changed = id !== viewId();
+    try { localStorage.setItem(VIEW_KEY, id); } catch (e) { /* storage blocked */ }
+    activityAccount = id;
     renderActive();
-    const a = state.accounts.find((x) => x.id === v);
-    // Home, Activity and Insights show the bar; elsewhere (Settings) a short note says what changed.
-    if (!['dashboard', 'activity', 'analytics'].includes(currentTab)) showToast(a ? `Showing ${a.name} only` : 'Showing all accounts', 'info');
+    const a = state.accounts.find((x) => x.id === id);
+    if (changed) showToast(`Switched to ${a.name}`, 'info');
     haptic();
 };
 const sortByNewest = (list) => [...list].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
@@ -1350,7 +1361,7 @@ const billDatesInMonth = (b, y, m) => {
 // due date on are counted: nothing is taken off twice.
 const fixedForMonth = (y = new Date().getFullYear(), m = new Date().getMonth()) => {
     const items = [];
-    state.recurring.filter((b) => b.type === 'expense').forEach((b) => {
+    viewBills().filter((b) => b.type === 'expense').forEach((b) => {
         viewTx().filter((t) => t.recurringId === b.id && t.type === 'expense' && inMonth(t, y, m)).forEach((t) => {
             items.push({ name: t.desc, amount: toDisplay(t.amount, t.currency), date: t.date, paid: !isUpcoming(t), billId: b.id, txId: t.id });
         });
@@ -1359,7 +1370,7 @@ const fixedForMonth = (y = new Date().getFullYear(), m = new Date().getMonth()) 
         });
     });
     // One-off fixed entries, and entries whose repeating fixed expense was deleted (they still happened).
-    const billIds = new Set(state.recurring.map((b) => b.id));
+    const billIds = new Set(viewBills().map((b) => b.id));
     viewTx().filter((t) => t.type === 'expense' && t.fixed && (!t.recurringId || !billIds.has(t.recurringId)) && inMonth(t, y, m)).forEach((t) => {
         items.push({ name: t.desc, amount: toDisplay(t.amount, t.currency), date: t.date, paid: !isUpcoming(t), txId: t.id });
     });
@@ -3001,13 +3012,14 @@ const disconnectBank = () => showConfirm({
 });
 
 /* ---- Payments: entries waiting to be paid, and fixed expenses you pay yourself ---- */
-const paymentItems = ({ horizonDays = 7 } = {}) => {
+// view: only the account being shown (the screens); without it every account (reminders, matching bank SMS).
+const paymentItems = ({ horizonDays = 7, view = false } = {}) => {
     const horizon = toISODate(addDays(new Date(), horizonDays));
     const items = [];
-    state.transactions.filter((t) => t.pending && t.type !== 'transfer').forEach((t) => items.push({
+    (view ? viewTx() : state.transactions).filter((t) => t.pending && t.type !== 'transfer').forEach((t) => items.push({
         key: `tx:${t.id}`, kind: 'tx', id: t.id, name: t.desc, type: t.type, amount: t.amount, currency: t.currency, category: t.category, due: t.date, status: payStatus(t.date)
     }));
-    state.recurring.filter((b) => !b.autoLog).forEach((b) => items.push({
+    (view ? viewBills() : state.recurring).filter((b) => !b.autoLog).forEach((b) => items.push({
         key: `bill:${b.id}`, kind: 'bill', id: b.id, name: b.name, type: b.type, amount: b.amount, currency: b.currency, category: b.category, due: b.nextDate, status: payStatus(b.nextDate)
     }));
     return items.filter((i) => i.status !== 'upcoming' || i.due <= horizon).sort((a, b) => (a.due > b.due ? 1 : a.due < b.due ? -1 : 0));
@@ -3053,8 +3065,8 @@ const paymentSummary = (items) => {
     return [n('overdue') ? `${n('overdue')} overdue` : '', n('due') ? `${n('due')} due today` : '', n('upcoming') ? `${n('upcoming')} upcoming` : ''].filter(Boolean).join(' · ');
 };
 const renderPaymentsHome = () => {
-    const items = paymentItems();
-    const autoSoon = state.recurring.filter((b) => b.autoLog && b.type === 'expense' && b.nextDate <= toISODate(addDays(new Date(), 7))).sort((a, b) => (a.nextDate > b.nextDate ? 1 : -1));
+    const items = paymentItems({ view: true });
+    const autoSoon = viewBills().filter((b) => b.autoLog && b.type === 'expense' && b.nextDate <= toISODate(addDays(new Date(), 7))).sort((a, b) => (a.nextDate > b.nextDate ? 1 : -1));
     $('due-section').hidden = !items.length && !autoSoon.length;
     const worst = items.some((i) => i.status === 'overdue') ? 'overdue' : items.some((i) => i.status === 'due') ? 'due' : 'upcoming';
     $('pay-summary').textContent = items.length ? paymentSummary(items) : 'Nothing to pay by hand';
@@ -3071,7 +3083,7 @@ const showPaymentsPopup = async () => {
     if (Date.now() - payPopupShownAt < 30 * 60000) return;
     if (isLocked()) { setTimeout(showPaymentsPopup, 1500); return; }
     if (openSheets.length || isConfirmOpen()) return;
-    const items = paymentItems().filter((i) => i.status !== 'upcoming');
+    const items = paymentItems({ view: true }).filter((i) => i.status !== 'upcoming');
     if (!items.length) return;
     payPopupShownAt = Date.now();
     $('pay-popup-sub').textContent = paymentSummary(items);
@@ -3100,7 +3112,7 @@ const confirmTx = (id) => {
     renderActive();
 };
 const refreshPaymentsPopup = () => {
-    const items = paymentItems().filter((i) => i.status !== 'upcoming');
+    const items = paymentItems({ view: true }).filter((i) => i.status !== 'upcoming');
     if (!items.length) { closeSheet('modal-payments'); return; }
     $('pay-popup-sub').textContent = paymentSummary(items);
     $('pay-popup-list').innerHTML = items.map(paymentRowHtml).join('');
@@ -3243,7 +3255,7 @@ const renderDashboard = () => {
     setMoney($('networth'), netWorth(), cur, 16);
     $('account-strip').innerHTML = state.accounts.map((a) => {
         const bal = accountBalance(a);
-        return `<button type="button" class="account-chip${viewId() === a.id ? ' is-current' : ''}" data-view-account="${viewId() === a.id ? 'all' : escapeHtml(a.id)}" aria-pressed="${viewId() === a.id}" aria-label="${escapeHtml(a.name)}: ${escapeHtml(formatCurrency(bal, a.currency))}. ${viewId() === a.id ? 'Show all accounts' : 'Show only this account'}">
+        return `<button type="button" class="account-chip${viewId() === a.id ? ' is-current' : ''}" data-view-account="${escapeHtml(a.id)}" aria-pressed="${viewId() === a.id}" aria-label="${escapeHtml(a.name)}: ${escapeHtml(formatCurrency(bal, a.currency))}. ${viewId() === a.id ? 'You are in this account' : 'Switch to this account'}">
             <span class="account-chip-top">${accountBadge(a, 'is-acc', 'account-icon')}<span class="account-name">${escapeHtml(a.name)}</span></span>
             <span class="account-bal amount ${bal < 0 ? 'text-expense' : ''}" title="${escapeHtml(formatCurrency(bal, a.currency))}" ${moneyAttrs(bal, a.currency)}>${escapeHtml(formatCurrency(bal, a.currency))}</span>
         </button>`;
@@ -3278,9 +3290,9 @@ const renderActivity = () => {
 
     setPressed('[data-activity-type]', (b) => b.dataset.activityType === activityType);
     setPressed('[data-activity-view]', (b) => b.dataset.activityView === activityView);
+    activityAccount = viewId();
     fillAccountSelect($('activity-account'), activityAccount, { all: true });
-    activityAccount = $('activity-account').value;
-    $('activity-account-wrap').hidden = state.accounts.length < 2;
+    $('activity-account-wrap').hidden = true; // the account bar at the top switches accounts
 
     const chipCats = activityType === 'all' ? state.categories : catsOfType(activityType);
     if (activityCategory !== 'all' && !chipCats.some((c) => c.id === activityCategory)) activityCategory = 'all';
@@ -3467,10 +3479,10 @@ const billRow = (b) => {
 
 const planBillsHtml = () => {
     const cur = dcur();
-    const sorted = [...state.recurring].sort((a, b) => (a.nextDate > b.nextDate ? 1 : -1));
+    const sorted = [...viewBills()].sort((a, b) => (a.nextDate > b.nextDate ? 1 : -1));
     const bills = sorted.filter((b) => b.type === 'expense');
     const inc = sorted.filter((b) => b.type === 'income');
-    const billIds = new Set(state.recurring.map((b) => b.id));
+    const billIds = new Set(viewBills().map((b) => b.id));
     const oneOffFixed = state.transactions.filter((t) => t.type === 'expense' && t.fixed && (!t.recurringId || !billIds.has(t.recurringId)) && inMonth(t, new Date().getFullYear(), new Date().getMonth()));
     if (!sorted.length && !oneOffFixed.length) {
         return `${fixedSummaryHtml()}<div class="card">${emptyState({ iconId: 'i-repeat', title: 'No fixed expenses yet', text: 'Add rent, internet, subscriptions and other regular payments once. Vela takes them off your income each month, logs them on time and reminds you before they are due.', actionLabel: 'Add a fixed expense', action: 'add-bill' })}</div>`;
@@ -3907,7 +3919,7 @@ const openAddTx = (type = 'expense') => {
     setSwitch($('tx-repeat'), true);
     $('tx-id').value = '';
     $('btn-delete-tx').hidden = true;
-    fillAccountSelect($('tx-account'), activityAccount !== 'all' ? activityAccount : state.config.lastAccount);
+    fillAccountSelect($('tx-account'), viewId() !== 'all' ? viewId() : state.config.lastAccount);
     $('tx-account-field').hidden = state.accounts.length < 2;
     setReceiptDraft(null);
     fillCurrencySelect($('tx-currency'), dcur());
@@ -4033,7 +4045,9 @@ const submitTx = async () => {
     } else if (isUpcoming(record)) {
         showToast(`Saved as waiting: ${formatCurrency(amount, currency)} on ${shortDate(date)}. Tap “Paid” when it’s done and it counts in your balance.`, 'info');
     } else {
-        showToast(id ? 'Saved' : `${txType === 'income' ? 'Income' : 'Expense'} added: ${formatCurrency(amount, currency)}`, 'success');
+        // Saved to another account than the one you're in: say where it went (it shows there, not here).
+        const elsewhere = accountId !== viewId() ? state.accounts.find((x) => x.id === accountId) : null;
+        showToast(elsewhere ? `Saved to ${elsewhere.name}` : id ? 'Saved' : `${txType === 'income' ? 'Income' : 'Expense'} added: ${formatCurrency(amount, currency)}`, 'success');
         const now = new Date();
         if (txType === 'expense' && inMonth(record, now.getFullYear(), now.getMonth())) setTimeout(() => budgetAlert(category), 400);
     }
@@ -6715,6 +6729,7 @@ const initEvents = () => {
         if (d.removeCurrency) { removeCurrency(d.removeCurrency); return; }
         if (d.editAccount) { openAccountEditor(d.editAccount); return; }
         if (d.viewAccount) { setViewAccount(d.viewAccount); if (isSheetOpen('modal-accounts')) closeSheet('modal-accounts'); return; }
+        if (d.action === 'switch-account') { if (state.accounts.length > 1) openAccountManager(); return; }
         if (d.themeChoice) { setTheme(d.themeChoice, e); return; }
         if (d.currency) { setDisplayCurrency(d.currency); return; }
         if (el.hasAttribute('data-clear-filters')) {
@@ -7080,12 +7095,7 @@ const updateAccountNameLogo = () => {
 const renderAccountManager = () => {
     const v = viewId();
     const tick = (on) => (on ? `<span class="acc-current" aria-label="Showing now">${icon('i-check', 'ic ic-sm')}</span>` : '');
-    const all = state.accounts.length > 1 ? `<li class="acc-row${v === 'all' ? ' is-current' : ''}"><button type="button" class="row-btn" data-view-account="all">
-            <span class="row-icon tint">${icon('i-wallet')}</span>
-            <span class="row-label"><span>All accounts</span><span>Everything together</span></span>
-            <span class="amount">${escapeHtml(formatCurrency(netWorth(), dcur()))}</span>${tick(v === 'all')}
-        </button></li>` : '';
-    $('accounts-body').innerHTML = `<p class="acc-hint">Tap an account to see only its money. Tap the pencil to edit it.</p><ul class="cat-manage acc-list">${all}${state.accounts.map((a) => {
+    $('accounts-body').innerHTML = `<p class="acc-hint">Tap an account to switch to it. Tap the pencil to edit it.</p><ul class="cat-manage acc-list">${state.accounts.map((a) => {
         const bal = accountBalance(a);
         return `<li class="acc-row${v === a.id ? ' is-current' : ''}"><button type="button" class="row-btn" data-view-account="${escapeHtml(a.id)}">
             ${accountBadge(a, 'is-row', 'row-icon tint')}

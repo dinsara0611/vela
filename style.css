@@ -4440,3 +4440,10 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 .acc-list .acc-edit { flex: none; color: var(--text-3); }
 .account-chip.is-current { border-color: var(--primary-solid, var(--primary)); box-shadow: 0 0 0 1px var(--primary-solid, var(--primary)), 0 0 16px -6px var(--primary); }
 .acc-list .row-btn { padding-left: 8px; padding-right: 8px; }
+/* The account bar is a button: name and balance on the left, Switch on the right. */
+button.view-bar { width: 100%; text-align: left; color: inherit; font: inherit; cursor: pointer; padding: 10px 12px; }
+button.view-bar:active { background: var(--surface-pressed); }
+.view-bar .view-bar-text { display: flex; flex-direction: column; gap: 1px; white-space: normal; }
+.view-bar .view-bar-text strong { font-size: var(--fs-md); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view-bar .view-bar-text .amount { font-size: var(--fs-sm); color: var(--text-2); }
+.view-bar-switch { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; border-radius: var(--r-full); background: var(--surface); border: 1px solid var(--border-strong); font-size: var(--fs-sm); font-weight: 600; color: var(--text); }
