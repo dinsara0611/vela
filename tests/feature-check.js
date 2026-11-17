@@ -694,6 +694,23 @@ export async function run() {
         return (one && undecided && asked && added && added.accountId === 'boc-2' && remembered) || JSON.stringify({ one, undecided, asked, addedTo: added && added.accountId, remembered });
     });
 
+    await T('The same message received twice (same time in its text) is offered once, even hours apart; also once added', async () => {
+        freshEngine();
+        const body = 'Credit for Rs. 300,000.00 to 8024585190 at 12:16 at DIGITAL BANKING DIVISION';
+        g('smsTake')([{ id: 'twice-1', address: '+94771234567', body, date: NOW }]);
+        g('smsTake')([{ id: 'twice-2', address: '+94771234567', body, date: NOW + 3 * 3600000 }]);
+        const queued = g('smsQueue').length;
+        const merged = queued === 1 && (g('smsQueue')[0].sourceIds || []).length === 2;
+        // After adding it, the same text arriving again is not offered again.
+        g('smsQueue')[0].accountId = s().accounts[0].id;
+        g('smsAdd')(g('smsQueue')[0].id); await wait(200);
+        g('smsTake')([{ id: 'twice-3', address: '+94771234567', body, date: NOW + 6 * 3600000 }]);
+        const again = g('smsQueue').length;
+        s().transactions = s().transactions.filter((t) => !(t.bank && /^twice-/.test(t.bank.smsId || '')));
+        freshEngine(); g('renderActive')();
+        return (merged && again === 0) || JSON.stringify({ queued, merged, again });
+    });
+
     await T('Review screen: Ignore all asks first, then clears every detection without adding anything', async () => {
         freshEngine();
         const n0 = s().transactions.length;

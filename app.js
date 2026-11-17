@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.32.0';
+const APP_VERSION = '4.32.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2571,6 +2571,9 @@ const sameDetection = (a, b) => {
     if (a.bank !== b.bank) return null;
     const onlyNotif = (x) => sourceList(x).every((s) => s === 'notification');
     if (sameText && !(onlyNotif(a) && onlyNotif(b)) && a.arrivedAt && b.arrivedAt && Math.abs(a.arrivedAt - b.arrivedAt) <= 2 * 60000) return 'same';
+    // The same text that states its own time is the same transaction whenever it arrives (sent again, read again):
+    // a second payment would carry its own time. Identical texts with no time in them are left for you to decide.
+    if (sameText && a.time && a.time === b.time) return 'same';
     if (a.ref && b.ref) return a.ref.toUpperCase() === b.ref.toUpperCase() ? 'same' : null;
     const near = (ms) => !!a.arrivedAt && !!b.arrivedAt && Math.abs(a.arrivedAt - b.arrivedAt) <= ms;
     // Some banks announce one reversal twice (an alert and an account credit): one event.
@@ -2598,7 +2601,7 @@ const sameDetection = (a, b) => {
 const recordedAsDetection = (t) => ({
     bank: t.bank.bank, ref: t.bank.ref, last4: t.bank.last4, merchant: t.bank.merchant, amount: t.amount, currency: t.currency,
     type: t.bank.kind === 'atm' || t.type === 'transfer' ? 'atm' : t.bank.kind === 'reversal' ? 'reversal' : t.type,
-    sources: t.bank.sources || ['sms'], bodyKeys: t.bank.bodyKeys || [], shape: t.bank.shape || null, arrivedAt: t.bank.arrivedAt
+    sources: t.bank.sources || ['sms'], bodyKeys: t.bank.bodyKeys || [], shape: t.bank.shape || null, arrivedAt: t.bank.arrivedAt, time: t.bank.time || null
 });
 // The confirmed transaction a detection is already recorded as (by id, reference, same text, or the other source).
 const recordedMatch = (i) => state.transactions.find((t) => t.bank && (

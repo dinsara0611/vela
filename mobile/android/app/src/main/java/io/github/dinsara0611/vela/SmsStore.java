@@ -131,11 +131,15 @@ final class SmsStore {
      */
     static synchronized boolean add(Context ctx, JSONObject item) {
         String id = item.optString("id");
-        if (handled(ctx).contains(id)) return false;
+        // The same message text from the same sender, sent or delivered again: the same transaction (one
+        // notification, not two), whether the first is still waiting or was already added or ignored.
+        String same = textKey(item);
+        Set<String> done = handled(ctx);
+        if (done.contains(id) || done.contains(same)) return false;
         JSONArray list = all(ctx);
         for (int i = 0; i < list.length(); i++) {
             JSONObject o = list.optJSONObject(i);
-            if (o != null && id.equals(o.optString("id"))) return false;
+            if (o != null && (id.equals(o.optString("id")) || same.equals(textKey(o)))) return false;
         }
         JSONArray out = new JSONArray();
         out.put(item);
@@ -145,19 +149,29 @@ final class SmsStore {
         return true;
     }
 
+    /** A short fingerprint of sender + text (the text itself isn't kept in the handled list). */
+    static String textKey(JSONObject o) {
+        String text = o.optString("address", "") + "|" + o.optString("body", "").replaceAll("\s+", " ").trim();
+        return "t" + Integer.toHexString(text.hashCode()) + Integer.toHexString(text.length());
+    }
+
     /** Added or ignored in Vela: forget them, remember they're done, remove their notifications. */
     static synchronized void remove(Context ctx, Set<String> ids) {
         JSONArray list = all(ctx);
         JSONArray out = new JSONArray();
+        Set<String> doneText = new HashSet<>();
         for (int i = 0; i < list.length(); i++) {
             JSONObject o = list.optJSONObject(i);
-            if (o != null && !ids.contains(o.optString("id"))) out.put(o);
+            if (o == null) continue;
+            if (ids.contains(o.optString("id"))) doneText.add(textKey(o)); else out.put(o);
         }
         save(ctx, out);
         Set<String> done = handled(ctx);
         done.addAll(ids);
+        done.addAll(doneText);
         if (done.size() > 400) done.clear(); // ids carry timestamps; old ones never come back
         done.addAll(ids);
+        done.addAll(doneText);
         prefs(ctx).edit().putStringSet(HANDLED, done).apply();
         NotificationManagerCompat nm = NotificationManagerCompat.from(ctx);
         for (String id : ids) nm.cancel(notificationId(id));
