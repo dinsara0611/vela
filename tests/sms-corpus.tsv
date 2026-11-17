@@ -72,8 +72,11 @@ in LKR 2500.5 BOC	BOC	Your A/C XXXXXX1234 has been credited by Rs 2,500.50 on 16
 out LKR 2000 XYZ Finance	XYZ Finance	Your account 1234 has been debited with Rs. 2,000.00 at CITY PHARMACY on 16/11/2026
 none	SuperDeals	Flash sale! Pay only Rs. 999 for shoes today
 none	Dialog	Your account has been debited with Rs. 100.00 for the data pack you activated
-none	+94771234567	LKR 5,000.00 credited to your account today
+in LKR 5000 Unknown sender	+94771234567	LKR 5,000.00 credited to your account today
 none	0771234567	Hi machan, send me Rs. 500 for the bus
+out LKR 2000 Unknown sender	+94771234567	Acc XXX59 debited by LKR 2,000.00 at COOL PLANET on 30-Mar.
+in LKR 3000 Unknown sender	+94771234567	Credit for Rs. 3,000.00 to 8024585190 at 12:16 at DIGITAL BANKING DIVISION
+none	+94771234567	Machan I paid Rs. 2,000 for the tickets, send it back
 none	SLT-Mobitel	You have recharged Rs. 1000.00  Your account balance is Rs. 754.55 ,expires on 15/12/2026
 none	Pizza Hut	Weekend Vibes at Pizza Hut! Get 2 Lava Cakes & 1 Portion of Garlic Bread for Rs.1,990 with any pizza. Pay by card.
 none	Daraz	Your payment of Rs. 2,500 using ComBank card ending 1234 was successful. Thank you for shopping with us

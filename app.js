@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.21.0';
+const APP_VERSION = '4.22.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -375,6 +375,31 @@ const ACCOUNT_KINDS = {
 };
 const accountById = (id) => state.accounts.find((a) => a.id === id) || state.accounts[0];
 const accountIcon = (a) => (ACCOUNT_KINDS[a && a.kind] || ACCOUNT_KINDS.cash).icon;
+// An account named after a bank, card or wallet ("Commercial Bank", "Boc", "FriMi", "Koko") shows that brand's logo.
+function accountBrand(a) {
+    if (!a || !a.name) return null;
+    const b = brandFor(a.name);
+    return b && (b.cat === null || logoSlug(b.slug)) ? b : null;
+}
+// The account's logo, or its type icon (cash, bank, card...) in Vela's usual tile.
+function accountBadge(a, size, plainClass) {
+    const b = accountBrand(a);
+    return b ? brandBadge(b, ` ${size}`) : `<span class="${plainClass}">${icon(accountIcon(a))}</span>`;
+}
+// Account pickers show the chosen account's logo inside the box, so switching accounts shows which bank it is.
+const ACCOUNT_SELECTS = ['tx-account', 'sms-account', 'transfer-from', 'transfer-to', 'activity-account'];
+function syncAccountLogos() {
+    ACCOUNT_SELECTS.forEach((id) => {
+        const sel = $(id);
+        const box = sel && sel.parentElement;
+        if (!box || !box.classList.contains('select')) return;
+        let slot = box.querySelector(':scope > .select-logo');
+        if (!slot) { slot = document.createElement('span'); slot.className = 'select-logo'; slot.setAttribute('aria-hidden', 'true'); box.insertBefore(slot, sel); }
+        const a = state.accounts.find((x) => x.id === sel.value);
+        slot.innerHTML = a ? accountBadge(a, 'is-pick', 'account-icon') : '';
+        box.classList.toggle('has-logo-pad', !!a);
+    });
+}
 const accountBalance = (acc) => {
     let bal = acc.opening;
     state.transactions.forEach((t) => {
@@ -394,6 +419,7 @@ const fillAccountSelect = (sel, value, { all = false } = {}) => {
     sel.innerHTML = (all ? ['<option value="all">All accounts</option>'] : [])
         .concat(state.accounts.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)} (${a.currency})</option>`)).join('');
     sel.value = value && (value === 'all' || state.accounts.some((a) => a.id === value)) ? value : (all ? 'all' : state.accounts[0].id);
+    syncAccountLogos();
 };
 
 /* =========================================================================
@@ -926,6 +952,7 @@ const openSheet = (id) => {
     if (isSheetOpen(id)) return;
     history.pushState({ vela: 'sheet', id, tab: currentTab }, '');
     showSheetElement(id);
+    requestAnimationFrame(syncAccountLogos); // forms set the chosen account after filling the list
 };
 
 // Replace the open sheet with another without touching history (avoids Back-button races).
@@ -1649,7 +1676,8 @@ const SMS_CONDITIONAL = /\b(will be (credited|debited|given|added)|when you|if y
 // Wording only a real transaction alert uses.
 const SMS_STRONG = /\b(debited|credited|purchase (at|of)|withdrawal (at|of|from)|cash withdrawal|transaction (approved|of|alert)|txn (of|at)|auth(orised|orized)? pmt|has been authori[sz]ed|paid to|transferred|transfer (to|from|of)|payment of|deposit(ed)? (to|of|in|at)|used (for|at)|spent|reversal|reversed|refund(ed)?|sms alert|debit (for|of)|credit (for|of)|cefts?|slips|pos)\b/i;
 // For senders Vela doesn't know: the text must be about an account or card being debited or credited.
-const SMS_ACCOUNT_WORDING = /\b(a\/c|acc?|account|acct|card|crd|savings|current)\b[\s\S]{0,80}\b(debited|credited)\b|\b(debited|credited)\b[\s\S]{0,60}\b(a\/c|acc?|account|acct|card|crd)\b/i;
+// "Credit for Rs. 3,000.00 to 8024585190" (an account number) counts too.
+const SMS_ACCOUNT_WORDING = /\b(a\/c|acc?|account|acct|card|crd|savings|current)\b[\s\S]{0,80}\b(debited|credited)\b|\b(debited|credited)\b[\s\S]{0,60}\b(a\/c|acc?|account|acct|card|crd)\b|\b(credit|debit)\s+(for|of)\b[\s\S]{0,40}\b(to|from)\s+(a\/c\s*)?[x*\d]{6,}/i;
 
 // Amounts: "LKR 1,500.00", "Rs.1,500", "USD 12.99" and (HNB) "670.59 LKR".
 const SMS_CODES = Object.keys(CURRENCIES).join('|');
@@ -2143,9 +2171,14 @@ const parseBankSms = (msg) => {
     const bank = (senderLetters ? SMS_BANKS.find((b) => b.sender.test(senderLetters)) : SMS_BANKS.find((b) => b.body.test(body))) || null;
     let otherSender = '';
     if (!bank && !shared) {
-        if (!senderLetters) return no('not from a bank');
-        if (SMS_NOT_BANKS.test(senderLetters) || !SMS_ACCOUNT_WORDING.test(t)) return no('not from a known bank');
-        otherSender = address.replace(/[^A-Za-z0-9 +&.\-]/g, '').trim().slice(0, 24);
+        // A plain phone number that names no bank: only when the text is clearly about an account being debited or
+        // credited, and always for review (fake "credited" SMS from phone numbers are a common scam).
+        if (!senderLetters) {
+            if (!phoneSender || !SMS_ACCOUNT_WORDING.test(t)) return no('not from a bank');
+        } else {
+            if (SMS_NOT_BANKS.test(senderLetters) || !SMS_ACCOUNT_WORDING.test(t)) return no('not from a known bank');
+            otherSender = address.replace(/[^A-Za-z0-9 +&.\-]/g, '').trim().slice(0, 24);
+        }
     }
 
     const all = smsAmounts(body);
@@ -2176,12 +2209,12 @@ const parseBankSms = (msg) => {
     if (kind.kind === 'credit' && brand && brand.cat) kind = SMS_KIND.refund;
     if (!merchant && (kind.kind === 'card' || kind.kind === 'online')) checks.push('no shop name in the message');
     if (kind.generic && !merchant) checks.push('the message does not say what it was for');
-    if (!bank) checks.push(otherSender ? `${otherSender} isn’t in Vela’s bank list yet` : 'sender not recognised as a bank');
+    if (!bank) checks.push(otherSender ? `${otherSender} isn’t in Vela’s bank list yet` : phoneSender ? 'it came from a phone number, not a bank, so check your bank app before adding it' : 'sender not recognised as a bank');
     else if (phoneSender) checks.push('it came from a phone number, not the bank’s sender name, so check your bank app first');
     else if (shared) checks.push(SMS_CHECK_SHARED);
     else if (!smsBankTrusted(bank)) checks.push(`Vela is still learning ${bank.name} messages (${smsTrustCount(bank.name)} of ${SMS_TRUST_NEEDED} confirmed)`);
 
-    const bankName = bank ? bank.name : (otherSender || 'Bank');
+    const bankName = bank ? bank.name : (otherSender || (phoneSender ? 'Unknown sender' : 'Bank'));
     const type = { in: 'income', out: 'expense', move: 'atm', rev: 'reversal', card: 'cardpay' }[kind.dir];
     const desc = kind.kind === 'atm' ? 'ATM withdrawal'
         : kind.kind === 'fee' ? `${bankName} charges`
@@ -2372,6 +2405,7 @@ const renderSmsSheet = () => {
     if (!smsQueue.length) { list.innerHTML = ''; return; }
     $('sms-account').innerHTML = state.accounts.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('');
     $('sms-account').value = smsAccountFor(smsQueue[0]);
+    syncAccountLogos();
     $('sms-count').textContent = `${plural(smsQueue.length, 'transaction', 'transactions')} to review`;
     list.innerHTML = smsQueue.map(smsCardHtml).join('');
 };
@@ -2607,7 +2641,7 @@ const smsTake = (messages) => {
     return fresh.length;
 };
 // On start and whenever Vela comes back: messages that came while it was closed, plus the inbox since last time.
-const scanSms = async () => {
+const scanSms = async (show = true) => {
     const plugin = smsPlugin();
     let added = 0;
     if (plugin) { try { added += smsTake((await plugin.getPending()).messages); } catch (e) { /* ignore */ } }
@@ -2622,7 +2656,7 @@ const scanSms = async () => {
         } catch (e) { /* permission removed */ }
     }
     const q2 = smsPrefs(); q2.lastSync = Date.now(); saveSmsPrefs(q2);
-    if (smsQueue.length) showSmsSheet();
+    if (show && smsQueue.length) showSmsSheet();
     refreshBankStatus();
     return added;
 };
@@ -2702,7 +2736,23 @@ const initSms = () => {
     window.addEventListener('resize', () => setTimeout(applyNativeInsets, 120));
     plugin.addListener('smsReceived', (m) => { const n = smsTake([m]); if (n) haptic('MEDIUM'); if (smsQueue.length) showSmsSheet(); refreshBankStatus(); });
     // Tapped "Bank transaction detected": open the review screen once the app is ready.
-    plugin.addListener('reviewRequested', async () => { await splashDone; await scanSms(); if (!smsQueue.length) showToast('That transaction was already added or ignored.', 'info'); });
+    // "Add" on the notification: add that one straight away (the person saw the amount and bank and chose Add);
+    // anything that needs a decision (a possible repeat, a card payment, a reversal) opens the review instead.
+    plugin.addListener('reviewRequested', async (e) => {
+        await splashDone;
+        const add = !!(e && e.add);
+        await scanSms(!add);
+        if (add) {
+            const i = smsQueue.find((x) => x.id === e.id || (x.sourceIds || []).includes(e.id));
+            const direct = i && (i.type === 'expense' || i.type === 'income' || i.type === 'atm') && !smsMatchFor(i)
+                && !i.checks.some((c) => /same as another/.test(c));
+            if (direct) smsAdd(i.id);
+            if (smsQueue.length) showSmsSheet();
+            if (!i && !smsQueue.length) showToast('That transaction was already added or ignored.', 'info');
+            return;
+        }
+        if (!smsQueue.length) showToast('That transaction was already added or ignored.', 'info');
+    });
     if (smsPrefs().enabled) plugin.setEnabled({ enabled: true }).catch(() => {});
     setTimeout(scanSms, 1800);
 };
@@ -3085,7 +3135,7 @@ const renderDashboard = () => {
     $('account-strip').innerHTML = state.accounts.map((a) => {
         const bal = accountBalance(a);
         return `<button type="button" class="account-chip" data-account-filter="${escapeHtml(a.id)}" aria-label="${escapeHtml(a.name)}: ${escapeHtml(formatCurrency(bal, a.currency))}. Show its activity">
-            <span class="account-chip-top"><span class="account-icon">${icon(accountIcon(a))}</span><span class="account-name">${escapeHtml(a.name)}</span></span>
+            <span class="account-chip-top">${accountBadge(a, 'is-acc', 'account-icon')}<span class="account-name">${escapeHtml(a.name)}</span></span>
             <span class="account-bal amount ${bal < 0 ? 'text-expense' : ''}" title="${escapeHtml(formatCurrency(bal, a.currency))}" ${moneyAttrs(bal, a.currency)}>${escapeHtml(formatCurrency(bal, a.currency))}</span>
         </button>`;
     }).join('') + `<button type="button" class="account-chip account-add" data-action="add-account">${icon('i-plus')}<span>Add account</span></button>`;
@@ -6681,6 +6731,9 @@ const initEvents = () => {
     });
     $('tx-currency').addEventListener('change', () => { renderTxSuggest(); updatePriceHint(); });
     $('tx-desc').addEventListener('input', (e) => { if (e.isTrusted) $('tx-desc').dataset.typing = '1'; onTxDescInput(); });
+    $('account-name').addEventListener('input', updateAccountNameLogo);
+    $('account-kind').addEventListener('change', () => { accountKindTouched = true; });
+    document.addEventListener('change', (e) => { if (e.target && ACCOUNT_SELECTS.includes(e.target.id)) syncAccountLogos(); });
     $('tx-desc').addEventListener('blur', () => setTimeout(() => { delete $('tx-desc').dataset.typing; updateDescLogo(); }, 200));
     $('tx-date').addEventListener('input', updateDateHint);
     $('tx-repeat').addEventListener('click', (e) => setSwitch(e.currentTarget, !isOn(e.currentTarget)));
@@ -6854,11 +6907,22 @@ const removeCurrency = (c) => {
 /* =========================================================================
    34. Accounts and transfers
    ========================================================================= */
+// The account form: the bank's logo shows inside the name box as soon as the name matches one ("Boc" -> BOC).
+// A bank, card or wallet name also picks the matching type, until the person picks one themselves.
+let accountKindTouched = false;
+const updateAccountNameLogo = () => {
+    const b = accountBrand({ name: $('account-name').value });
+    $('account-name-logo').innerHTML = b ? brandBadge(b, ' is-field') : '';
+    $('account-name-wrap').classList.toggle('has-brand', !!b);
+    if (b && b.cat === null && !accountKindTouched && !$('account-id').value) {
+        $('account-kind').value = /frimi|ez ?cash|mcash/i.test(b.name) ? 'mobile' : 'bank';
+    }
+};
 const renderAccountManager = () => {
     $('accounts-body').innerHTML = `<ul class="cat-manage">${state.accounts.map((a) => {
         const bal = accountBalance(a);
         return `<li><button type="button" class="row-btn" data-edit-account="${escapeHtml(a.id)}">
-            <span class="row-icon tint">${icon(accountIcon(a))}</span>
+            ${accountBadge(a, 'is-row', 'row-icon tint')}
             <span class="row-label"><span>${escapeHtml(a.name)}</span><span>${escapeHtml(ACCOUNT_KINDS[a.kind].label)}, ${a.currency}</span></span>
             <span class="amount ${bal < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(bal, a.currency))}</span>
         </button></li>`;
@@ -6880,6 +6944,8 @@ const openAccountEditor = (id) => {
     $('account-title').textContent = a ? `Edit ${a.name}` : 'New account';
     $('account-name').value = a ? a.name : '';
     $('account-kind').value = a ? a.kind : 'bank';
+    accountKindTouched = false;
+    updateAccountNameLogo();
     fillCurrencySelect($('account-currency'), a ? a.currency : dcur());
     $('account-opening').value = a ? round2(accountBalance(a)) : '';
     $('account-opening-label').textContent = 'Balance right now';

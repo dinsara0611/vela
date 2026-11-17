@@ -116,6 +116,11 @@ final class SmsStore {
         prefs(ctx).edit().putString(KEY, sealed != null ? sealed : PLAIN + list.toString()).apply();
     }
 
+    /** Added or ignored already (also from the notification), so the inbox scan doesn't offer it again. */
+    static boolean isHandled(Context ctx, String id) {
+        return handled(ctx).contains(id);
+    }
+
     private static Set<String> handled(Context ctx) {
         return new HashSet<>(prefs(ctx).getStringSet(HANDLED, new HashSet<>()));
     }
@@ -209,8 +214,8 @@ final class SmsStore {
             .setSmallIcon(R.drawable.ic_stat_vela)
             .setColor(0xFF9B51E0)
             .setContentTitle("Bank transaction detected")
-            .setContentText(text + " Tap to review.")
-            .setStyle(new NotificationCompat.BigTextStyle().bigText(text + " Tap to review and add it to Vela. Nothing is added until you confirm."))
+            .setContentText(text + " Add it, ignore it, or tap to review.")
+            .setStyle(new NotificationCompat.BigTextStyle().bigText(text + " Tap Add to add it to Vela, Ignore to skip it, or tap here to check the details first."))
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
@@ -218,6 +223,23 @@ final class SmsStore {
             .setOnlyAlertOnce(true)
             .setAutoCancel(true)
             .setContentIntent(tap);
+        // Buttons: "Add" opens Vela and adds it (a clear payment, money in or an ATM withdrawal); "Ignore" forgets it
+        // without opening Vela. Payments to your own card and reversals need the review screen, so they get Ignore only.
+        // On Android 12+ both need the phone unlocked first.
+        boolean addable = "out".equals(info.direction) || "in".equals(info.direction) || "atm".equals(info.direction);
+        if (addable) {
+            Intent add = new Intent(ctx, MainActivity.class);
+            add.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+            add.putExtra("velaReview", id);
+            add.putExtra("velaAdd", true);
+            PendingIntent addTap = PendingIntent.getActivity(ctx, notificationId(id) + 1, add, flags);
+            b.addAction(new NotificationCompat.Action.Builder(0, "Add", addTap).setAuthenticationRequired(true).build());
+        }
+        Intent ignore = new Intent(ctx, NotificationActionReceiver.class);
+        ignore.setAction(NotificationActionReceiver.IGNORE);
+        ignore.putExtra("id", id);
+        PendingIntent ignoreTap = PendingIntent.getBroadcast(ctx, notificationId(id) + 2, ignore, flags);
+        b.addAction(new NotificationCompat.Action.Builder(0, "Ignore", ignoreTap).setAuthenticationRequired(true).build());
         try {
             manager.notify(notificationId(id), b.build());
         } catch (SecurityException e) {

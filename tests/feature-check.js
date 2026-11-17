@@ -536,6 +536,32 @@ export async function run() {
         return (reversals === 1 && flagged && twoCash && twoShops) || `reversal pair kept ${reversals} (want 1), look-alike flagged ${flagged}, two withdrawals separate ${twoCash}, two shops separate ${twoShops}`;
     });
 
+    await T('Accounts: a bank name shows its logo while typing, on Home and in the account pickers', async () => {
+        g('openAccountEditor')(); await wait(300);
+        $('account-name').value = 'Boc'; $('account-name').dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
+        const typing = !!$('account-name-logo').querySelector('img[src="logos/boc.png"]');
+        const kind = $('account-kind').value;
+        await close('modal-account');
+        const before = s().accounts.slice();
+        s().accounts = before.concat([{ id: 'acc-boc-test', name: 'Boc', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 0 }]);
+        g('switchTab')('dashboard'); await wait(300);
+        const chip = !!document.querySelector('[data-account-filter="acc-boc-test"] img[src="logos/boc.png"]');
+        g('openAddTx')('expense'); await wait(300);
+        $('tx-account').value = 'acc-boc-test'; $('tx-account').dispatchEvent(new Event('change', { bubbles: true })); await wait(50);
+        const pick = !!$('tx-account').parentElement.querySelector('.select-logo img[src="logos/boc.png"]');
+        await close('modal-tx');
+        s().accounts = before;
+        g('renderActive')();
+        return (typing && kind === 'bank' && chip && pick) || JSON.stringify({ typing, kind, chip, pick });
+    });
+
+    await T('A transaction SMS from a phone number is read for review only, never added automatically', () => {
+        const r = P('Acc XXX59 debited by LKR 2,000.00 at COOL PLANET on 30-Mar.', '+94771234567');
+        const chat = P('Machan I paid Rs. 2,000 for the tickets, send it back', '+94771234567');
+        return (r && r.bank === 'Unknown sender' && r.confidence === 'medium' && /phone number/.test(r.checks.join()) && r.amount === 2000 && chat === null)
+            || JSON.stringify({ r: r && [r.bank, r.confidence, r.checks, r.amount], chat });
+    });
+
     await T('Review screen: Ignore all asks first, then clears every detection without adding anything', async () => {
         freshEngine();
         const n0 = s().transactions.length;

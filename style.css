@@ -4403,3 +4403,18 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 #modal-sms .sheet-foot { flex-wrap: wrap; }
 #modal-sms .sheet-foot #btn-sms-all { order: -1; flex-basis: 100%; }
 #modal-sms .sheet-foot #btn-sms-all[hidden] { display: none; }
+
+/* Account logos: an account named after a bank, card or wallet shows that brand's logo (Home chips, the accounts
+   list, and inside every account picker), sized like the icon it replaces. */
+.cat-badge.brand-badge.is-acc { width: 30px; height: 30px; border-radius: 10px; box-shadow: none; }
+.cat-badge.brand-badge.is-acc .brand-letters { font-size: 12px; }
+.cat-badge.brand-badge.is-acc .brand-letters.is-long { font-size: 8px; }
+.cat-badge.brand-badge.is-row { width: 38px; height: 38px; border-radius: 12px; box-shadow: none; }
+.cat-badge.brand-badge.is-row .brand-letters { font-size: 14px; }
+.cat-badge.brand-badge.is-row .brand-letters.is-long { font-size: 10px; }
+.cat-badge.brand-badge.is-pick { width: 28px; height: 28px; border-radius: 9px; box-shadow: none; }
+.cat-badge.brand-badge.is-pick .brand-letters { font-size: 11px; }
+.cat-badge.brand-badge.is-pick .brand-letters.is-long { font-size: 8px; }
+.select > .select-logo { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); z-index: 1; pointer-events: none; display: grid; }
+.select > .select-logo .account-icon { width: 28px; height: 28px; border-radius: 9px; }
+.select.has-logo-pad .input { padding-left: 48px; }

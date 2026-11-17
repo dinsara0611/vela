@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.21.0">
+    <link rel="stylesheet" href="style.css?v=4.22.0">
 </head>
 <body data-view="dashboard">
 
@@ -1217,7 +1217,10 @@
                 <div class="sheet-body">
                     <div class="field">
                         <label class="field-label" for="account-name">Name</label>
-                        <input type="text" id="account-name" class="input" placeholder="e.g. Commercial Bank" maxlength="40" autocomplete="off" required>
+                        <div class="desc-wrap" id="account-name-wrap">
+                            <span class="desc-logo" id="account-name-logo" aria-hidden="true"></span>
+                            <input type="text" id="account-name" class="input" placeholder="e.g. Commercial Bank" maxlength="40" autocomplete="off" required>
+                        </div>
                     </div>
                     <div class="field-row">
                         <div class="field">
@@ -1432,7 +1435,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.21.0"></script>
+    <script src="app.js?v=4.22.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

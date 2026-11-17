@@ -103,7 +103,8 @@ final class BankSms {
         + "|has been authori[sz]ed|paid to|transferred|transfer (to|from|of)|payment of|deposit(ed)? (to|of|in|at)|used (for|at)|spent|reversal|reversed|refund(ed)?|sms alert"
         + "|debit (for|of)|credit (for|of)|cefts?|slips|pos)\\b");
     // For senders Vela doesn't know: the text must be about an account or card being debited or credited.
-    private static final Pattern ACCOUNT_WORDING = lc("\\b(a/c|acc?|account|acct|card|crd|savings|current)\\b[\\s\\S]{0,80}\\b(debited|credited)\\b|\\b(debited|credited)\\b[\\s\\S]{0,60}\\b(a/c|acc?|account|acct|card|crd)\\b");
+    private static final Pattern ACCOUNT_WORDING = lc("\\b(a/c|acc?|account|acct|card|crd|savings|current)\\b[\\s\\S]{0,80}\\b(debited|credited)\\b|\\b(debited|credited)\\b[\\s\\S]{0,60}\\b(a/c|acc?|account|acct|card|crd)\\b"
+        + "|\\b(credit|debit)\\s+(for|of)\\b[\\s\\S]{0,40}\\b(to|from)\\s+(a/c\\s*)?[x*\\d]{6,}");
 
     // ---- Amounts (app.js smsAmounts): "LKR 1,500.00", "Rs.1,500", "USD 12.99" and (HNB) "670.59 LKR" ----
     private static final String CODES = "USD|LKR|EUR|GBP|INR|AED|SAR|QAR|KWD|OMR|AUD|CAD|SGD|MYR|JPY|CNY|MVR";
@@ -249,9 +250,15 @@ final class BankSms {
         String bank = bankName(sender, body);
         if (bank == null) {
             // A named sender that isn't on the list: only when the text is clearly about an account or card.
-            if (letters.isEmpty() || has(NOT_BANKS, letters) || !has(ACCOUNT_WORDING, t)) return null;
-            bank = sender.replaceAll("[^A-Za-z0-9 +&.\\-]", "").trim();
-            if (bank.length() > 24) bank = bank.substring(0, 24);
+            if (letters.isEmpty()) {
+                // A plain phone number that names no bank: kept for review only when clearly about an account.
+                if (!sender.matches(".*\\d{4,}.*") || !has(ACCOUNT_WORDING, t)) return null;
+                bank = "Unknown sender";
+            } else {
+                if (has(NOT_BANKS, letters) || !has(ACCOUNT_WORDING, t)) return null;
+                bank = sender.replaceAll("[^A-Za-z0-9 +&.\\-]", "").trim();
+                if (bank.length() > 24) bank = bank.substring(0, 24);
+            }
         }
 
         List<Amount> moved = moved(body);

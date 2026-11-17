@@ -50,9 +50,12 @@ public class SmsReaderPlugin extends Plugin {
         if (intent == null) return;
         String review = intent.getStringExtra("velaReview");
         if (review != null) {
+            boolean add = intent.getBooleanExtra("velaAdd", false);
             intent.removeExtra("velaReview");
+            intent.removeExtra("velaAdd");
             JSObject o = new JSObject();
             o.put("id", review);
+            o.put("add", add);
             notifyListeners("reviewRequested", o, true);
         }
         takeShared(intent);
@@ -274,8 +277,10 @@ public class SmsReaderPlugin extends Plugin {
                 String body = c.getString(2);
                 long date = c.getLong(3);
                 if (BankSms.parse(address, body) == null) continue; // only bank transactions leave this method
+                String id = "sms-" + date + "-" + Math.abs(((address == null ? "null" : address) + body).hashCode());
+                if (SmsStore.isHandled(getContext(), id)) continue; // added or ignored from the notification
                 JSObject o = new JSObject();
-                o.put("id", "sms-" + date + "-" + Math.abs(((address == null ? "null" : address) + body).hashCode()));
+                o.put("id", id);
                 o.put("source", "sms");
                 o.put("address", address == null ? "" : address);
                 o.put("body", body);
