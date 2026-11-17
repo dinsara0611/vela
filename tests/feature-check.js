@@ -1644,46 +1644,117 @@ export async function run() {
         return (set.data && set.data.data && set.data.data.theme === 'light') || `cloud theme ${set.data && set.data.data && set.data.data.theme}`;
     });
 
-    await T('Two-step verification: sign-in waits for the authenticator code', async () => {
-        const client = window.__fakeClient;
-        let verified = 0;
-        client.auth.mfa = {
-            getAuthenticatorAssuranceLevel: async () => ({ data: { currentLevel: verified ? 'aal2' : 'aal1', nextLevel: 'aal2' } }),
-            listFactors: async () => ({ data: { totp: [{ id: 'f1', status: 'verified' }] } }),
-            challengeAndVerify: async ({ code }) => (code === '123456' ? (verified++, { error: null }) : { error: { message: 'Invalid code' } })
+    // A fake server for "approve new sign-ins": phones, requests and the approval switch, with the same rules as the SQL.
+    const fakeApproval = (client) => {
+        const srv = { on: true, devices: {}, requests: [] };
+        const realFrom = client.from;
+        client.rpc = async (fn, a) => {
+            const dev = srv.devices[a.p_device];
+            if (fn === 'vela_device_check') {
+                if (dev && dev.secret !== a.p_secret) return { data: 'mismatch', error: null };
+                if (!dev) srv.devices[a.p_device] = { secret: a.p_secret, name: a.p_name, approved: !srv.on };
+                const d = srv.devices[a.p_device];
+                if (!srv.on) d.approved = true;
+                return { data: d.approved ? 'approved' : 'pending', error: null };
+            }
+            if (fn === 'vela_request_login') {
+                const r = { id: 'req' + srv.requests.length, device_id: a.p_device, device_name: dev.name, number: 42, status: 'pending', created_at: new Date().toISOString() };
+                srv.requests.push(r);
+                return { data: [{ request_id: r.id, number: r.number }], error: null };
+            }
+            if (fn === 'vela_decide_login') {
+                if (!dev || !dev.approved || dev.secret !== a.p_secret) return { data: null, error: { message: 'this phone is not approved' } };
+                const r = srv.requests.find((x) => x.id === a.p_request);
+                r.status = a.p_approve ? 'approved' : 'denied';
+                if (a.p_approve) srv.devices[r.device_id].approved = true;
+                return { data: r.status, error: null };
+            }
+            if (fn === 'vela_set_approval') { srv.on = a.p_on; if (a.p_on) Object.keys(srv.devices).forEach((k) => { srv.devices[k].approved = k === a.p_device; }); return { data: null, error: null }; }
+            if (fn === 'vela_remove_device') { delete srv.devices[a.p_target]; return { data: null, error: null }; }
+            return { data: null, error: { message: 'unknown' } };
         };
+        client.from = (t) => {
+            if (t === 'vela_login_requests') {
+                const chain = (rows) => {
+                    const o = { eq: (k, v) => chain(rows.filter((r) => r[k] === v)), gte: () => o, order: () => o, limit: (n) => Promise.resolve({ data: rows.slice(0, n), error: null }), maybeSingle: () => Promise.resolve({ data: rows[0] || null, error: null }) };
+                    return o;
+                };
+                return { select: () => chain(srv.requests) };
+            }
+            if (t === 'vela_device_settings') return { select: () => ({ maybeSingle: () => Promise.resolve({ data: { require_approval: srv.on }, error: null }) }) };
+            if (t === 'vela_devices') return { select: () => ({ order: () => Promise.resolve({ data: Object.entries(srv.devices).map(([id, d]) => ({ device_id: id, name: d.name, approved: d.approved, last_seen: new Date().toISOString() })), error: null }) }) };
+            return realFrom(t);
+        };
+        return { srv, undo: () => { delete client.rpc; client.from = realFrom; } };
+    };
+
+    await T('Approve new sign-ins: a new phone waits, shows the number, gets in when approved', async () => {
+        const client = window.__fakeClient;
+        const { srv, undo } = fakeApproval(client);
+        srv.devices['dev-other-phone-0001'] = { secret: 'x'.repeat(64), name: 'Old phone', approved: true };
+        localStorage.removeItem('VELA_DEVICE');
         (0, eval)('handledUserId = null');
         let done = false;
         g('handleSession')({ user: { id: 'u1', email: 't@example.com', user_metadata: {} } }).then(() => { done = true; });
+        g('handleSession')({ user: { id: 'u1', email: 't@example.com', user_metadata: {} } }); // the second sign-in event must not ask twice
         await wait(500);
-        const asked = g('openSheets').includes('modal-mfa');
-        const waitedFirst = !done && g('handledUserId') === null;
-        $('mfa-code').value = '000000'; g('submitMfa')(); await wait(300);
-        const wrongKept = g('openSheets').includes('modal-mfa');
-        $('mfa-code').value = '123456'; g('submitMfa')(); await wait(900);
-        const ok = asked && waitedFirst && wrongKept && !g('openSheets').includes('modal-mfa') && g('handledUserId') === 'u1';
-        delete client.auth.mfa;
-        return ok || `asked ${asked}, waited ${waitedFirst}, wrong code kept sheet ${wrongKept}, user ${g('handledUserId')}`;
+        const shown = !$('approve-wait').hidden && $('approve-number').textContent === '42';
+        const waited = !done && g('handledUserId') === null && srv.requests.length === 1;
+        // The waiting phone can't approve itself.
+        const me = JSON.parse(localStorage.getItem('VELA_DEVICE'));
+        const self = await client.rpc('vela_decide_login', { p_request: 'req0', p_device: me.id, p_secret: me.secret, p_approve: true });
+        // The old phone approves.
+        await client.rpc('vela_decide_login', { p_request: 'req0', p_device: 'dev-other-phone-0001', p_secret: 'x'.repeat(64), p_approve: true });
+        await wait(3800);
+        const ok = shown && waited && !!self.error && $('approve-wait').hidden && g('handledUserId') === 'u1';
+        undo();
+        return ok || `shown ${shown}, waited ${waited}, self-approve blocked ${!!self.error}, screen hidden ${$('approve-wait').hidden}, user ${g('handledUserId')}, requests ${srv.requests.length}`;
     });
 
-    await T('Two-step verification: turning it on shows the QR code and checks a code', async () => {
+    await T('Approve new sign-ins: the phone you use shows "Is this you?" and the right number approves', async () => {
         const client = window.__fakeClient;
-        let factors = [];
-        client.auth.mfa = {
-            getAuthenticatorAssuranceLevel: async () => ({ data: { currentLevel: 'aal1', nextLevel: 'aal1' } }),
-            listFactors: async () => ({ data: { totp: factors } }),
-            enroll: async () => ({ data: { id: 'f2', totp: { qr_code: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"/>', secret: 'JBSWY3DPEHPK3PXP' } } }),
-            challengeAndVerify: async ({ code }) => { if (code !== '654321') return { error: { message: 'bad' } }; factors = [{ id: 'f2', status: 'verified' }]; return { error: null }; },
-            unenroll: async () => { factors = []; return { error: null }; }
-        };
-        await g('toggleMfa')(); await wait(400);
-        const qr = $('mfa-qr').getAttribute('src') || '';
-        const secret = $('mfa-secret').textContent;
-        $('mfa-code').value = '654321'; g('submitMfa')(); await wait(500);
-        await g('updateMfaRow')();
-        const state = $('mfa-state').textContent;
-        delete client.auth.mfa;
-        return (qr.startsWith('data:image') && secret === 'JBSWY3DPEHPK3PXP' && state === 'On' && !g('openSheets').includes('modal-mfa')) || `qr ${qr.slice(0, 20)}, secret ${secret}, state ${state}`;
+        const { srv, undo } = fakeApproval(client);
+        const me = JSON.parse(localStorage.getItem('VELA_DEVICE'));
+        srv.devices[me.id] = { secret: me.secret, name: 'This phone', approved: true };
+        srv.devices['dev-new-phone-00001'] = { secret: 'n'.repeat(64), name: 'CPH2591', approved: false };
+        srv.requests.push({ id: 'r9', device_id: 'dev-new-phone-00001', device_name: 'CPH2591', number: 57, status: 'pending', created_at: new Date().toISOString() });
+        (0, eval)('askingRequest = null');
+        await g('pollSignInRequests')(); await wait(400);
+        const asked = g('openSheets').includes('modal-approve-ask') && $('approve-ask-device').textContent === 'CPH2591';
+        const nums = [...document.querySelectorAll('[data-approve-num]')].map((b) => Number(b.dataset.approveNum));
+        document.querySelector('[data-approve-num="57"]').click(); await wait(500);
+        const approved = srv.requests[0].status === 'approved' && srv.devices['dev-new-phone-00001'].approved;
+        // A wrong number blocks it.
+        srv.requests.push({ id: 'r10', device_id: 'dev-new-phone-00001', device_name: 'CPH2591', number: 33, status: 'pending', created_at: new Date().toISOString() });
+        srv.requests[0].status = 'approved';
+        await wait(500); (0, eval)('askingRequest = null');
+        await g('pollSignInRequests')(); await wait(400);
+        const wrong = [...document.querySelectorAll('[data-approve-num]')].map((b) => b.dataset.approveNum).find((n) => n !== '33');
+        document.querySelector(`[data-approve-num="${wrong}"]`).click(); await wait(500);
+        const blocked = srv.requests[1].status === 'denied';
+        const logged = g('notifLog').some((x) => x.kind === 'signin');
+        undo();
+        return (asked && nums.length === 3 && nums.includes(57) && approved && blocked && logged) || `asked ${asked}, numbers ${nums}, approved ${approved}, wrong number blocked ${blocked}, in notifications ${logged}`;
+    });
+
+    await T('Approve new sign-ins: Settings shows the switch and your phones; server not set up = no lock-out', async () => {
+        const client = window.__fakeClient;
+        const { srv, undo } = fakeApproval(client);
+        const me = JSON.parse(localStorage.getItem('VELA_DEVICE'));
+        srv.devices[me.id] = { secret: me.secret, name: 'This phone', approved: true };
+        srv.devices['dev-other-00000001'] = { secret: 'o'.repeat(64), name: 'Old phone', approved: true };
+        await g('renderDevices')(true);
+        const sw = $('switch-approval').getAttribute('aria-checked');
+        const rows = $('device-list').textContent;
+        const removeBtn = document.querySelector('[data-device-remove="dev-other-00000001"]');
+        undo();
+        // Without the server setup, signing in must not be blocked.
+        client.rpc = async () => ({ data: null, error: { code: 'PGRST202', message: 'Could not find the function public.vela_device_check' } });
+        const pass = await g('passDeviceApproval')();
+        await g('renderDevices')(true);
+        const note = $('approval-desc').textContent;
+        delete client.rpc;
+        return (sw === 'true' && /This phone/.test(rows) && /Old phone/.test(rows) && !!removeBtn && pass === true && /setup/.test(note)) || `switch ${sw}, list "${rows}", remove ${!!removeBtn}, pass ${pass}, note "${note}"`;
     });
 
     await T('Sign out clears this phone', async () => {

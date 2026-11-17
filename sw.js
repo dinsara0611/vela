@@ -1,13 +1,13 @@
 /* Vela service worker — offline support for the app shell. */
-const VERSION = '4.35.0';
+const VERSION = '4.36.0';
 const SHELL_CACHE = `vela-shell-${VERSION}`;
 const CDN_CACHE = 'vela-cdn-v1';
 
 const SHELL = [
   './',
   './index.html',
-  './style.css?v=4.35.0',
-  './app.js?v=4.35.0',
+  './style.css?v=4.36.0',
+  './app.js?v=4.36.0',
   './manifest.json',
   './icon-192.png',
   './icon-512.png'

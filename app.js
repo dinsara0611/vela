@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.35.0';
+const APP_VERSION = '4.36.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1454,7 +1454,7 @@ const relTime = (ms) => {
     if (hrs < 24) return `${hrs} h ago`;
     return shortDate(toISODate(new Date(ms)));
 };
-const NOTIF_ICON = { bank: 'i-bank', added: 'i-check', due: 'i-calendar', late: 'i-alert' };
+const NOTIF_ICON = { bank: 'i-bank', added: 'i-check', due: 'i-calendar', late: 'i-alert', signin: 'i-lock' };
 const openNotifs = () => {
     const list = $('notif-list');
     list.innerHTML = notifLog.length ? notifLog.map((x) => `<li class="notif-row${x.read ? '' : ' is-new'}"><button type="button" class="row-btn" data-notif-open="${escapeHtml(x.id)}">
@@ -1473,7 +1473,8 @@ const openNotif = (id) => {
     closeSheet('modal-notifs');
     if (!x) return;
     setTimeout(() => {
-        if (x.kind === 'bank' && smsQueue.length) showSmsSheet();
+        if (x.kind === 'signin') { switchTab('settings'); renderDevices(true); }
+        else if (x.kind === 'bank' && smsQueue.length) showSmsSheet();
         else if (x.kind === 'due' || x.kind === 'late') { activityType = 'all'; goToActivity('all', true); }
         else switchTab('activity');
     }, 260);
@@ -4055,7 +4056,7 @@ const renderSettings = () => {
     $('btn-change-pin').hidden = !lock.enabled;
     $('biometric-row').hidden = !(lock.enabled && biometricAvailable);
     $('lock-after-row').hidden = !lock.enabled;
-    updateMfaRow();
+    renderDevices();
     setPressed('[data-lock-after]', (b) => Number(b.dataset.lockAfter) * 1000 === lockAfterMs());
     setSwitch($('switch-biometric'), lock.biometric);
     const native = !!nativePlugin('LocalNotifications');
@@ -6055,28 +6056,168 @@ const authServerReachable = async () => {
     }
 };
 
-// Two-step verification: an account with an authenticator app set up must give its 6-digit code after signing in.
-let mfaGate = null;
-const mfaFactor = async () => {
-    try { const { data } = await supabaseClient.auth.mfa.listFactors(); return ((data && data.totp) || []).find((f) => f.status === 'verified') || null; } catch (e) { return null; }
+// Approve new sign-ins on a phone you already use (like GitHub Mobile). Server side: supabase/device-approval.sql.
+// Each phone keeps its own random key; only an approved phone can approve another one.
+const DEVICE_KEY = 'VELA_DEVICE';
+const randomHex = (bytes) => { const a = new Uint8Array(bytes); crypto.getRandomValues(a); return [...a].map((b) => b.toString(16).padStart(2, '0')).join(''); };
+const deviceKey = (fresh = false) => {
+    let k = null;
+    try { k = JSON.parse(localStorage.getItem(DEVICE_KEY) || 'null'); } catch (e) { k = null; }
+    if (fresh || !k || !k.id || !k.secret) {
+        k = { id: `dev-${randomHex(12)}`, secret: randomHex(32) };
+        try { localStorage.setItem(DEVICE_KEY, JSON.stringify(k)); } catch (e) { /* storage blocked */ }
+    }
+    return k;
 };
-const passMfa = async () => {
-    if (!supabaseClient || !supabaseClient.auth.mfa) return true;
-    let level;
-    try { level = (await supabaseClient.auth.mfa.getAuthenticatorAssuranceLevel()).data; } catch (e) { return true; }
-    if (!level || level.nextLevel !== 'aal2' || level.currentLevel === 'aal2') return true;
-    const factor = await mfaFactor();
-    if (!factor) return true;
-    return new Promise((resolve) => {
-        mfaGate = { mode: 'login', factorId: factor.id, resolve };
-        showMfaSheet();
-    });
+const deviceName = () => {
+    const ua = navigator.userAgent || '';
+    const android = ua.match(/Android [\d.]+; ([^;)]+)/);
+    if (android) { const model = android[1].replace(/\s*Build\/.*$/, '').trim(); return model && model !== 'K' ? model : 'Android phone'; }
+    if (/iPhone/.test(ua)) return 'iPhone';
+    if (/iPad/.test(ua)) return 'iPad';
+    if (/Windows/.test(ua)) return 'Windows computer';
+    if (/Macintosh/.test(ua)) return 'Mac';
+    return 'Browser';
 };
+const deviceRpc = async (fn, args) => {
+    const { data, error } = await supabaseClient.rpc(fn, args);
+    if (error) throw error;
+    return data;
+};
+const deviceCheck = async () => {
+    let k = deviceKey();
+    let r = await deviceRpc('vela_device_check', { p_device: k.id, p_secret: k.secret, p_name: deviceName() });
+    if (r === 'mismatch') { k = deviceKey(true); r = await deviceRpc('vela_device_check', { p_device: k.id, p_secret: k.secret, p_name: deviceName() }); }
+    return r;
+};
+let approvalGate = null;
+let lastDeviceCheck = 0;
+// Signing in on a phone that isn't approved yet: wait here until a phone you already use says yes.
+const passDeviceApproval = async () => {
+    if (!supabaseClient || typeof supabaseClient.rpc !== 'function') return true;
+    let status;
+    // Not set up on the server yet, or offline: there is nothing to check against, so carry on.
+    try { status = await deviceCheck(); } catch (e) { return true; }
+    lastDeviceCheck = Date.now();
+    return status === 'pending' ? waitForApproval() : true;
+};
+const showApproveWait = () => {
+    const g = approvalGate;
+    $('approve-number').textContent = g.number;
+    $('approve-wait-note').textContent = 'Open Vela on a phone you already use and tap this number.';
+    $('approve-wait').hidden = false;
+    document.body.classList.add('approve-waiting');
+};
+const endApproveWait = (ok, message) => {
+    const g = approvalGate;
+    if (!g) return;
+    clearInterval(g.timer);
+    approvalGate = null;
+    $('approve-wait').hidden = true;
+    document.body.classList.remove('approve-waiting');
+    if (ok) { showToast('Approved. Welcome back!', 'success'); g.resolve(true); return; }
+    g.resolve(false);
+    Promise.resolve(supabaseClient.auth.signOut()).catch(() => {}).finally(() => { resetToSignedOut(); if (message) showToast(message, 'warning'); });
+};
+const askForApproval = async () => {
+    const k = deviceKey();
+    const rows = await deviceRpc('vela_request_login', { p_device: k.id, p_secret: k.secret });
+    const r = Array.isArray(rows) ? rows[0] : rows;
+    if (!r || !r.request_id) throw new Error('no request');
+    approvalGate.requestId = r.request_id;
+    approvalGate.number = r.number;
+    approvalGate.since = Date.now();
+    showApproveWait();
+};
+const checkApproval = async () => {
+    const g = approvalGate;
+    if (!g || !g.requestId || g.checking) return;
+    if (Date.now() - g.since > 10 * 60000) { endApproveWait(false, 'Nobody approved it in 10 minutes. Sign in again to ask again.'); return; }
+    g.checking = true;
+    try {
+        const { data } = await supabaseClient.from('vela_login_requests').select('status').eq('id', g.requestId).maybeSingle();
+        if (approvalGate !== g) return;
+        if (data && data.status === 'approved') endApproveWait(true);
+        else if (data && data.status === 'denied') endApproveWait(false, 'Sign-in was blocked on your other phone.');
+    } catch (e) { /* offline for a moment: try again on the next tick */ } finally { g.checking = false; }
+};
+const waitForApproval = () => new Promise((resolve) => {
+    approvalGate = { resolve, requestId: null, number: '··', since: Date.now(), timer: null };
+    askForApproval().then(() => {
+        if (approvalGate) approvalGate.timer = setInterval(checkApproval, 3000);
+    }, () => endApproveWait(false, 'Couldn’t ask your other phone. Check the internet and sign in again.'));
+});
+const resendApproval = async () => {
+    if (!approvalGate) return;
+    try { await askForApproval(); showToast('Sent again with a new number', 'info'); } catch (e) { showToast('Couldn’t send it. Check the internet.', 'error'); }
+};
+// An already signed-in phone checks it is still allowed when it comes back (it may have been removed).
+const recheckDevice = async () => {
+    if (!canSync() || !handledUserId || approvalGate || Date.now() - lastDeviceCheck < 30000) return;
+    if (!supabaseClient || typeof supabaseClient.rpc !== 'function') return;
+    lastDeviceCheck = Date.now();
+    let status;
+    try { status = await deviceCheck(); } catch (e) { return; }
+    if (status !== 'pending') return;
+    const uid = handledUserId;
+    handledUserId = null;
+    if (await waitForApproval()) handledUserId = uid;
+};
+
+// A phone you already use: someone is signing in somewhere else. Show "Is this you?" with three numbers.
+let askingRequest = null;
+const pollSignInRequests = async () => {
+    if (!canSync() || !handledUserId || approvalGate || askingRequest || document.hidden) return;
+    try {
+        const since = new Date(Date.now() - 10 * 60000).toISOString();
+        const { data, error } = await supabaseClient.from('vela_login_requests').select('id, device_id, device_name, number, created_at')
+            .eq('status', 'pending').gte('created_at', since).order('created_at', { ascending: false }).limit(1);
+        if (error || !data || !data.length) return;
+        const r = data[0];
+        if (r.device_id === deviceKey().id || askingRequest) return;
+        showApproveAsk(r);
+    } catch (e) { /* not set up on the server, or offline */ }
+};
+const showApproveAsk = (r) => {
+    askingRequest = r;
+    const choices = [r.number];
+    while (choices.length < 3) { const n = 10 + Math.floor(Math.random() * 90); if (!choices.includes(n)) choices.push(n); }
+    choices.sort(() => Math.random() - 0.5);
+    $('approve-ask-device').textContent = r.device_name || 'A phone';
+    $('approve-ask-when').textContent = relTime(new Date(r.created_at).getTime());
+    $('approve-ask-numbers').innerHTML = choices.map((n) => `<button type="button" class="approve-num" data-approve-num="${n}">${n}</button>`).join('');
+    logNotif({ key: `signin:${r.id}`, kind: 'signin', title: 'Someone is signing in', text: `${r.device_name || 'A phone'} wants to open your Vela account` });
+    openOrSwap('modal-approve-ask');
+};
+const decideSignIn = async (approve, picked) => {
+    const r = askingRequest;
+    if (!r) return;
+    const right = approve && picked === r.number;
+    const k = deviceKey();
+    try {
+        const status = await deviceRpc('vela_decide_login', { p_request: r.id, p_device: k.id, p_secret: k.secret, p_approve: right });
+        closeSheet('modal-approve-ask');
+        if (status === 'expired') showToast('That request was too old. Ask them to try again.', 'info');
+        else if (right) showToast(`${r.device_name || 'The phone'} can use your account now`, 'success');
+        else if (approve) showToast('Wrong number, so that sign-in was blocked.', 'warning');
+        else showToast('Blocked. If it wasn’t you, change your password.', 'warning');
+        renderDevices(true);
+    } catch (e) {
+        showToast('Couldn’t send your answer. Check the internet and try again.', 'error');
+        return;
+    } finally {
+        setTimeout(() => { if (askingRequest === r) askingRequest = null; }, 400);
+    }
+};
+let gatingUser = null;
 const handleSession = async (session) => {
     if (!session || !session.user) return;
     const user = session.user;
-    if (handledUserId === user.id) return;
-    if (!(await passMfa())) return;
+    if (handledUserId === user.id || gatingUser === user.id) return;
+    gatingUser = user.id;
+    let allowed;
+    try { allowed = await passDeviceApproval(); } finally { gatingUser = null; }
+    if (!allowed) return;
     handledUserId = user.id;
 
     const hasLocal = state.transactions.length || state.savings.length || state.recurring.length || state.debts.length;
@@ -7006,6 +7147,8 @@ const onAppVisible = () => {
     scanSms();
     refreshBankStatus();
     setTimeout(showPaymentsPopup, 900);
+    recheckDevice();
+    pollSignInRequests();
 };
 
 // A soft ink ripple where you touch buttons.
@@ -7126,9 +7269,11 @@ const initEvents = () => {
         if (d.notifOpen) { openNotif(d.notifOpen); return; }
         if (d.action === 'open-notifs') { openNotifs(); return; }
         if (d.action === 'clear-notifs') { notifLog = []; saveNotifLog(); updateNotifBell(); closeSheet('modal-notifs'); return; }
-        if (d.action === 'toggle-mfa') { toggleMfa(); return; }
-        if (d.action === 'mfa-ok') { submitMfa(); return; }
-        if (d.action === 'mfa-cancel') { cancelMfa(); return; }
+        if (d.approveNum) { decideSignIn(true, Number(d.approveNum)); return; }
+        if (d.action === 'approve-deny') { decideSignIn(false); return; }
+        if (d.action === 'approve-cancel') { endApproveWait(false, 'Signed out.'); return; }
+        if (d.action === 'approve-resend') { resendApproval(); return; }
+        if (d.deviceRemove) { removeDevice(d.deviceRemove, d.deviceName || 'this phone'); return; }
         if (d.action === 'open-notif-settings') { const pl = smsPlugin(); if (pl) (pl.openNotificationSettings ? pl.openNotificationSettings() : pl.openAppSettings()).catch(() => {}); return; }
         if (d.action === 'switch-account') { if (state.accounts.length > 1) openAccountManager(); return; }
         if (d.themeChoice) { setTheme(d.themeChoice, e); return; }
@@ -7306,7 +7451,8 @@ const initEvents = () => {
     $('account-name').addEventListener('input', updateAccountNameLogo);
     initAccountHold();
     updateNotifBell();
-    $('mfa-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitMfa(); } });
+    $('switch-approval').addEventListener('click', toggleApproval);
+    setInterval(pollSignInRequests, 8000);
     $('tx-logo-add').addEventListener('click', pickShopLogo);
     $('tx-logo-remove').addEventListener('click', removeShopLogo);
     $('shop-logo-input').addEventListener('change', onShopLogoPicked);
@@ -7543,75 +7689,78 @@ const initAccountHold = () => {
     strip.addEventListener('pointermove', (e) => { if (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8) clearTimeout(timer); });
     strip.addEventListener('contextmenu', (e) => { if (e.target.closest('[data-hold-account]')) e.preventDefault(); });
 };
-const showMfaSheet = () => {
-    const g = mfaGate;
-    if (!g) return;
-    const enrol = g.mode === 'enrol';
-    $('mfa-title').textContent = enrol ? 'Turn on two-step verification' : 'Enter your code';
-    $('mfa-intro').textContent = enrol
-        ? 'Scan this with an authenticator app (Google Authenticator, Microsoft Authenticator…), then type the 6-digit code it shows.'
-        : 'Open your authenticator app and type the 6-digit code for Vela.';
-    $('mfa-setup').hidden = !enrol;
-    if (enrol) { $('mfa-qr').src = g.qr; $('mfa-secret').textContent = g.secret; }
-    $('mfa-code').value = '';
-    $('btn-mfa-cancel').textContent = enrol ? 'Cancel' : 'Sign out';
-    openOrSwap('modal-mfa');
-    setTimeout(() => $('mfa-code').focus(), 350);
-};
-const submitMfa = async () => {
-    const g = mfaGate;
-    const code = $('mfa-code').value.replace(/\D/g, '');
-    if (!g) return;
-    if (code.length !== 6) { fieldError($('mfa-code'), 'Type the 6 digits from your authenticator app.'); return; }
-    await withBusy($('btn-mfa-ok'), async () => {
-        const { error } = await supabaseClient.auth.mfa.challengeAndVerify({ factorId: g.factorId, code });
-        if (error) { fieldError($('mfa-code'), 'That code didn’t work. Check the time on your phone and try the newest code.'); return; }
-        mfaGate = null;
-        closeSheet('modal-mfa');
-        if (g.mode === 'enrol') { showToast('Two-step verification is on', 'success'); renderSettings(); }
-        if (g.resolve) g.resolve(true);
-    });
-};
-const cancelMfa = async () => {
-    const g = mfaGate;
-    mfaGate = null;
-    closeSheet('modal-mfa');
-    if (!g) return;
-    if (g.mode === 'enrol') { try { await supabaseClient.auth.mfa.unenroll({ factorId: g.factorId }); } catch (e) { /* not finished: nothing to keep */ } return; }
-    if (g.resolve) g.resolve(false);
-    try { await supabaseClient.auth.signOut(); } catch (e) { /* offline */ }
-    showToast('Signed out: the code is needed to open this account.', 'info');
-};
-const toggleMfa = async () => {
-    if (!canSync()) { showToast('Sign in to Vela first.', 'info'); return; }
-    const factor = await mfaFactor();
-    if (factor) {
-        showConfirm({
-            title: 'Turn off two-step verification?',
-            message: 'Signing in will only need your password or Google again.',
-            confirmLabel: 'Turn off',
-            onConfirm: async () => {
-                const { error } = await supabaseClient.auth.mfa.unenroll({ factorId: factor.id });
-                if (error) { showToast('Couldn’t turn it off. Sign out and in again (with your code), then try.', 'error'); return; }
-                showToast('Two-step verification is off', 'info');
-                renderSettings();
-            }
-        });
+// Settings: approve-new-sign-ins switch and the list of your phones.
+let devicesAt = 0;
+let approvalOn = false;
+const renderDevices = async (force = false) => {
+    const row = $('approval-row');
+    if (!row) return;
+    if (!canSync() || !supabaseClient || typeof supabaseClient.rpc !== 'function') { row.hidden = true; return; }
+    if (!force && Date.now() - devicesAt < 5000) return;
+    devicesAt = Date.now();
+    row.hidden = false;
+    let devices = [];
+    try {
+        const set = await supabaseClient.from('vela_device_settings').select('require_approval').maybeSingle();
+        if (set.error) throw set.error;
+        approvalOn = !!(set.data && set.data.require_approval);
+        const list = await supabaseClient.from('vela_devices').select('device_id, name, approved, last_seen').order('last_seen', { ascending: false });
+        if (list.error) throw list.error;
+        devices = list.data || [];
+    } catch (e) {
+        $('approval-desc').textContent = 'Needs a one-time setup on the Vela server first (supabase/device-approval.sql).';
+        $('switch-approval').disabled = true;
+        $('device-list').innerHTML = '';
         return;
     }
-    const { data, error } = await supabaseClient.auth.mfa.enroll({ factorType: 'totp', friendlyName: `Vela ${new Date().toISOString().slice(0, 10)}` });
-    if (error || !data) { showToast(`Couldn’t start it: ${(error && error.message) || 'try again'}`, 'error'); return; }
-    mfaGate = { mode: 'enrol', factorId: data.id, qr: data.totp.qr_code, secret: data.totp.secret };
-    showMfaSheet();
+    $('switch-approval').disabled = false;
+    $('approval-desc').textContent = 'A new phone signing in to your account needs OK from a phone you already use.';
+    setSwitch($('switch-approval'), approvalOn);
+    const me = deviceKey().id;
+    $('device-list').innerHTML = approvalOn ? devices.map((d) => {
+        const mine = d.device_id === me;
+        const tag = mine ? 'This phone' : d.approved ? 'Approved' : 'Not approved';
+        return `<li class="device-row">
+            <span class="row-icon tint">${icon('i-lock')}</span>
+            <span class="row-label"><span>${escapeHtml(d.name || 'Phone')}</span><span>${tag} · ${escapeHtml(relTime(new Date(d.last_seen).getTime()))}</span></span>
+            ${mine ? '' : `<button type="button" class="btn btn-secondary btn-sm" data-device-remove="${escapeHtml(d.device_id)}" data-device-name="${escapeHtml(d.name || 'Phone')}">Remove</button>`}
+        </li>`;
+    }).join('') : '';
 };
-const updateMfaRow = async () => {
-    const row = $('btn-mfa');
-    if (!row) return;
-    row.hidden = !canSync() || !supabaseClient || !supabaseClient.auth.mfa;
-    if (row.hidden) return;
-    const on = !!(await mfaFactor());
-    $('mfa-state').textContent = on ? 'On' : 'Off';
-    $('mfa-state').dataset.on = String(on);
+const toggleApproval = () => {
+    if ($('switch-approval').disabled) return;
+    const k = deviceKey();
+    const turnOn = !approvalOn;
+    const apply = async () => {
+        try {
+            if (turnOn) await deviceCheck();
+            await deviceRpc('vela_set_approval', { p_on: turnOn, p_device: k.id, p_secret: k.secret });
+            showToast(turnOn ? 'On: new sign-ins need OK from this phone' : 'Off: sign-ins don’t need approval', turnOn ? 'success' : 'info');
+        } catch (e) {
+            showToast('Couldn’t change it. Check the internet and try again.', 'error');
+        }
+        renderDevices(true);
+    };
+    if (!turnOn) { apply(); return; }
+    showConfirm({
+        title: 'Approve new sign-ins?',
+        message: 'From now on, when anyone signs in to your Vela account on another phone, this phone shows "Is this you?" and they can only get in if you tap the right number. Your other phones will need your OK once too.',
+        confirmLabel: 'Turn on',
+        danger: false,
+        onConfirm: apply
+    });
+};
+const removeDevice = (id, name) => {
+    showConfirm({
+        title: `Remove ${name}?`,
+        message: 'It will have to be approved again from this phone before it can open your Vela account.',
+        confirmLabel: 'Remove',
+        onConfirm: async () => {
+            const k = deviceKey();
+            try { await deviceRpc('vela_remove_device', { p_target: id, p_device: k.id, p_secret: k.secret }); showToast(`${name} removed`, 'info'); } catch (e) { showToast('Couldn’t remove it. Check the internet and try again.', 'error'); }
+            renderDevices(true);
+        }
+    });
 };
 const renderAccountManager = () => {
     const v = viewId();

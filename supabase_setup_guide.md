@@ -232,3 +232,13 @@ Vela AI answers with Google Gemini's free tier. The key stays on Supabase's serv
 
 Free-tier limits are generous for personal use; if many people use the app at once, some messages may say "busy, try again". On Gemini's free tier Google may use messages to improve its products, so the bot sends a summary of totals and recent entries, never passwords or card numbers.
 
+
+## Approve new sign-ins (optional, one time)
+
+Lets a phone you already use approve (or block) anyone who signs in to your Vela account on another phone, like GitHub Mobile.
+
+1. Open Supabase › your project › **SQL Editor** › **New query**.
+2. Paste everything from `supabase/device-approval.sql` and press **Run**.
+3. In Vela: Settings › your account › turn on **Approve new sign-ins**.
+
+Until step 2 is done, the switch says it needs setup and sign-in works as before.
