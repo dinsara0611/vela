@@ -562,6 +562,29 @@ export async function run() {
             || JSON.stringify({ r: r && [r.bank, r.confidence, r.checks, r.amount], chat });
     });
 
+    await T('Your own shop logo: pick a photo once, shown for that shop everywhere, kept in backups, removable', async () => {
+        // A small test picture, as if picked from the gallery.
+        const c = document.createElement('canvas'); c.width = 300; c.height = 200;
+        const x = c.getContext('2d'); x.fillStyle = '#d11'; x.fillRect(0, 0, 300, 200);
+        const blob = await new Promise((r) => c.toBlob(r, 'image/png'));
+        const data = await g('makeShopLogo')(new File([blob], 'logo.png', { type: 'image/png' }));
+        await addTx({ amount: 450, desc: 'Sunil Stores', category: 'Food' });
+        g('openAddTx')('expense'); await wait(250);
+        $('tx-desc').value = 'sunil stores'; $('tx-desc').dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
+        const offered = !$('tx-logo-row').hidden && /Add a logo/.test($('tx-logo-add').innerText);
+        g('setShopLogo')('Sunil Stores', data); g('updateDescLogo')();
+        const inForm = !!$('tx-desc-logo').querySelector('img[src^="data:image/"]') && !$('tx-logo-remove').hidden;
+        await close('modal-tx');
+        g('switchTab')('activity'); await wait(300);
+        const inList = [...document.querySelectorAll('#tab-activity .tx')].some((r) => /Sunil Stores/.test(r.innerText) && r.querySelector('img[src^="data:image/"]'));
+        const backup = JSON.parse(await captureDownload(() => g('exportBackup')()));
+        const kept = backup.shopLogos && backup.shopLogos['sunil stores'] === data;
+        g('setShopLogo')('Sunil Stores', null);
+        const gone = !g('customLogoFor')('Sunil Stores');
+        g('switchTab')('dashboard'); await wait(200);
+        return (/^data:image\/(webp|jpeg)/.test(data) && offered && inForm && inList && kept && gone) || JSON.stringify({ data: data.slice(0, 20), offered, inForm, inList, kept, gone });
+    });
+
     await T('Review screen: Ignore all asks first, then clears every detection without adding anything', async () => {
         freshEngine();
         const n0 = s().transactions.length;

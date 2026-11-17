@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.23.0';
+const APP_VERSION = '4.24.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -383,6 +383,8 @@ function accountBrand(a) {
 }
 // The account's logo, or its type icon (cash, bank, card...) in Vela's usual tile.
 function accountBadge(a, size, plainClass) {
+    const own = a && customBadge(a.name, ` ${size}`);
+    if (own) return own;
     const b = accountBrand(a);
     return b ? brandBadge(b, ` ${size}`) : `<span class="${plainClass}">${icon(accountIcon(a))}</span>`;
 }
@@ -2063,8 +2065,57 @@ const brandBadge = (b, extra = '') => {
     const mark = b.mark ? `<span class="brand-letters${b.mark.length > 2 ? ' is-long' : ''}">${escapeHtml(b.mark)}</span>` : icon('c-Shopping');
     return `<span class="cat-badge brand-badge${slug ? ' has-logo' : ''}${extra}" style="--brand-bg:${b.bg};--brand-fg:${b.fg}" title="${escapeHtml(b.name)}">${slug ? logoImg(slug) : ''}${mark}</span>`;
 };
-// The badge for an entry: the shop's real logo when bundled, else its brand colours, else its category icon.
+/* ---- Your own shop logos: for shops Vela doesn't know, a photo or screenshot you pick once (Add logo in the
+   entry form). Kept only on this phone (and in backups), cropped to a small square; never uploaded. ---- */
+const SHOP_LOGO_KEY = 'VELA_SHOP_LOGOS';
+const SHOP_LOGO_MAX = 300;
+let shopLogos = (() => { try { const o = JSON.parse(localStorage.getItem(SHOP_LOGO_KEY) || '{}'); return o && typeof o === 'object' ? o : {}; } catch (e) { return {}; } })();
+const shopLogoKey = (name) => String(name || '').trim().toLowerCase().replace(/[^a-z0-9&+ ]+/g, ' ').replace(/\s+/g, ' ').trim();
+const customLogoFor = (name) => { const k = shopLogoKey(name); return k ? shopLogos[k] || null : null; };
+const saveShopLogos = () => {
+    try { localStorage.setItem(SHOP_LOGO_KEY, JSON.stringify(shopLogos)); return true; } catch (e) { return false; }
+};
+const setShopLogo = (name, dataUrl) => {
+    const k = shopLogoKey(name);
+    if (!k) return false;
+    const before = shopLogos[k];
+    if (dataUrl) shopLogos[k] = dataUrl; else delete shopLogos[k];
+    const keys = Object.keys(shopLogos);
+    if (keys.length > SHOP_LOGO_MAX) delete shopLogos[keys[0]];
+    if (saveShopLogos()) return true;
+    if (before) shopLogos[k] = before; else delete shopLogos[k];
+    return false;
+};
+const customBadge = (name, extra = '') => {
+    const d = customLogoFor(name);
+    return d && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(d)
+        ? `<span class="cat-badge brand-badge has-logo${extra}" title="${escapeHtml(name)}"><img src="${d}" alt="" decoding="async" draggable="false"></span>` : '';
+};
+// A picked photo becomes a 160 px square logo (centre crop, on white like the bundled logos).
+const makeShopLogo = (file) => new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+        const side = Math.min(img.naturalWidth, img.naturalHeight);
+        const c = document.createElement('canvas');
+        c.width = 160; c.height = 160;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, 160, 160);
+        ctx.drawImage(img, (img.naturalWidth - side) / 2, (img.naturalHeight - side) / 2, side, side, 0, 0, 160, 160);
+        URL.revokeObjectURL(url);
+        let d = c.toDataURL('image/webp', 0.86);
+        if (!d.startsWith('data:image/webp')) d = c.toDataURL('image/jpeg', 0.86);
+        resolve(d);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('not an image')); };
+    img.src = url;
+});
+// The badge for an entry: your own logo for that shop, else its real logo when bundled, else its brand colours,
+// else its category icon.
 const entryBadge = (desc, category, type) => {
+    const own = customBadge(desc);
+    if (own) return own;
     const b = brandFor(desc);
     return b ? brandBadge(b) : catBadge(category, type);
 };
@@ -2399,7 +2450,7 @@ const smsCardHtml = (i) => {
         ['Amount', `<strong class="amount ${i.type === 'income' ? 'text-income' : ''}">${escapeHtml(amountText)}</strong>`],
         ['Bank', `<span class="sms-bank">${bankBrand && logoSlug(bankBrand.slug) ? brandBadge(bankBrand, ' is-mini') : ''}${escapeHtml(`${i.bank}${i.last4 ? ` · ••${i.last4}` : ''}`)}</span>`],
         ['Type', escapeHtml(typeText)],
-        ['Description', (() => { const b = i.type === 'expense' || i.kind === 'refund' ? brandFor(i.merchant || i.desc) : null; return `<span class="sms-bank">${b ? brandBadge(b, ' is-mini') : ''}${escapeHtml(i.desc)}</span>`; })()],
+        ['Description', (() => { const shop = i.merchant || i.desc; const own = customBadge(shop, ' is-mini'); const b = !own && (i.type === 'expense' || i.kind === 'refund') ? brandFor(shop) : null; return `<span class="sms-bank">${own || (b ? brandBadge(b, ' is-mini') : '')}${escapeHtml(i.desc)}</span>`; })()],
         ['Date', escapeHtml(`${relativeDayLabel(i.date)}${i.time ? `, ${i.time}` : ''}`)],
         ...(i.fx ? [['Charged in', escapeHtml(formatCurrency(i.fx.amount, i.fx.currency))]] : []),
         ...(i.ref ? [['Reference', escapeHtml(i.ref)]] : []),
@@ -4119,13 +4170,51 @@ const descBrands = (text) => {
 };
 const updateDescLogo = () => {
     const input = $('tx-desc');
-    const b = input.value.trim() ? brandFor(input.value) : null;
-    $('tx-desc-logo').innerHTML = b ? brandBadge(b, ' is-field') : '';
-    $('tx-desc-wrap').classList.toggle('has-brand', !!b);
+    const name = input.value.trim();
+    const own = name ? customBadge(name, ' is-field') : '';
+    const b = name ? brandFor(name) : null;
+    $('tx-desc-logo').innerHTML = own || (b ? brandBadge(b, ' is-field') : '');
+    $('tx-desc-wrap').classList.toggle('has-brand', !!(own || b));
+    // Add / change / remove your own logo for this name (shops you pay, not income like a salary).
+    const row = $('tx-logo-row');
+    row.hidden = name.length < 2 || (txType !== 'expense' && !own);
+    $('tx-logo-add-text').textContent = own ? 'Change logo' : b && logoSlug(b.slug) ? 'Use my own logo' : 'Add a logo for this shop';
+    $('tx-logo-remove').hidden = !own;
     const list = document.activeElement === input || input.dataset.typing === '1' ? descBrands(input.value) : [];
     const box = $('tx-brand-suggest');
     box.hidden = !list.length;
     box.innerHTML = list.map((x) => `<button type="button" class="brand-pick" data-brand-pick="${escapeHtml(x.name)}">${brandBadge(x, ' is-mini')}<span>${escapeHtml(x.name)}</span></button>`).join('');
+};
+const pickShopLogo = () => {
+    const name = $('tx-desc').value.trim();
+    if (name.length < 2) return;
+    const input = $('shop-logo-input');
+    input.dataset.name = name;
+    input.value = '';
+    input.click();
+};
+const onShopLogoPicked = async () => {
+    const input = $('shop-logo-input');
+    const file = input.files && input.files[0];
+    const name = input.dataset.name;
+    input.value = '';
+    if (!file || !name) return;
+    try {
+        const data = await makeShopLogo(file);
+        if (!setShopLogo(name, data)) { showToast('No room left on this phone for more logos.', 'error'); return; }
+        updateDescLogo();
+        renderActive();
+        showToast(`Logo saved for ${name}`, 'success');
+    } catch (e) {
+        showToast("That picture couldn't be used. Try another one.", 'error');
+    }
+};
+const removeShopLogo = () => {
+    const name = $('tx-desc').value.trim();
+    setShopLogo(name, null);
+    updateDescLogo();
+    renderActive();
+    showToast(`Logo removed for ${name}`, 'info');
 };
 const pickDescBrand = (name) => {
     const input = $('tx-desc');
@@ -5740,7 +5829,7 @@ const deleteMyAccount = () => {
             if (ln && state.config.reminderIds.length) { try { await ln.cancel({ notifications: state.config.reminderIds.map((id) => ({ id })) }); } catch (e) { /* ignore */ } }
             const plugin = smsPlugin();
             if (plugin) { try { await plugin.disconnect(); } catch (e) { /* ignore */ } }
-            try { localStorage.removeItem(SMS_KEY); } catch (e) { /* ignore */ }
+            try { localStorage.removeItem(SMS_KEY); localStorage.removeItem(SHOP_LOGO_KEY); } catch (e) { /* ignore */ }
             storage.remove(STORAGE_KEY);
             showToast('Your account and data were deleted', 'success');
             setTimeout(() => window.location.reload(), 900);
@@ -6023,6 +6112,7 @@ const forgotPin = () => {
         onConfirm: async () => {
             if (cloud) { try { await supabaseClient.auth.signOut(); } catch (err) { /* ignore */ } }
             storage.remove(STORAGE_KEY);
+            try { localStorage.removeItem(SHOP_LOGO_KEY); } catch (e) { /* ignore */ }
             window.location.reload();
         }
     });
@@ -6361,7 +6451,8 @@ const exportBackup = async () => {
         app: 'vela', version: APP_VERSION, exportedAt: new Date().toISOString(),
         config,
         transactions: state.transactions, savings: state.savings, recurring: state.recurring, debts: state.debts, accounts: state.accounts,
-        categories: state.categories
+        categories: state.categories,
+        shopLogos
     };
     try {
         await saveFile(`vela-backup-${todayISO()}.json`, JSON.stringify(payload, null, 2), 'application/json');
@@ -6388,6 +6479,11 @@ const importBackup = (file) => {
             danger: false,
             onConfirm: () => {
                 ['transactions', 'savings', 'recurring', 'debts', 'categories', 'accounts'].forEach((k) => { state[k] = incoming[k]; });
+                // Your own shop logos come back too (only small pictures, nothing else).
+                if (parsed.shopLogos && typeof parsed.shopLogos === 'object') {
+                    Object.entries(parsed.shopLogos).forEach(([k, v]) => { if (typeof v === 'string' && /^data:image\/(png|jpeg|webp);base64,/.test(v) && v.length < 200000) shopLogos[shopLogoKey(k)] = v; });
+                    saveShopLogos();
+                }
                 state.config = { ...incoming.config, theme: state.config.theme, lock: state.config.lock, reminders: state.config.reminders, reminderIds: state.config.reminderIds };
                 if (canSync()) queueAllForUpload();
                 saveState();
@@ -6417,6 +6513,7 @@ const wipeData = () => {
             const ln = nativePlugin('LocalNotifications');
             if (ln && state.config.reminderIds.length) { try { await ln.cancel({ notifications: state.config.reminderIds.map((id) => ({ id })) }); } catch (e) { /* ignore */ } }
             storage.remove(STORAGE_KEY);
+            try { localStorage.removeItem(SHOP_LOGO_KEY); } catch (e) { /* ignore */ }
             window.location.reload();
         }
     });
@@ -6757,6 +6854,9 @@ const initEvents = () => {
     $('tx-currency').addEventListener('change', () => { renderTxSuggest(); updatePriceHint(); });
     $('tx-desc').addEventListener('input', (e) => { if (e.isTrusted) $('tx-desc').dataset.typing = '1'; onTxDescInput(); });
     $('account-name').addEventListener('input', updateAccountNameLogo);
+    $('tx-logo-add').addEventListener('click', pickShopLogo);
+    $('tx-logo-remove').addEventListener('click', removeShopLogo);
+    $('shop-logo-input').addEventListener('change', onShopLogoPicked);
     $('account-kind').addEventListener('change', () => { accountKindTouched = true; });
     document.addEventListener('change', (e) => { if (e.target && ACCOUNT_SELECTS.includes(e.target.id)) syncAccountLogos(); });
     $('tx-desc').addEventListener('blur', () => setTimeout(() => { delete $('tx-desc').dataset.typing; updateDescLogo(); }, 200));

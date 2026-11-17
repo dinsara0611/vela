@@ -4418,3 +4418,9 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 .select > .select-logo { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); z-index: 1; pointer-events: none; display: grid; }
 .select > .select-logo .account-icon { width: 28px; height: 28px; border-radius: 9px; }
 .select.has-logo-pad .input { padding-left: 48px; }
+
+/* Your own logo for a shop (add form): small links under the name box. */
+.logo-row { display: flex; align-items: center; gap: var(--sp-3); margin-top: 2px; flex-wrap: wrap; }
+.logo-row[hidden] { display: none; }
+.logo-row .link-btn { gap: 6px; min-height: 40px; }
+.logo-row .link-btn.faint { color: var(--text-3); font-weight: 500; }
