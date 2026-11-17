@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.32.1';
+const APP_VERSION = '4.32.2';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1439,7 +1439,7 @@ function allAccountsBudget(y, m) {
         const b = a.id === v ? budgetSnapshot() : (state.config.accountBudgets || {})[a.id];
         if (!b) return sum;
         if (b.budgetMode === 'income') {
-            const inc = sumDisplay(state.transactions.filter((t) => t.type === 'income' && t.accountId === a.id && inMonth(t, y, m)));
+            const inc = sumDisplay(state.transactions.filter((t) => t.type === 'income' && t.accountId === a.id && inMonth(t, y, m) && !isUpcoming(t)));
             if (inc > 0) return sum + inc * (1 - (b.budgetSavePct || 0) / 100);
         }
         return sum + convertAmount(b.budget, b.budgetCurrency || 'USD', cur);
@@ -1481,18 +1481,18 @@ const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => 
     const prevEnd = new Date(y, m - 1, Math.min(ref.getDate(), daysInMonth(y, m - 1)));
     const prevSpent = sumDisplay(expenses().filter((e) => { const d = parseDate(e.date); return d >= prevStart && d <= prevEnd; }));
 
-    // From income: every income of this month counts, including income dated later this month
-    // (rent on the 17th), because you plan the month's spending with it.
-    const plannedIncome = sumDisplay(viewTx().filter((t) => t.type === 'income' && inMonth(t, y, m)));
+    // From income: only income that has arrived this month counts (money you can actually spend). Income still
+    // expected is shown beside it and joins the budget once you mark it received or the bank SMS confirms it.
+    const plannedIncome = income;
+    const expectedIncome = sumDisplay(viewTx().filter((t) => t.type === 'income' && inMonth(t, y, m) && isUpcoming(t)));
     const fromIncome = state.config.budgetMode === 'income';
     // From income, but no income in this account this month (yet): the amount set for it is used, not nothing.
     const incomeFallback = !scopeAll && fromIncome && plannedIncome <= 0;
     const budget = scopeAll ? allAccountsBudget(y, m)
         : fromIncome && !incomeFallback ? plannedIncome * (1 - state.config.budgetSavePct / 100) : budgetIn(state.config.budget, dcur());
-    const receivedIncome = income;
     const byCat = {};
     spentList.forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + toDisplay(e.amount, e.currency); });
-    return { list, spentList, incomeList, spent, income, net: income - spent, prevSpent, budget, budgetPct: budget > 0 ? (spent / budget) * 100 : (spent > 0 && fromIncome ? 100 : 0), byCat, fromIncome, plannedIncome, incomeFallback, expectedIncome: Math.max(0, plannedIncome - receivedIncome) };
+    return { list, spentList, incomeList, spent, income, net: income - spent, prevSpent, budget, budgetPct: budget > 0 ? (spent / budget) * 100 : (spent > 0 && fromIncome ? 100 : 0), byCat, fromIncome, plannedIncome, incomeFallback, expectedIncome };
 };
 
 const rangeBounds = (range) => {
@@ -3679,8 +3679,9 @@ const planBudgetsHtml = () => {
         <div class="card-head"><h2 class="card-title">Monthly budget</h2><button type="button" class="btn btn-secondary btn-xs" data-edit-budget="__overall">${icon('i-edit', 'ic ic-sm')} Edit</button></div>
         <div class="big-number ${left < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(Math.abs(left), cur))}</div>
         <div class="card-sub" style="margin-bottom:var(--sp-3)">${left >= 0 ? `left of ${escapeHtml(formatCurrency(s.budget, cur))}. That's about ${escapeHtml(formatCurrency(perDay, cur))} a day for the next ${plural(daysLeft, 'day')}.` : `over your ${escapeHtml(formatCurrency(s.budget, cur))} budget`}</div>
-        ${s.fromIncome ? `<div class="budget-source">${icon('i-arrow-down', 'ic ic-sm')}<span>${s.incomeFallback ? `No income here this month yet, so the amount you set is used until it comes in.` : `From your income: ${escapeHtml(formatCurrency(s.plannedIncome, cur))} this month${s.expectedIncome > 0 ? ` (${escapeHtml(formatCurrency(s.expectedIncome, cur))} of it not received yet)` : ''}`}${state.config.budgetSavePct ? `, keeping ${state.config.budgetSavePct}% (${escapeHtml(formatCurrency(s.plannedIncome - s.budget, cur))}) for saving` : ''}</span></div>`
+        ${s.fromIncome ? `<div class="budget-source">${icon('i-arrow-down', 'ic ic-sm')}<span>${s.incomeFallback ? `No income has come in here this month yet, so the amount you set is used until it does.` : `From your income received: ${escapeHtml(formatCurrency(s.plannedIncome, cur))} this month`}${state.config.budgetSavePct ? `, keeping ${state.config.budgetSavePct}% (${escapeHtml(formatCurrency(s.plannedIncome - s.budget, cur))}) for saving` : ''}</span></div>`
             : (s.plannedIncome > 0 ? `<button type="button" class="link-btn budget-switch" data-action="budget-from-income">${icon('i-arrow-down', 'ic ic-sm')} Use my income (${escapeHtml(formatCurrency(s.plannedIncome, cur))}) as the budget</button>` : '')}
+        ${s.fromIncome && s.expectedIncome > 0 ? `<div class="budget-source is-expected">${icon('i-calendar', 'ic ic-sm')}<span>+${escapeHtml(formatCurrency(s.expectedIncome, cur))} more when your expected income arrives</span></div>` : ''}
         ${meterHtml(s.budgetPct, budgetState(s.budgetPct), 'Monthly budget used')}
         <div class="meter-row" style="margin-top:var(--sp-2)"><span>${Math.round(s.budgetPct)}% used</span><span>Spent <strong>${escapeHtml(formatCurrency(s.spent, cur))}</strong></span></div>
     </article>

@@ -4472,3 +4472,4 @@ html.native[data-theme="light"] { --bar-bg: rgb(244, 245, 248); }
 .insights-scope { margin-bottom: var(--sp-3); }
 .insights-scope[hidden] { display: none; }
 .insights-scope button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.budget-source.is-expected { color: var(--text-3); font-weight: 500; }

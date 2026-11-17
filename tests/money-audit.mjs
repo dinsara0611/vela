@@ -95,6 +95,10 @@ try {
     const ms = await page.evaluate('monthStats()');
     check('Plan: budget', ms.budget, 80000);
     check('Plan: spent against budget', ms.spent, 7050);
+    // Commercial bank "from income": only the salary received counts; the rent still expected is shown separately.
+    const msInc = await page.evaluate("(() => { const keep = state.config.budgetMode; state.config.budgetMode = 'income'; const r = monthStats(); state.config.budgetMode = keep; return r; })()");
+    check('Plan: budget from income (received only)', msInc.budget, 150000);
+    check('Plan: income still expected', msInc.expectedIncome, 32000);
     await page.evaluate("planTab = 'bills'; go('plan')"); await settle();
     const fixedText = await page.evaluate("$('plan-content').innerText");
     if (/Pharmacy|Kottu|Netflix/.test(fixedText)) problems.push('Plan > Fixed shows entries from another account');

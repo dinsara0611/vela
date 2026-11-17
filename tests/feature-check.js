@@ -1040,21 +1040,23 @@ export async function run() {
         return (s().config.budget === 30000 && s().config.budgetCurrency === 'LKR' && st.budget === 30000) || `budget ${s().config.budget} ${s().config.budgetCurrency}, shown ${st.budget}`;
     });
 
-    await T('Budget from income: follows income, keeps saving %, counts rent later this month', async () => {
+    await T('Budget from income: follows income received, keeps saving %, shows rent later this month as expected', async () => {
         g('openBudget')('__overall'); await wait(250);
         document.querySelector('[data-budget-mode="income"]').click();
         document.querySelector('[data-budget-save="20"]').click();
         const amountHidden = $('budget-amount-field').hidden;
         g('submitBudget')(); await wait(300);
         const s1 = g('monthStats')();
-        // Rent 30,000 dated later this month (if the month has days left) also counts for planning.
+        // Rent 30,000 dated later this month (if the month has days left) is expected, not counted until it arrives.
         const now = new Date();
         const lastDay = new Date(now.getFullYear(), now.getMonth() + 1, 0);
         const rentDate = lastDay.getDate() > now.getDate() ? iso(lastDay) : today;
         await addTx({ type: 'income', amount: 30000, desc: 'Rent this month', category: 'OtherIncome', date: rentDate });
         const s2 = g('monthStats')();
         const expected1 = s1.plannedIncome * 0.8;
-        const grew = Math.abs(s2.budget - (s1.plannedIncome + 30000) * 0.8) < 0.01;
+        const grew = rentDate > today
+            ? Math.abs(s2.budget - s1.budget) < 0.01 && s2.expectedIncome >= 30000 - 0.01
+            : Math.abs(s2.budget - (s1.plannedIncome + 30000) * 0.8) < 0.01;
         // Category budgets stay fixed amounts: the choice is hidden for them.
         g('openBudget')(); await wait(250);
         $('budget-category').value = 'Food'; $('budget-category').dispatchEvent(new Event('change'));
