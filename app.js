@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.24.0';
+const APP_VERSION = '4.25.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -104,7 +104,7 @@ let planTab = 'budgets';
 let activityType = 'all';
 let activityStatus = 'all'; // all | paid | unpaid | upcoming | overdue | bank
 let activityCategory = 'all';
-let activityAccount = 'all';
+let activityAccount = 'all'; // set to the switched account at start (see init)
 let activityView = 'list';
 let activityDay = null;
 let activityMonth = { y: new Date().getFullYear(), m: new Date().getMonth() };
@@ -1181,7 +1181,21 @@ const switchTab = (tab, { fromHistory = false } = {}) => {
     renderActive();
 };
 
+// "Showing BOC only · Show all" at the top of Home, Activity and Insights while one account is switched to.
+const renderViewBar = () => {
+    const v = viewId();
+    document.querySelectorAll('.view-bar').forEach((el) => el.remove());
+    if (v === 'all' || !['dashboard', 'activity', 'analytics'].includes(currentTab)) return;
+    const a = state.accounts.find((x) => x.id === v);
+    const view = $(`tab-${currentTab}`);
+    if (!a || !view) return;
+    const bar = document.createElement('div');
+    bar.className = 'view-bar';
+    bar.innerHTML = `${accountBadge(a, 'is-acc', 'account-icon')}<span class="view-bar-text">Showing <strong>${escapeHtml(a.name)}</strong> only</span><button type="button" class="btn btn-secondary btn-xs" data-view-account="all">Show all</button>`;
+    view.prepend(bar);
+};
 const renderActive = () => {
+    renderViewBar();
     if (currentTab === 'dashboard') renderDashboard();
     else if (currentTab === 'activity') renderActivity();
     else if (currentTab === 'plan') renderPlan();
@@ -1199,7 +1213,7 @@ const goToPlan = (sub) => {
 const goToActivity = (type, keepAccount = false) => {
     activityType = type || 'all';
     activityCategory = 'all';
-    if (!keepAccount) activityAccount = 'all';
+    if (!keepAccount) activityAccount = viewId();
     const now = new Date();
     activityMonth = { y: now.getFullYear(), m: now.getMonth() };
     if (currentTab === 'activity') renderActivity();
@@ -1209,8 +1223,27 @@ const goToActivity = (type, keepAccount = false) => {
 /* =========================================================================
    11. Calculations
    ========================================================================= */
-const expenses = () => state.transactions.filter((t) => t.type === 'expense' && !isUpcoming(t));
+const expenses = () => viewTx().filter((t) => t.type === 'expense' && !isUpcoming(t));
 const inAccount = (t, accId) => accId === 'all' || t.accountId === accId || (t.type === 'transfer' && t.toAccountId === accId);
+// Switching account (Accounts list or an account card on Home): Home, Activity and Insights then show only that
+// account until "Show all". Remembered on this phone only.
+const VIEW_KEY = 'VELA_VIEW_ACCOUNT';
+const viewId = () => {
+    let v = 'all';
+    try { v = localStorage.getItem(VIEW_KEY) || 'all'; } catch (e) { /* storage blocked */ }
+    return v !== 'all' && state.accounts.some((a) => a.id === v) ? v : 'all';
+};
+const viewTx = () => { const v = viewId(); return v === 'all' ? state.transactions : state.transactions.filter((t) => inAccount(t, v)); };
+const setViewAccount = (id) => {
+    const v = id && state.accounts.some((a) => a.id === id) ? id : 'all';
+    try { if (v === 'all') localStorage.removeItem(VIEW_KEY); else localStorage.setItem(VIEW_KEY, v); } catch (e) { /* storage blocked */ }
+    activityAccount = v;
+    renderActive();
+    const a = state.accounts.find((x) => x.id === v);
+    // Home, Activity and Insights show the bar; elsewhere (Settings) a short note says what changed.
+    if (!['dashboard', 'activity', 'analytics'].includes(currentTab)) showToast(a ? `Showing ${a.name} only` : 'Showing all accounts', 'info');
+    haptic();
+};
 const sortByNewest = (list) => [...list].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
 const sumDisplay = (list) => list.reduce((s, e) => s + toDisplay(e.amount, e.currency), 0);
 const inMonth = (t, y, m) => { const d = parseDate(t.date); return d.getFullYear() === y && d.getMonth() === m; };
@@ -1242,7 +1275,7 @@ const setBudgetCurrency = (to) => {
 };
 
 const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => {
-    const list = state.transactions.filter((t) => inMonth(t, y, m) && !isUpcoming(t));
+    const list = viewTx().filter((t) => inMonth(t, y, m) && !isUpcoming(t));
     const spentList = list.filter((t) => t.type === 'expense');
     const incomeList = list.filter((t) => t.type === 'income');
     const spent = sumDisplay(spentList);
@@ -1255,7 +1288,7 @@ const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => 
 
     // From income: every income of this month counts, including income dated later this month
     // (rent on the 17th), because you plan the month's spending with it.
-    const plannedIncome = sumDisplay(state.transactions.filter((t) => t.type === 'income' && inMonth(t, y, m)));
+    const plannedIncome = sumDisplay(viewTx().filter((t) => t.type === 'income' && inMonth(t, y, m)));
     const fromIncome = state.config.budgetMode === 'income';
     const budget = fromIncome ? plannedIncome * (1 - state.config.budgetSavePct / 100) : budgetIn(state.config.budget, dcur());
     const byCat = {};
@@ -1269,7 +1302,7 @@ const rangeBounds = (range) => {
     if (range === '30') start = addDays(today, -29);
     else if (range === '12m') start = new Date(today.getFullYear(), today.getMonth() - 11, 1);
     else {
-        const dates = state.transactions.map((e) => parseDate(e.date)).filter((d) => !isNaN(d) && d <= today);
+        const dates = viewTx().map((e) => parseDate(e.date)).filter((d) => !isNaN(d) && d <= today);
         start = dates.length ? new Date(Math.min(...dates)) : today;
     }
     return { start, end: today };
@@ -1278,7 +1311,7 @@ const rangeBounds = (range) => {
 const txInRange = (range) => {
     const { start, end } = rangeBounds(range);
     // Same rule as Home: entries still waiting to be paid or received don't count yet.
-    return state.transactions.filter((e) => { const d = parseDate(e.date); return d >= start && d <= end && !isUpcoming(e); });
+    return viewTx().filter((e) => { const d = parseDate(e.date); return d >= start && d <= end && !isUpcoming(e); });
 };
 
 const debtTotals = () => {
@@ -1318,7 +1351,7 @@ const billDatesInMonth = (b, y, m) => {
 const fixedForMonth = (y = new Date().getFullYear(), m = new Date().getMonth()) => {
     const items = [];
     state.recurring.filter((b) => b.type === 'expense').forEach((b) => {
-        state.transactions.filter((t) => t.recurringId === b.id && t.type === 'expense' && inMonth(t, y, m)).forEach((t) => {
+        viewTx().filter((t) => t.recurringId === b.id && t.type === 'expense' && inMonth(t, y, m)).forEach((t) => {
             items.push({ name: t.desc, amount: toDisplay(t.amount, t.currency), date: t.date, paid: !isUpcoming(t), billId: b.id, txId: t.id });
         });
         billDatesInMonth(b, y, m).filter((d) => d >= b.nextDate).forEach((d) => {
@@ -1327,13 +1360,13 @@ const fixedForMonth = (y = new Date().getFullYear(), m = new Date().getMonth()) 
     });
     // One-off fixed entries, and entries whose repeating fixed expense was deleted (they still happened).
     const billIds = new Set(state.recurring.map((b) => b.id));
-    state.transactions.filter((t) => t.type === 'expense' && t.fixed && (!t.recurringId || !billIds.has(t.recurringId)) && inMonth(t, y, m)).forEach((t) => {
+    viewTx().filter((t) => t.type === 'expense' && t.fixed && (!t.recurringId || !billIds.has(t.recurringId)) && inMonth(t, y, m)).forEach((t) => {
         items.push({ name: t.desc, amount: toDisplay(t.amount, t.currency), date: t.date, paid: !isUpcoming(t), txId: t.id });
     });
     items.sort((a, b) => (a.date > b.date ? 1 : a.date < b.date ? -1 : 0));
     const total = items.reduce((s, i) => s + i.amount, 0);
     // Income actually received this month; money still expected is shown separately and isn't counted yet.
-    const monthIncome = state.transactions.filter((t) => t.type === 'income' && inMonth(t, y, m));
+    const monthIncome = viewTx().filter((t) => t.type === 'income' && inMonth(t, y, m));
     const income = sumDisplay(monthIncome.filter((t) => !isUpcoming(t)));
     const expected = sumDisplay(monthIncome.filter((t) => isUpcoming(t)));
     const paid = items.filter((i) => i.paid).reduce((s, i) => s + i.amount, 0);
@@ -3160,7 +3193,7 @@ const renderDashboard = () => {
     $('dash-month-label').textContent = `${now.toLocaleDateString('en-US', { month: 'long' })} balance`;
     countUp($('dash-balance'), s.net, cur);
     const nowD = new Date();
-    const coming = state.transactions.filter((t) => isUpcoming(t) && t.type === 'income' && inMonth(t, nowD.getFullYear(), nowD.getMonth()))
+    const coming = viewTx().filter((t) => isUpcoming(t) && t.type === 'income' && inMonth(t, nowD.getFullYear(), nowD.getMonth()))
         .sort((a, b) => (a.date > b.date ? 1 : -1));
     const comingNote = coming.length ? ` · ${formatCompact(sumDisplay(coming), cur)} coming ${shortDate(coming[0].date)}` : '';
     $('dash-balance-sub').textContent = (s.income > 0
@@ -3210,14 +3243,14 @@ const renderDashboard = () => {
     setMoney($('networth'), netWorth(), cur, 16);
     $('account-strip').innerHTML = state.accounts.map((a) => {
         const bal = accountBalance(a);
-        return `<button type="button" class="account-chip" data-account-filter="${escapeHtml(a.id)}" aria-label="${escapeHtml(a.name)}: ${escapeHtml(formatCurrency(bal, a.currency))}. Show its activity">
+        return `<button type="button" class="account-chip${viewId() === a.id ? ' is-current' : ''}" data-view-account="${viewId() === a.id ? 'all' : escapeHtml(a.id)}" aria-pressed="${viewId() === a.id}" aria-label="${escapeHtml(a.name)}: ${escapeHtml(formatCurrency(bal, a.currency))}. ${viewId() === a.id ? 'Show all accounts' : 'Show only this account'}">
             <span class="account-chip-top">${accountBadge(a, 'is-acc', 'account-icon')}<span class="account-name">${escapeHtml(a.name)}</span></span>
             <span class="account-bal amount ${bal < 0 ? 'text-expense' : ''}" title="${escapeHtml(formatCurrency(bal, a.currency))}" ${moneyAttrs(bal, a.currency)}>${escapeHtml(formatCurrency(bal, a.currency))}</span>
         </button>`;
     }).join('') + `<button type="button" class="account-chip account-add" data-action="add-account">${icon('i-plus')}<span>Add account</span></button>`;
 
     // Waiting payments live in the Payments card above; Recent is money that really moved.
-    const recent = sortByNewest(state.transactions.filter((t) => !t.pending)).slice(0, 6);
+    const recent = sortByNewest(viewTx().filter((t) => !t.pending)).slice(0, 6);
     $('recent-list').innerHTML = recent.length
         ? recent.map((t) => txRow(t)).join('')
         : starterHtml();
@@ -3734,7 +3767,7 @@ const renderTrendChart = () => {
     const today = startOfDay(new Date());
     const start = dashboardRange === '30' ? addDays(today, -29) : new Date(today.getFullYear(), today.getMonth() - 11, 1);
     // Only money that really moved: waiting / not-yet-received entries aren't income or spending yet.
-    const list = state.transactions.filter((x) => { const d = parseDate(x.date); return d >= start && d <= today && !isUpcoming(x); });
+    const list = viewTx().filter((x) => { const d = parseDate(x.date); return d >= start && d <= today && !isUpcoming(x); });
     cashFlowChart('dashboard-trend-chart', 'dashboard-chart-empty', bucketize(list, start, today, dashboardRange !== '30'), 'trend');
 };
 
@@ -6681,6 +6714,7 @@ const initEvents = () => {
         if (d.addCurrency) { addCurrency(d.addCurrency); return; }
         if (d.removeCurrency) { removeCurrency(d.removeCurrency); return; }
         if (d.editAccount) { openAccountEditor(d.editAccount); return; }
+        if (d.viewAccount) { setViewAccount(d.viewAccount); if (isSheetOpen('modal-accounts')) closeSheet('modal-accounts'); return; }
         if (d.themeChoice) { setTheme(d.themeChoice, e); return; }
         if (d.currency) { setDisplayCurrency(d.currency); return; }
         if (el.hasAttribute('data-clear-filters')) {
@@ -7044,13 +7078,20 @@ const updateAccountNameLogo = () => {
     }
 };
 const renderAccountManager = () => {
-    $('accounts-body').innerHTML = `<ul class="cat-manage">${state.accounts.map((a) => {
+    const v = viewId();
+    const tick = (on) => (on ? `<span class="acc-current" aria-label="Showing now">${icon('i-check', 'ic ic-sm')}</span>` : '');
+    const all = state.accounts.length > 1 ? `<li class="acc-row${v === 'all' ? ' is-current' : ''}"><button type="button" class="row-btn" data-view-account="all">
+            <span class="row-icon tint">${icon('i-wallet')}</span>
+            <span class="row-label"><span>All accounts</span><span>Everything together</span></span>
+            <span class="amount">${escapeHtml(formatCurrency(netWorth(), dcur()))}</span>${tick(v === 'all')}
+        </button></li>` : '';
+    $('accounts-body').innerHTML = `<p class="acc-hint">Tap an account to see only its money. Tap the pencil to edit it.</p><ul class="cat-manage acc-list">${all}${state.accounts.map((a) => {
         const bal = accountBalance(a);
-        return `<li><button type="button" class="row-btn" data-edit-account="${escapeHtml(a.id)}">
+        return `<li class="acc-row${v === a.id ? ' is-current' : ''}"><button type="button" class="row-btn" data-view-account="${escapeHtml(a.id)}">
             ${accountBadge(a, 'is-row', 'row-icon tint')}
             <span class="row-label"><span>${escapeHtml(a.name)}</span><span>${escapeHtml(ACCOUNT_KINDS[a.kind].label)}, ${a.currency}</span></span>
-            <span class="amount ${bal < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(bal, a.currency))}</span>
-        </button></li>`;
+            <span class="amount ${bal < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(bal, a.currency))}</span>${tick(v === a.id)}
+        </button><button type="button" class="icon-btn acc-edit" data-edit-account="${escapeHtml(a.id)}" aria-label="Edit ${escapeHtml(a.name)}">${icon('i-edit')}</button></li>`;
     }).join('')}</ul>`;
 };
 

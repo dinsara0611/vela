@@ -4424,3 +4424,19 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 .logo-row[hidden] { display: none; }
 .logo-row .link-btn { gap: 6px; min-height: 40px; }
 .logo-row .link-btn.faint { color: var(--text-3); font-weight: 500; }
+
+/* Switching account: the bar on Home, Activity and Insights, the chosen account in the list and on Home. */
+.view-bar { display: flex; align-items: center; gap: 10px; margin: 0 0 var(--sp-3); padding: 8px 8px 8px 10px; border-radius: var(--r-lg, 16px); background: var(--primary-soft); border: 1px solid var(--border); animation: viewBarIn 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
+.view-bar-text { flex: 1; min-width: 0; font-size: var(--fs-sm); color: var(--text-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.view-bar-text strong { color: var(--text); }
+.view-bar .btn { flex: none; }
+@keyframes viewBarIn { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
+.acc-hint { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); color: var(--text-3); }
+.acc-list .acc-row { display: flex; align-items: center; gap: 4px; }
+.acc-list .acc-row .row-btn { flex: 1; min-width: 0; }
+.acc-list .acc-row.is-current .row-btn { background: var(--primary-soft); border-radius: 14px; }
+.acc-list .acc-current { flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: var(--primary); color: #fff; margin-left: 6px; }
+.acc-list .acc-current .ic { width: 13px; height: 13px; }
+.acc-list .acc-edit { flex: none; color: var(--text-3); }
+.account-chip.is-current { border-color: var(--primary-solid, var(--primary)); box-shadow: 0 0 0 1px var(--primary-solid, var(--primary)), 0 0 16px -6px var(--primary); }
+.acc-list .row-btn { padding-left: 8px; padding-right: 8px; }

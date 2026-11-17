@@ -545,7 +545,7 @@ export async function run() {
         const before = s().accounts.slice();
         s().accounts = before.concat([{ id: 'acc-boc-test', name: 'Boc', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 0 }]);
         g('switchTab')('dashboard'); await wait(300);
-        const chip = !!document.querySelector('[data-account-filter="acc-boc-test"] img[src="logos/boc.png"]');
+        const chip = !!document.querySelector('[data-view-account="acc-boc-test"] img[src="logos/boc.png"]');
         g('openAddTx')('expense'); await wait(300);
         $('tx-account').value = 'acc-boc-test'; $('tx-account').dispatchEvent(new Event('change', { bubbles: true })); await wait(50);
         const pick = !!$('tx-account').parentElement.querySelector('.select-logo img[src="logos/boc.png"]');
@@ -560,6 +560,24 @@ export async function run() {
         const chat = P('Machan I paid Rs. 2,000 for the tickets, send it back', '+94771234567');
         return (r && r.bank === 'Unknown sender' && r.confidence === 'medium' && /phone number/.test(r.checks.join()) && r.amount === 2000 && chat === null)
             || JSON.stringify({ r: r && [r.bank, r.confidence, r.checks, r.amount], chat });
+    });
+
+    await T('Switching account: Home, Activity and Insights show only that account until Show all', async () => {
+        const before = s().accounts.slice();
+        const txBefore = s().transactions.slice();
+        s().accounts = before.concat([{ id: 'acc-sw', name: 'BOC', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 0 }]);
+        s().transactions.push({ id: 'sw-1', type: 'expense', desc: 'Keells', amount: 7777, currency: 'LKR', category: 'Food', date: today, note: '', createdAt: Date.now(), accountId: 'acc-sw', recurringId: null, receipt: null, fixed: false, pending: false });
+        const allSpent = g('monthStats')().spent;
+        g('switchTab')('dashboard'); await wait(200);
+        document.querySelector('[data-view-account="acc-sw"]').click(); await wait(300);
+        const oneSpent = g('monthStats')().spent;
+        const bar = /Showing\s+BOC only/.test((document.querySelector('#tab-dashboard .view-bar') || {}).innerText || '');
+        g('switchTab')('activity'); await wait(300);
+        const actOnly = g('activityAccount') === 'acc-sw' && !!document.querySelector('#tab-activity .view-bar');
+        document.querySelector('#tab-activity .view-bar [data-view-account="all"]').click(); await wait(300);
+        const back = g('monthStats')().spent === allSpent && !document.querySelector('.view-bar');
+        s().accounts = before; s().transactions = txBefore; g('renderActive')();
+        return (oneSpent === 7777 && allSpent > 7777 && bar && actOnly && back) || JSON.stringify({ allSpent, oneSpent, bar, actOnly, back });
     });
 
     await T('Your own shop logo: pick a photo once, shown for that shop everywhere, kept in backups, removable', async () => {
