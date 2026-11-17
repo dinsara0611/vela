@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.30.1';
+const APP_VERSION = '4.31.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -482,6 +482,13 @@ const accountBalance = (acc) => {
     return bal;
 };
 const netWorth = () => state.accounts.reduce((s, a) => s + toDisplay(accountBalance(a), a.currency), 0);
+// The money you have right now in the account you're in: its starting balance plus every income, minus every
+// expense and transfer out (waiting ones not yet). In the display currency.
+const viewBalance = () => {
+    if (scopeAll || viewId() === 'all') return netWorth();
+    const a = viewAccountObj();
+    return a ? toDisplay(accountBalance(a), a.currency) : netWorth();
+};
 const fillAccountSelect = (sel, value, { all = false } = {}) => {
     if (!sel) return;
     sel.innerHTML = (all ? ['<option value="all">All accounts</option>'] : [])
@@ -1536,24 +1543,26 @@ const fixedForMonth = (y = new Date().getFullYear(), m = new Date().getMonth()) 
     const income = sumDisplay(monthIncome.filter((t) => !isUpcoming(t)));
     const expected = sumDisplay(monthIncome.filter((t) => isUpcoming(t)));
     const paid = items.filter((i) => i.paid).reduce((s, i) => s + i.amount, 0);
-    return { items, total, paid, due: total - paid, income, expected, left: income - total };
+    // Paid ones have already left the account (they're entries), so only what's still due comes off what you have.
+    const balance = viewBalance();
+    return { items, total, paid, due: total - paid, income, expected, balance, left: balance - (total - paid) };
 };
 
 const fixedSummaryHtml = ({ list = false, link = false } = {}) => {
     const cur = dcur();
     const f = fixedForMonth();
-    const pct = f.income > 0 ? Math.min(100, (f.total / f.income) * 100) : (f.total > 0 ? 100 : 0);
+    const pct = f.balance > 0 ? Math.min(100, (f.due / f.balance) * 100) : (f.due > 0 ? 100 : 0);
     const rows = list && f.items.length ? `<ul class="fx-items">${f.items.map((i) => `<li><span class="fx-item-name">${escapeHtml(i.name)}</span><span class="fx-item-when ${i.paid ? 'is-paid' : ''}">${i.paid ? `${icon('i-check', 'ic ic-sm')} Paid ${escapeHtml(shortDate(i.date))}` : `Due ${escapeHtml(shortDate(i.date))}`}</span><span class="amount">${escapeHtml(formatCurrency(i.amount, cur))}</span></li>`).join('')}</ul>` : '';
     return `<article class="card fx-card glow" style="--glow:var(--pal-cyan)">
         <div class="card-head"><h2 class="card-title">After fixed expenses</h2>${link ? '<button type="button" class="link-btn" data-goto-plan="bills">Details</button>' : `<span class="card-sub">${escapeHtml(monthName(new Date().getFullYear(), new Date().getMonth(), { month: 'long' }))}</span>`}</div>
         <div class="fx-rows">
-            <div class="fx-row"><span>Income received</span><strong class="amount text-income">${escapeHtml(formatCurrency(f.income, cur))}</strong></div>
+            <div class="fx-row"><span>In this account now</span><strong class="amount ${f.balance < 0 ? 'text-expense' : 'text-income'}">${escapeHtml(formatCurrency(f.balance, cur))}</strong></div>
             ${f.expected > 0 ? `<div class="fx-row fx-expected"><span>Still expected (not counted yet)</span><span class="amount">+${escapeHtml(formatCurrency(f.expected, cur))}</span></div>` : ''}
-            <div class="fx-row"><span>Fixed expenses${f.items.length ? ` (${f.items.length})` : ''}</span><strong class="amount text-expense">${f.total > 0 ? '−' : ''}${escapeHtml(formatCurrency(f.total, cur))}</strong></div>
+            <div class="fx-row"><span>Fixed expenses still due${f.items.length ? ` (${f.items.filter((i) => !i.paid).length} of ${f.items.length})` : ''}</span><strong class="amount text-expense">${f.due > 0 ? '−' : ''}${escapeHtml(formatCurrency(f.due, cur))}</strong></div>
             <div class="fx-row fx-total"><span>${f.left >= 0 ? 'Left for everything else' : 'Short this month'}</span><strong class="amount ${f.left < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(Math.abs(f.left), cur))}</strong></div>
         </div>
-        ${meterHtml(pct, pct >= 100 ? 'over' : pct >= 80 ? 'warn' : null, 'Share of income going to fixed expenses')}
-        <div class="meter-row" style="margin-top:var(--sp-2)"><span>${f.income > 0 ? `${Math.round((f.total / f.income) * 100)}% of income is fixed` : f.expected > 0 ? 'Mark your income received to count it' : 'Add this month\u2019s income to see what\u2019s left'}</span><span>${f.due > 0 ? `${escapeHtml(formatCurrency(f.due, cur))} still due` : (f.total > 0 ? 'All paid' : '')}</span></div>
+        ${meterHtml(pct, pct >= 100 ? 'over' : pct >= 80 ? 'warn' : null, 'Share of your money still needed for fixed expenses')}
+        <div class="meter-row" style="margin-top:var(--sp-2)"><span>${f.total > 0 ? `${escapeHtml(formatCurrency(f.paid, cur))} paid of ${escapeHtml(formatCurrency(f.total, cur))} this month` : 'No fixed expenses this month'}</span><span>${f.expected > 0 ? `+${escapeHtml(formatCompact(f.expected, cur))} still expected` : ''}</span></div>
         ${rows}
     </article>`;
 };
@@ -3389,15 +3398,17 @@ const renderDashboard = () => {
     const now = new Date();
     const s = monthStats();
 
-    $('dash-month-label').textContent = `${now.toLocaleDateString('en-US', { month: 'long' })} balance`;
-    countUp($('dash-balance'), s.net, cur);
+    const acc = viewAccountObj();
+    $('dash-month-label').textContent = acc ? `${acc.name} balance` : 'Balance';
+    countUp($('dash-balance'), viewBalance(), cur);
     const nowD = new Date();
     const coming = viewTx().filter((t) => isUpcoming(t) && t.type === 'income' && inMonth(t, nowD.getFullYear(), nowD.getMonth()))
         .sort((a, b) => (a.date > b.date ? 1 : -1));
     const comingNote = coming.length ? ` · ${formatCompact(sumDisplay(coming), cur)} coming ${shortDate(coming[0].date)}` : '';
-    $('dash-balance-sub').textContent = (s.income > 0
-        ? `${Math.max(0, Math.round((s.net / s.income) * 100))}% of this month's income left`
-        : (s.spent > 0 ? "Add your income to see what's left" : 'Income minus spending this month')) + comingNote;
+    const monthName0 = now.toLocaleDateString('en-US', { month: 'long' });
+    $('dash-balance-sub').textContent = (s.income > 0 || s.spent > 0
+        ? `${s.net >= 0 ? '+' : '−'}${formatCompact(Math.abs(s.net), cur)} in ${monthName0}${s.income > 0 ? ` · ${Math.max(0, Math.round((s.net / s.income) * 100))}% of income left` : ''}`
+        : `Nothing in or out yet in ${monthName0}`) + comingNote;
     setMoney($('dash-income'), s.income, cur, 12);
     setMoney($('dash-spent'), s.spent, cur, 12);
 

@@ -610,6 +610,20 @@ export async function run() {
             || JSON.stringify({ copied, sepGoals, sepOwed, homeBudget, homeGoals, homeOwed, sepBudget });
     });
 
+    await T('Home shows the real account balance and it moves with every entry', async () => {
+        g('switchTab')('dashboard'); await wait(300);
+        const acc = g('viewAccountObj')();
+        const before = g('viewBalance')();
+        const want0 = g('toDisplay')(g('accountBalance')(acc), acc.currency);
+        await addTx({ amount: 1234, desc: 'Balance check', category: 'Other', account: acc.id });
+        const after = g('viewBalance')();
+        const shown = Number($('dash-balance').dataset.v);
+        const t = s().transactions.find((x) => x.desc === 'Balance check');
+        g('deleteTx')(t.id); await confirmOk(); await close('modal-tx');
+        return (Math.abs(before - want0) < 0.01 && Math.abs(before - after - 1234) < 0.01 && Math.abs(shown - after) < 0.01 && /balance/.test($('dash-month-label').textContent))
+            || JSON.stringify({ before, want0, after, shown, label: $('dash-month-label').textContent });
+    });
+
     await T('Insights can show all accounts together, the rest of the app stays on one account', async () => {
         const before = { accounts: s().accounts.slice(), tx: s().transactions.slice() };
         const home = g('viewId')();
@@ -1120,7 +1134,8 @@ export async function run() {
         await addTx({ type: 'income', amount: 50000, desc: 'Side job', category: 'Freelance' });
         const f3 = g('fixedForMonth')();
         const sameFixed = Math.abs(f3.total - f2.total) < 0.01;
-        const leftOk = Math.abs(f3.left - (f3.income - f3.total)) < 0.01;
+        // What's left = the money in the account now minus fixed expenses still due (paid ones already left it).
+        const leftOk = Math.abs(f3.left - (f3.balance - f3.due)) < 0.01 && Math.abs(f3.balance - g('viewBalance')()) < 0.01;
         // Deleting the rent bill keeps this month's payment counted.
         s().recurring = s().recurring.filter((b) => b.id !== 'rent-bill' && b.id !== 'gym-bill');
         const f4 = g('fixedForMonth')();
@@ -1129,14 +1144,14 @@ export async function run() {
             || `rent ${rentCount}, gym ${gymCount}/${gymExpected}, rent after paying ${rentAfter.length} paid ${rentAfter[0] && rentAfter[0].paid}, same fixed ${sameFixed}, left ok ${leftOk}, kept after delete ${rentKept}`;
     });
 
-    await T('Home and Plan show income, fixed and what is left', async () => {
+    await T('Home and Plan show the money in the account, fixed still due and what is left', async () => {
         g('switchTab')('dashboard'); await wait(400);
         const home = $('dash-fixed').innerText;
         g('goToPlan')('bills'); await wait(400);
         const plan = document.querySelector('#plan-content .fx-card');
         const f = g('fixedForMonth')();
         const want = fmt(f.left);
-        return (/Income/.test(home) && /Fixed expenses/.test(home) && home.includes(want) && plan && plan.innerText.includes(want))
+        return (/In this account now/.test(home) && /Fixed expenses still due/.test(home) && home.includes(want) && plan && plan.innerText.includes(want))
             || `home "${home.slice(0, 120)}", plan ${!!plan}, want ${want}`;
     });
 
