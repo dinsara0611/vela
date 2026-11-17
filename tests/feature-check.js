@@ -733,6 +733,27 @@ export async function run() {
         return ok || JSON.stringify({ kindFixed, oldMoved, wallet: !!wallet, tr: tr && { from: tr.accountId, to: tr.toAccountId } });
     });
 
+    await T('Privacy: an account balance can be hidden everywhere it shows; holding an account card opens Edit / Hide / Delete', async () => {
+        g('switchTab')('dashboard'); await wait(300);
+        const id = g('viewId')();
+        $('btn-hide-balance').click(); await wait(300);
+        const hero = $('dash-balance').textContent;
+        const chip = (document.querySelector(`.account-chip[data-view-account="${id}"] .account-bal`) || {}).textContent || '';
+        const bar = (document.querySelector('#tab-dashboard .view-bar .amount') || {}).textContent || '';
+        const fixedTxt = ($('dash-fixed') || {}).innerText || '';
+        const hidden = [hero, chip, bar].every((x) => x.includes('••••')) && !/In this account now\s*Rs\.\s*[\d]/.test(fixedTxt);
+        $('btn-hide-balance').click(); await wait(300);
+        const shownAgain = !$('dash-balance').textContent.includes('••••');
+        // Hold the card for a moment: the menu opens and the tap after it doesn't switch account.
+        const card = document.querySelector(`.account-chip[data-view-account="${id}"]`);
+        card.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 10, clientY: 10 }));
+        await wait(650);
+        const menu = g('isSheetOpen')('modal-acc-actions') && /Edit account/.test($('modal-acc-actions').innerText);
+        card.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+        await close('modal-acc-actions');
+        return (hidden && shownAgain && menu) || JSON.stringify({ hero, chip, bar, shownAgain, menu });
+    });
+
     await T('Review screen: Ignore all asks first, then clears every detection without adding anything', async () => {
         freshEngine();
         const n0 = s().transactions.length;

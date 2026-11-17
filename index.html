@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.33.2">
+    <link rel="stylesheet" href="style.css?v=4.34.0">
 </head>
 <body data-view="dashboard">
 
@@ -104,6 +104,8 @@
             <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
             <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
             <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+            <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+            <symbol id="i-eye-off" viewBox="0 0 24 24"><path d="M9.9 4.2A10 10 0 0 1 12 4c6.4 0 10 8 10 8a17 17 0 0 1-2.6 3.6"/><path d="M6.6 6.6C3.8 8.3 2 12 2 12s3.6 8 10 8a9.8 9.8 0 0 0 5.4-1.6"/><path d="M14.1 14.1a3 3 0 0 1-4.2-4.2"/><path d="m2 2 20 20"/></symbol>
             <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/></symbol>
             <symbol id="i-alert" viewBox="0 0 24 24"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/></symbol>
             <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></symbol>
@@ -221,7 +223,7 @@
                     <article class="hero">
                         <svg class="hero-sail" aria-hidden="true"><use href="#sail-outline"/></svg>
                         <div class="hero-top">
-                            <span class="hero-label" id="dash-month-label">This month's balance</span>
+                            <span class="hero-label-row"><span class="hero-label" id="dash-month-label">This month's balance</span><button type="button" class="hero-eye" id="btn-hide-balance" data-hide-balance="" aria-pressed="false" aria-label="Hide balance" hidden></button></span>
                             <span class="pill" id="dash-spend-trend" data-trend="flat"><svg class="ic"><use href="#i-arrow-up"/></svg><span id="dash-spend-trend-text">—</span></span>
                         </div>
                         <div class="hero-amount amount" id="dash-balance">$0.00</div>
@@ -261,7 +263,7 @@
                         <div class="card-head">
                             <div>
                                 <h2 class="card-title">Accounts</h2>
-                                <div class="card-sub">Tap one to switch</div><span class="amount" id="networth" hidden></span>
+                                <div class="card-sub">Tap to switch · hold for more</div><span class="amount" id="networth" hidden></span>
                             </div>
                             <button class="btn btn-secondary btn-xs" type="button" data-action="add-transfer"><svg class="ic ic-sm"><use href="#i-swap"/></svg> Transfer</button>
                         </div>
@@ -805,6 +807,21 @@
     </div>
 
     <!-- Paste a bank SMS -->
+    <div class="sheet-overlay" id="modal-acc-actions" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="acc-actions-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <div><h2 class="sheet-title" id="acc-actions-title">Account</h2><span class="card-sub" id="acc-actions-sub"></span></div>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body acc-actions">
+                <button type="button" class="row-btn" data-acc-action="edit"><svg class="ic"><use href="#i-edit"/></svg><span>Edit account</span></button>
+                <button type="button" class="row-btn" data-acc-action="hide" id="acc-action-hide"></button>
+                <button type="button" class="row-btn danger" data-acc-action="delete" id="acc-action-delete"><svg class="ic"><use href="#i-trash"/></svg><span>Delete account</span></button>
+            </div>
+        </div>
+    </div>
+
     <div class="sheet-overlay" id="modal-sms-pick" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sms-pick-title">
             <div class="sheet-grabber" aria-hidden="true"></div>
@@ -1429,7 +1446,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.33.2"></script>
+    <script src="app.js?v=4.34.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
