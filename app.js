@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.22.0';
+const APP_VERSION = '4.23.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1770,6 +1770,31 @@ const titleCase = (s) => s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCas
    first ("Uber Eats" before "Uber"). The real logo (bundled in logos/, see LOGO_SLUGS) is shown when there is one;
    otherwise a badge in the brand's colours. Banks have no category: they only get the badge. ---- */
 const BRANDS = [
+    // Sri Lankan shops and services (more specific names first: Softlogic Life before Softlogic, Dialog Pay before Dialog)
+    ['softlogiclife', 'softlogic life', 'Softlogic Life', 'Other', '#5B2C83', '#ffffff', 'SL'],
+    ['dialogpay', 'dialog ?pay|genie\\b', 'Dialog Pay', 'Other', '#E4002B', '#ffffff', 'DP'],
+    ['carnage', 'carnage', 'Carnage', 'Shopping', '#111111', '#ffffff', 'C'],
+    ['hameedia', 'hameedia', 'Hameedia', 'Shopping', '#111111', '#ffffff', 'H'],
+    ['spaceylon', 'spa ceylon', 'Spa Ceylon', 'Shopping', '#5A4632', '#ffffff', 'SC'],
+    ['celltronics', 'celltronics', 'Celltronics', 'Shopping', '#1E88E5', '#ffffff', 'C'],
+    ['takas', 'takas', 'takas.lk', 'Shopping', '#1C9AD6', '#ffffff', 'T'],
+    ['ikman', 'ikman', 'ikman', 'Shopping', '#149777', '#ffffff', 'i'],
+    ['lassana', 'lassana', 'Lassana Flora', 'Shopping', '#E91E63', '#ffffff', 'L'],
+    ['wasi', 'wasi\\.lk|wasi\\b', 'Wasi.lk', 'Shopping', '#6A1B9A', '#ffffff', 'W'],
+    ['javalounge', 'java (?:lounge|coffee)', 'Java Lounge', 'Food', '#3E2723', '#F5D78E', 'J'],
+    ['coffeebean', '(?:the )?coffee bean', 'The Coffee Bean', 'Food', '#5F2C82', '#ffffff', 'CB'],
+    ['cinnamon', 'cinnamon (?:grand|lakeside|red|hotels?|bey|wild|life|citadel|bentota|colombo)', 'Cinnamon Hotels', 'Travel', '#6B2C91', '#ffffff', 'C'],
+    ['shangrila', 'shangri-?la', 'Shangri-La', 'Travel', '#B8902F', '#ffffff', 'SL'],
+    ['busseat', 'busseat', 'BusSeat.lk', 'Travel', '#1E88E5', '#ffffff', 'B'],
+    ['lankahospitals', 'lanka hospitals?', 'Lanka Hospitals', 'Health', '#0072BC', '#ffffff', 'LH'],
+    ['hemas', 'hemas', 'Hemas Hospitals', 'Health', '#00A0AF', '#ffffff', 'H'],
+    ['scope', 'scope cinemas?', 'Scope Cinemas', 'Entertainment', '#111111', '#ffffff', 'S'],
+    ['peotv', 'peo ?tv', 'PEOTV', 'Entertainment', '#0D2C6C', '#ffffff', 'PEO'],
+    ['helakuru', 'helakuru', 'Helakuru', 'Other', '#E53935', '#ffffff', 'H'],
+    ['ceylinco', 'ceylinco', 'Ceylinco Insurance', 'Other', '#FFD200', '#111111', 'C'],
+    ['aia', 'aia\\b', 'AIA Insurance', 'Other', '#D31145', '#ffffff', 'AIA'],
+    ['unionassurance', 'union assurance', 'Union Assurance', 'Other', '#F26522', '#ffffff', 'UA'],
+    ['allianz', 'allianz', 'Allianz', 'Other', '#003781', '#ffffff', 'A'],
     // Supermarkets and groceries
     ['keells', 'keells|jaykay', 'Keells', 'Food', '#00843D', '#ffffff', 'K'],
     ['cargills', 'cargills(?! ?bank)|food ?city', 'Cargills', 'Food', '#E31837', '#ffffff', 'C'],
@@ -2029,7 +2054,7 @@ const tidyBankEntryNames = () => {
 // Real logos bundled with the app in logos/: each brand's official Google Play app icon (or its site icon when it has
 // no app), fetched once by scripts/fetch-logos.mjs and checked by eye, so showing them never contacts anyone.
 // Brands without a verified logo get a badge in their colours.
-const LOGO_SLUGS = new Set(['abans', 'adidas', 'agoda', 'airasia', 'airbnb', 'airtel', 'alibaba', 'aliexpress', 'amana', 'amazon', 'apple', 'arpico', 'audible', 'aws', 'binance', 'boc', 'bolt', 'booking', 'burgerking', 'canva', 'capcut', 'careem', 'cargills', 'cargillsbank', 'ceb', 'ceypetco', 'claude', 'combank', 'coursera', 'crunchyroll', 'daraz', 'deezer', 'deliveroo', 'dfcc', 'dialog', 'discord', 'disney', 'dominos', 'dropbox', 'duolingo', 'ebay', 'emirates', 'etsy', 'expedia', 'facebook', 'figma', 'fiverr', 'flipkart', 'foodpanda', 'freefire', 'frimi', 'gemini', 'github', 'glomark', 'google', 'grab', 'grammarly', 'hbomax', 'hdfc', 'hilton', 'hm', 'hnb', 'hsbc', 'hutch', 'ikea', 'indigo', 'instagram', 'kapruka', 'keells', 'kfc', 'koko', 'lankaioc', 'laugfsgas', 'leco', 'linkedin', 'litro', 'lolc', 'marriott', 'mcash', 'mcb', 'mcdonalds', 'mintpay', 'mobitel', 'myntra', 'nawaloka', 'ndb', 'netflix', 'nike', 'nintendo', 'notion', 'nsb', 'ntb', 'openai', 'pabc', 'payoneer', 'paypal', 'peoples', 'perplexity', 'pickme', 'pinterest', 'pizzahut', 'playstation', 'primevideo', 'pubg', 'qatarairways', 'rdb', 'reddit', 'revolut', 'roblox', 'sampath', 'seylan', 'shopify', 'singer', 'skyscanner', 'slt', 'snapchat', 'softlogic', 'soundcloud', 'spar', 'spotify', 'srilankan', 'starbucks', 'steam', 'subway', 'swiggy', 'tacobell', 'talabat', 'telegram', 'temu', 'tiktok', 'tinder', 'tripcom', 'twitch', 'twitter', 'uber', 'ubereats', 'udemy', 'unionbank', 'upwork', 'walmart', 'waterboard', 'wise', 'xbox', 'youtube', 'zomato', 'zoom']);
+const LOGO_SLUGS = new Set(['abans', 'adidas', 'agoda', 'aia', 'airasia', 'airbnb', 'airtel', 'alibaba', 'aliexpress', 'allianz', 'amana', 'amazon', 'apple', 'arpico', 'asiri', 'audible', 'aws', 'barista', 'binance', 'boc', 'bolt', 'booking', 'burgerking', 'busseat', 'canva', 'capcut', 'careem', 'cargills', 'cargillsbank', 'carnage', 'ceb', 'celltronics', 'ceylinco', 'ceypetco', 'cinnamon', 'claude', 'coffeebean', 'combank', 'coursera', 'crunchyroll', 'damro', 'daraz', 'deezer', 'deliveroo', 'dfcc', 'dialog', 'dialogpay', 'discord', 'disney', 'dominos', 'dropbox', 'duolingo', 'ebay', 'emirates', 'etsy', 'expedia', 'facebook', 'fashionbug', 'figma', 'fiverr', 'flipkart', 'foodpanda', 'freefire', 'frimi', 'gemini', 'github', 'glomark', 'google', 'grab', 'grammarly', 'hameedia', 'hbomax', 'hdfc', 'healthguard', 'helakuru', 'hemas', 'hilton', 'hm', 'hnb', 'houseoffashions', 'hsbc', 'hutch', 'ikea', 'ikman', 'indigo', 'instagram', 'javalounge', 'kapruka', 'keells', 'kfc', 'koko', 'lankahospitals', 'lankaioc', 'lassana', 'laugfsgas', 'leco', 'linkedin', 'litro', 'lolc', 'marriott', 'mcash', 'mcb', 'mcdonalds', 'mintpay', 'mobitel', 'myntra', 'nawaloka', 'ndb', 'netflix', 'nike', 'nintendo', 'notion', 'nsb', 'ntb', 'openai', 'pabc', 'payoneer', 'paypal', 'peoples', 'peotv', 'pereraandsons', 'perplexity', 'pickme', 'pinterest', 'pizzahut', 'playstation', 'primevideo', 'pubg', 'qatarairways', 'rdb', 'reddit', 'revolut', 'roblox', 'sampath', 'scope', 'seylan', 'shangrila', 'shopify', 'singer', 'skyscanner', 'slt', 'snapchat', 'softlogic', 'softlogiclife', 'soundcloud', 'spaceylon', 'spar', 'spotify', 'srilankan', 'starbucks', 'steam', 'subway', 'swiggy', 'tacobell', 'takas', 'talabat', 'telegram', 'temu', 'tiktok', 'tinder', 'tripcom', 'twitch', 'twitter', 'uber', 'ubereats', 'udemy', 'unionassurance', 'unionbank', 'upwork', 'walmart', 'wasi', 'waterboard', 'wise', 'xbox', 'youtube', 'zomato', 'zoom']);
 const LOGO_ALIAS = { pickmefood: 'pickme' };
 const logoSlug = (slug) => { const k = LOGO_SLUGS.has(slug) ? slug : LOGO_ALIAS[slug]; return k && LOGO_SLUGS.has(k) ? k : null; };
 const logoImg = (slug, alt = '') => `<img src="logos/${slug}.png" alt="${escapeHtml(alt)}" decoding="async" draggable="false" onerror="this.parentNode.classList.remove('has-logo');this.remove()">`;

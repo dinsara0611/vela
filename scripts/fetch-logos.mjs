@@ -18,6 +18,18 @@ mkdirSync(out, { recursive: true });
 // Standard Chartered's Sri Lankan app isn't on Play (the Indian one is labelled IN), Nolimit's site icon is blurry,
 // Cloudflare's app shows its 1.1.1.1 icon, Lazada uses a seasonal sale icon.
 const APPS = {
+    // Sri Lankan shops and services
+    spaceylon: ['com.spaceylon.lk', 'Spa Ceylon'],
+    javalounge: ['com.kapruka.javalounge', 'Kapruka'],
+    coffeebean: ['com.coffeebeankorea.purpleorder', '커피빈'],
+    shangrila: ['com.shangri_la', 'Shangri-La'],
+    ikman: ['lk.ikman', 'ikman'],
+    scope: ['cinema.com.scope', 'Scope Cinemas'],
+    aia: ['lk.com.aialife.aiaplus', 'AIA Insurance Lanka'],
+    peotv: ['lk.com.peotv.atvpls.android.tv', 'SLTVIsionCom'],
+    busseat: ['lk.busseat.passenger', 'BusSeat'],
+    helakuru: ['lk.bhasha.helakuru', 'Bhasha'],
+    dialogpay: ['lk.tc.finpal', 'Dialog'],
     // Worldwide brands
     hbomax: ['com.wbd.stream', 'Warner'],
     crunchyroll: ['com.crunchyroll.crunchyroid', 'Crunchyroll'],
@@ -99,7 +111,7 @@ const APPS = {
     tacobell: ['com.tacobell.ordering', 'Taco Bell'], pizzahut: ['lk.gamma.pizzakraft.PizzaHut', 'Pizzakraft'], dominos: ['com.dominos.srilanka', 'Jubilant'],
     burgerking: ['in.burgerking.android', 'Restaurant Brands'], keells: ['com.jkit.keellsretailapp', 'Keells'], cargills: ['com.service.online.cargills', 'Cargills'],
     spar: ['com.sparsrilanka.apps', 'SPAR'], arpico: ['com.arpico.groupit.myarpico', 'RICHARD PIERIS'], laugfsgas: ['com.laugfsgaseasyconnect.laugfs_easy_connect', 'LAUGFS'],
-    kapruka: ['com.kapruka.kaprukamobile', 'Kapruka'], singer: ['com.singersl.androidapp', 'Singer'], abans: ['com.abans.myabans', 'Sirius'],
+    kapruka: ['com.kapruka.kaprukamobile', 'Kapruka'], singer: ['com.singersl.androidapp', 'Singer'],
     softlogic: ['com.mobileapp.softlogiccare', 'Softlogic'], srilankan: ['com.sla.android.app', 'SriLankan'], dialog: ['net.omobio.dialogsc', 'Dialog'],
     mobitel: ['com.mobitel.selfcare', 'Mobitel'], slt: ['com.slt.selfcare', 'Sri Lanka Telecom'], hutch: ['com.omobio.etisalatone', 'Hutch'],
     airtel: ['com.tsdc.selfcare', 'Airtel'], leco: ['com.leco.myleco', 'LANKA ELECTRICITY'], waterboard: ['com.SadeepDhananjana.NWSDBSelfCare', 'National Water'],
@@ -111,6 +123,31 @@ const APPS = {
     seylan: ['com.fg.seylan', 'Seylan'], dfcc: ['com.dfcc.digitalapp', 'DFCC'], pabc: ['com.panasia.retail.digital', 'PAN ASIA'], unionbank: ['com.epic.ubmobilebank', 'Union Bank'],
     amana: ['lk.amanabank.onlinebanking', 'Amana'], cargillsbank: ['com.fg.wallet', 'Cargills Bank'], hsbc: ['com.hsbc.hsbcnet', 'HSBC'], mcb: ['com.mcb.mobilebanking', 'MCB'], rdb: ['lk.rdbquick.app', 'Pradeshiya'],
     hdfc: ['com.hdfcbank.android.now', 'HDFC'], lolc: ['com.fg.lolc', 'LOLC'], frimi: ['com.nationstrust.frimi', 'Nations Trust'], mcash: ['family.mobitel.mcash', 'Mobitel']
+};
+
+// Brands with no official app, or whose site logo is clearer: their own site icon (128 px), checked by eye.
+const SITES = {
+    carnage: 'incarnage.com',
+    hameedia: 'hameedia.com',
+    celltronics: 'celltronics.lk',
+    takas: 'takas.lk',
+    lassana: 'lassana.com',
+    wasi: 'wasi.lk',
+    cinnamon: 'cinnamonhotels.com',
+    lankahospitals: 'lankahospitals.com',
+    hemas: 'hemashospitals.com',
+    ceylinco: 'ceylinco-insurance.com',
+    unionassurance: 'unionassurance.com',
+    allianz: 'allianz.lk',
+    softlogiclife: 'softlogiclife.lk',
+    fashionbug: 'fashionbug.lk',
+    barista: 'barista.lk',
+    healthguard: 'healthguard.lk',
+    asiri: 'asirihealth.com',
+    damro: 'damro.lk',
+    pereraandsons: 'pereraandsons.com',
+    houseoffashions: 'houseoffashions.lk',
+    abans: 'buyabans.com'
 };
 
 const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
@@ -141,6 +178,13 @@ for (const [slug, [pkg, dev]] of Object.entries(APPS)) {
     writeFileSync(join(out, `${slug}.png`), png);
     got.push(slug);
     await sleep(400);
+}
+for (const [slug, domain] of Object.entries(SITES)) {
+    const png = await get(`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`, 'buffer');
+    if (!png || png.readUInt32BE(0) !== 0x89504e47) { failed.push(`${slug} (${domain}: no icon)`); continue; }
+    writeFileSync(join(out, `${slug}.png`), png);
+    got.push(slug);
+    await sleep(300);
 }
 const all = readdirSync(out).filter((f) => f.endsWith('.png')).map((f) => f.slice(0, -4)).sort();
 writeFileSync(join(out, 'index.json'), JSON.stringify(all, null, 1));
