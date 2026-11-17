@@ -1,13 +1,13 @@
 /* Vela service worker — offline support for the app shell. */
-const VERSION = '4.19.1';
+const VERSION = '4.20.0';
 const SHELL_CACHE = `vela-shell-${VERSION}`;
 const CDN_CACHE = 'vela-cdn-v1';
 
 const SHELL = [
   './',
   './index.html',
-  './style.css?v=4.19.1',
-  './app.js?v=4.19.1',
+  './style.css?v=4.20.0',
+  './app.js?v=4.20.0',
   './manifest.json',
   './icon-192.png',
   './icon-512.png'
@@ -62,6 +62,18 @@ self.addEventListener('fetch', (event) => {
       } catch (err) {
         return (await caches.match('./index.html', { ignoreSearch: true })) || (await caches.match('./')) || Response.error();
       }
+    })());
+    return;
+  }
+
+  // Shop and bank logos never change within a version: cache first, so lists draw them at once (and offline).
+  if (url.origin === self.location.origin && url.pathname.includes('/logos/')) {
+    event.respondWith((async () => {
+      const cached = await caches.match(request);
+      if (cached) return cached;
+      const response = await fetch(request);
+      event.waitUntil(putInCache(SHELL_CACHE, request, response.clone()));
+      return response;
     })());
     return;
   }

@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.19.1">
+    <link rel="stylesheet" href="style.css?v=4.20.0">
 </head>
 <body data-view="dashboard">
 
@@ -495,10 +495,10 @@
                         <h2 class="section-label">Bank connections</h2>
                         <div class="card bank-card" id="bank-card">
                             <div class="bank-head">
-                                <span class="bank-logo has-logo" aria-hidden="true"><img src="logos/combank.png" alt="" decoding="async" draggable="false" onerror="this.parentNode.classList.remove('has-logo');this.parentNode.textContent='CB'"></span>
+                                <span class="bank-logo" aria-hidden="true"><svg class="ic"><use href="#i-bank"/></svg></span>
                                 <div class="bank-id">
-                                    <span class="bank-name">Commercial Bank of Ceylon</span>
-                                    <span class="bank-sub" id="bank-sub">Detects your transactions from bank SMS</span>
+                                    <span class="bank-name">Bank SMS tracking</span>
+                                    <span class="bank-sub" id="bank-sub">All banks: reads debit and credit SMS</span>
                                 </div>
                                 <span class="bank-pill" id="bank-overall" data-state="off">Not connected</span>
                             </div>
@@ -514,6 +514,11 @@
                                     </div>
                                     <div class="bank-help" id="bank-sms-help" hidden></div>
                                 </div>
+                            </div>
+
+                            <div class="bank-banks" id="bank-banks">
+                                <div class="bank-chips" id="bank-chips" aria-label="Banks Vela reads"></div>
+                                <p class="bank-privacy">A bank Vela hasn’t read on this phone before is checked with you the first 3 times. After that, clear messages from it can be added automatically if you turn that on.</p>
                             </div>
 
                             <dl class="bank-facts" id="bank-facts">
@@ -1422,7 +1427,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.19.1"></script>
+    <script src="app.js?v=4.20.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

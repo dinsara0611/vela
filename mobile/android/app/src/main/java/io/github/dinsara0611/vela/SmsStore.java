@@ -193,10 +193,11 @@ final class SmsStore {
         open.putExtra("velaReview", id);
         int flags = PendingIntent.FLAG_UPDATE_CURRENT | (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M ? PendingIntent.FLAG_IMMUTABLE : 0);
         PendingIntent tap = PendingIntent.getActivity(ctx, notificationId(id), open, flags);
-        String money = ("USD".equals(info.currency) ? "$" : "Rs. ") + info.amount;
+        String money = ("USD".equals(info.currency) ? "$" : "LKR".equals(info.currency) ? "Rs. " : info.currency + " ") + info.amount;
         String text = "out".equals(info.direction) ? money + " spent from " + info.bank + "."
             : "in".equals(info.direction) ? money + " received in " + info.bank + "."
             : "atm".equals(info.direction) ? money + " ATM withdrawal from " + info.bank + "."
+            : "cardpay".equals(info.direction) ? money + " paid to your " + info.bank + " card."
             : money + " reversal at " + info.bank + ".";
         Notification publicVersion = new NotificationCompat.Builder(ctx, CHANNEL)
             .setSmallIcon(R.drawable.ic_stat_vela)

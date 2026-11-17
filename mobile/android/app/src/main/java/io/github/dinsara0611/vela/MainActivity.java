@@ -1,6 +1,7 @@
 package io.github.dinsara0611.vela;
 
 import android.os.Bundle;
+import android.webkit.WebView;
 import androidx.activity.EdgeToEdge;
 import com.getcapacitor.BridgeActivity;
 
@@ -15,5 +16,11 @@ public class MainActivity extends BridgeActivity {
         // Android 15+ draws apps edge to edge; Vela's layout pads for the status and navigation bars.
         EdgeToEdge.enable(this);
         super.onCreate(savedInstanceState);
+        // The page scrolls by touch like any app screen: no scrollbar drawn down the side.
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            WebView web = getBridge().getWebView();
+            web.setVerticalScrollBarEnabled(false);
+            web.setHorizontalScrollBarEnabled(false);
+        }
     }
 }

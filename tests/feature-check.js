@@ -11,6 +11,7 @@ const g = (name) => {
 
 export async function run() {
     const results = [];
+    window.__velaResults = results; // readable while the run is still going
     window.__velaErrors = [];
     const onErr = (e) => window.__velaErrors.push(String(e.message || e.reason || e));
     window.addEventListener('error', onErr);
@@ -198,9 +199,50 @@ export async function run() {
             { type: 'expense', amount: 4320, currency: 'LKR' }],
         ['no shop name: asks to check', 'Your A/C ...1234 has been debited with LKR 1,200.00 on 16/11/2026',
             { type: 'expense', amount: 1200, confidence: 'medium' }],
-        ['no date in message: date when it arrived', 'LKR 500.00 POS purchase at CARGILLS on card ending 4321',
-            { amount: 500, date: '2026-11-16', confidence: 'medium' }],
-        ['other bank: reviewed', 'HNB: Purchase of LKR 900.00 at PIZZA HUT on card ending 1111 on 16/11/2026', { type: 'expense', amount: 900, confidence: 'medium' }, 'HNB']
+        // A live SMS arrives as the payment happens, so with no date in the text the arrival date is used (NTB alerts have none).
+        ['no date in message: the day it arrived', 'LKR 500.00 POS purchase at CARGILLS on card ending 4321',
+            { amount: 500, date: '2026-11-16', confidence: 'high' }],
+        ['other bank, not read on this phone before: reviewed', 'HNB: Purchase of LKR 900.00 at PIZZA HUT on card ending 1111 on 16/11/2026', { type: 'expense', amount: 900, confidence: 'medium' }, 'HNB'],
+
+        // ---- Real alert formats. Shapes are from the owner's ComBank messages and from samples published in open-source
+        // Sri Lankan trackers (github.com/123tharu/kasi, kavina-a/expense-tracker PR 1, sarim2000/pennywiseai-tracker PR 1028);
+        // names, numbers and amounts here are made up. ----
+        ['ComBank card purchase', 'Dear Cardholder, Purchase at UBER EATS 852 LK for LKR 2,765.62 on 15/11/26 01:23 PM has been authorised on your debit card ending #5370.',
+            { type: 'expense', kind: 'card', amount: 2765.62, desc: 'Uber Eats', last4: '5370', date: '2026-11-15', time: '13:23', category: 'Food', confidence: 'high' }],
+        ['ComBank cash from another bank\'s ATM', 'Withdrawal at Hatton National Bank HNB PANNIPITI LK for LKR 20,000.00 on 14/11/26 06:52 PM from your debit card ending #5370.',
+            { type: 'atm', amount: 20000, last4: '5370', bank: 'Commercial Bank', date: '2026-11-14' }],
+        ['ComBank foreign purchase with the rupee figure', 'Purchase at NETFLIX.COM for USD 9.99 (LKR 3,312.45) on 16/11/26 from card ending #5370. Avl Bal LKR 80,000.00',
+            { type: 'expense', amount: 3312.45, currency: 'LKR', desc: 'Netflix', category: 'Entertainment' }],
+        ['ComBank shop with phone number and country', 'Dear Cardholder, Purchase at Google One 650-2530000 US for LKR 6,425.00 on 15/11/26 05:36 PM has been authorised on your debit card ending #5370.',
+            { amount: 6425, desc: 'Google', time: '17:36' }],
+        ['ComBank unknown shop keeps its own name', 'Dear Cardholder, Purchase at SUNIL STORES (PVT) LTD 0712755777 LK for LKR 1,000.00 on 16/11/26 10:14 AM has been authorised on your debit card ending #5370.',
+            { amount: 1000, desc: 'Sunil Stores' }],
+        ['shop name containing "bal" is not a balance', 'Dear Cardholder, Purchase at HERBAL CARE LK for LKR 950.00 on 16/11/26 09:10 AM has been authorised on your debit card ending #5370.',
+            { type: 'expense', amount: 950, desc: 'Herbal Care' }],
+        ['ComBank credit', 'Credit for Rs. 25,000.00 to A/C #1234 on 16/11/26.', { type: 'income', amount: 25000, last4: '1234' }],
+        ['HNB internet purchase', 'HNB SMS ALERT:INTERNET, Account:2080***2939,Location:UBER, LK,Amount(Approx.):670.59 LKR,Av.Bal:14621.99 LKR,Date:16.11.26,Time:17:06, Hot Line:0112462462',
+            { type: 'expense', kind: 'online', amount: 670.59, currency: 'LKR', desc: 'Uber', last4: '2939', date: '2026-11-16', time: '17:06', bank: 'HNB', category: 'Travel' }, 'HNB'],
+        ['HNB card purchase, shop written with commas', 'HNB SMS ALERT: PURCHASE, Debit account:2080***2939,Location:KEELLS SUPER, COLOMBO 03, LK,Amount(Approx.):500.00 LKR,Av.Bal:100.00 LKR,Date:16.11.26,Time:10:00, Hot Line:0112462462',
+            { kind: 'card', amount: 500, desc: 'Keells' }, 'HNB'],
+        ['HNB shop that mentions another brand', 'HNB SMS ALERT: PURCHASE, Debit account:2080***2939,Location:BARISTA - CARGILLS SQUARE, LK,Amount(Approx.):715.00 LKR,Av.Bal:17573.58 LKR,Date:16.11.26,Time:09:12, Hot Line:0112462462',
+            { amount: 715, desc: 'Barista' }, 'HNB'],
+        ['HNB bill payment (footer mentions OTP)', 'LKR 1,598.00 debited to Ac No:20802XXXXX39 on 16/11/26 10:18:43 Reason:MB BillPmt/Mobitel/0701150250/0701150250 Bal:LKR 15,975.58 Protect from scams *DO NOT SHARE ACCOUNT DETAILS /OTP* Hotline 0112462462',
+            { type: 'expense', kind: 'bill', amount: 1598, desc: 'SLT-Mobitel', category: 'Utilities', time: '10:18' }, 'HNB'],
+        ['HNB transfer to a person', 'LKR 5,000.00 debited to Ac No:20802XXXXX39 on 16/11/26 10:18:43 Reason:CEFT/JOHN/DOE Bal:LKR 10,000.00', { type: 'expense', kind: 'transfer_out', amount: 5000, desc: 'John Doe' }, 'HNB'],
+        ['HNB reversal announced as a credit', 'LKR 207.65 credited to Ac No:20802XXXXX39 on 16/11/26 05:54:22 Reason:ECOM REV/002117/ID:113007 Bal:LKR 11,762.17', { type: 'reversal', amount: 207.65 }, 'HNB'],
+        ['HNB card repayment is a transfer, not spending', 'LKR 10,000.00 debited to Ac No:20802XXXXX39 on 16/11/26 10:18:43 Reason:CARD PAYMENT Bal:LKR 5,000.00', { type: 'cardpay', amount: 10000 }, 'HNB'],
+        ['Sampath money back from a shop (footer mentions OTP)', 'LKR 5,000.00 credited to AC **8758 for PICKME - 37419306\n16/11/2026 11:36:52\nTo Inq Call 0112303050\nGet protected -Do not Share OTP',
+            { type: 'income', kind: 'refund', amount: 5000, last4: '8758', bank: 'Sampath Bank', time: '11:36' }, 'SAMPATHTXN'],
+        ['Sampath credit card purchase ("Cr Crd" is not a credit)', 'Cr Crd no..**0282 Auth Pmt LKR 2,100.00 at SPICE ASIA - DELIVERY Avl Bal LKR 250,000.00 Enq Call 0112300604\n- Sampath Bank 16-NOV',
+            { type: 'expense', kind: 'card', amount: 2100, desc: 'Spice Asia - Delivery', last4: '0282', date: '2026-11-16' }, 'SAMPCCTXN'],
+        ['NTB card purchase', 'Transaction Approved on your Card 123456******5678 for LKR 771.51 at PICKME RIDE Available Bal LKR 16730.45  Call 0114315315 for any inquiry.',
+            { type: 'expense', kind: 'card', amount: 771.51, desc: 'PickMe', last4: '5678', category: 'Travel', date: '2026-11-16' }, 'NTB'],
+        ['NTB payment to the card is never income', 'Thank you for your payment of LKR 57,018.67 made to Card # 123456*****1234 on 16-11-2026.', { type: 'cardpay', amount: 57018.67, last4: '1234' }, 'NTB'],
+        ['NDB card purchase, balance without a currency', 'LKR 12,724.00 debited from AC XXXXXXXX7497 as POS TXN on 16 Nov 2026 10:28 at COLOMBAY COLOMBO 2. Avl Bal 2,582.08 Call 94112448888 for info',
+            { type: 'expense', kind: 'card', amount: 12724, desc: 'Colombay', last4: '7497', date: '2026-11-16', time: '10:28' }, 'NDB'],
+        ['NDB transfer in', 'LKR 60,076.25 credited to AC XXXXXXXX1427 on 16 Nov 2026 09:53 as CEFTS Inward Transfer. Avl Bal 1,789,349.08 Call 94112448888 for info', { type: 'income', kind: 'transfer_in', amount: 60076.25, last4: '1427' }, 'NDB'],
+        ['NSB "ATM POS" is a card purchase, not cash', 'Dear MR SAMPLE,LKR 3,216.00 Debited from your A/c XXXXXXXX5678 on 16/11/2026 at 11:14.AvlBal LKR 9,437.61. @ Wetara Pharamcy & Groc Polgasowita. ATM POS Transaction.Thank you for banking with us.Call Centre 1972.',
+            { type: 'expense', kind: 'card', amount: 3216, desc: 'Wetara Pharamcy & Groc Polgasowita', last4: '5678', time: '11:14' }, 'NSB']
     ];
     const ignoredCases = [
         ['declined', 'Your transaction of LKR 5,000.00 at ABC STORE was declined due to insufficient funds. ComBank'],
@@ -210,7 +252,14 @@ export async function run() {
         ['login alert', 'You have logged in to ComBank Digital on 16/11/2026 10:00. If this was not you call 0112353353'],
         ['promotion', 'Enjoy 20% off at ODEL with ComBank cards. Spend LKR 10,000 and win! ComBank'],
         ['payment reminder', 'ComBank: Your credit card payment of LKR 15,000.00 is due on 25/11/2026.'],
-        ['not a bank', 'Hi machan, send me Rs. 500 for the bus', '0771234567']
+        ['not a bank', 'Hi machan, send me Rs. 500 for the bus', '0771234567'],
+        ['telecom reload', 'You have recharged Rs. 1000.00  Your account balance is Rs. 754.55 ,expires on 15/12/2026', 'SLT-Mobitel'],
+        ['shop promotion', 'Weekend Vibes at Pizza Hut! Get 2 Lava Cakes & 1 Portion of Garlic Bread for Rs.1,990 with any pizza. Pay by card.', 'Pizza Hut'],
+        ['bank cashback promotion', 'Pay Bills. Collect Cashback!  Get 10% cashback up to Rs1,500/- when you pay your bills with ComBank Q+. T&C apply.', 'ComBank Q+'],
+        ['promise of a future credit', 'Rs. 500 cashback will be credited to your account when you spend Rs. 5,000 at Keells. ComBank', 'COMBANK'],
+        ['card statement', 'Your credit card statement is ready. Total due LKR 45,000.00, minimum due LKR 2,250.00. Payment due date 05/12/2026.', 'NTB'],
+        ['shop that mentions a bank', 'Your payment of Rs. 2,500 using ComBank card ending 1234 was successful. Thank you for shopping with us', 'Daraz'],
+        ['bare code', '482913 is your one time password for HNB online banking.', 'HNB']
     ];
 
     await T('SMS accuracy: transaction formats read correctly', () => {
@@ -226,6 +275,32 @@ export async function run() {
     await T('SMS accuracy: OTPs, declined, failed, balance, login, promotions, reminders and chats are never used', () => {
         const used = ignoredCases.filter(([, body, address]) => P(body, address || 'COMBANK')).map(([n]) => n);
         return used.length ? `used: ${used.join(', ')}` : true;
+    });
+
+    await T('Shared sample messages (tests/sms-corpus.tsv): the app reads each one as the Android filter must', async () => {
+        const text = await (await fetch('tests/sms-corpus.tsv', { cache: 'no-store' })).text();
+        const lines = text.split(/\r?\n/).filter((l) => l && !l.startsWith('#'));
+        const dirOf = { income: 'in', expense: 'out', atm: 'atm', reversal: 'reversal', cardpay: 'cardpay' };
+        const wrong = [];
+        lines.forEach((line) => {
+            const [want, address, raw] = line.split('\t');
+            const r = P(raw.replace(/\\n/g, '\n'), address);
+            if (want === 'none') { if (r) wrong.push(`should be ignored, read as ${r.type} ${r.amount}: ${raw.slice(0, 60)}`); return; }
+            const [dir, cur, amount, ...bank] = want.split(' ');
+            if (!r) { wrong.push(`not read (${g('smsLastReason')}), want ${want}: ${raw.slice(0, 60)}`); return; }
+            if (dirOf[r.type] !== dir || r.currency !== cur || Math.abs(r.amount - Number(amount)) > 0.005 || r.bank !== bank.join(' ')) wrong.push(`want ${want}, got ${dirOf[r.type]} ${r.currency} ${r.amount} ${r.bank}: ${raw.slice(0, 60)}`);
+        });
+        return (lines.length >= 60 && !wrong.length) || `${wrong.length} of ${lines.length} read differently: ${wrong.join(' | ')}`;
+    });
+
+    await T('SMS senders: unknown named senders and phone numbers are read only with a warning; a rupee figure beside USD is used', () => {
+        const other = P('Your account 1234 has been debited with Rs. 2,000.00 at CITY PHARMACY on 16/11/2026', 'XYZ Finance');
+        const phone = P('ComBank: LKR 50,000.00 credited to your A/C ...1234 on 16/11/2026', '+94771234567');
+        const fx = P('Purchase at NETFLIX.COM for USD 9.99 (LKR 3,312.45) on 16/11/26 from card ending #5370. Avl Bal LKR 80,000.00');
+        const ok = other && other.bank === 'XYZ Finance' && other.confidence === 'medium' && /bank list/.test(other.checks.join())
+            && phone && phone.confidence === 'medium' && /phone number/.test(phone.checks.join())
+            && fx && fx.fx && fx.fx.currency === 'USD' && fx.fx.amount === 9.99;
+        return ok || JSON.stringify({ other: other && [other.bank, other.confidence, other.checks], phone: phone && [phone.confidence, phone.checks], fx: fx && fx.fx });
     });
 
     await T('SMS accuracy: balance is never taken as the amount; account numbers are masked', () => {
@@ -402,6 +477,58 @@ export async function run() {
         s().transactions = s().transactions.filter((t) => !t.id.startsWith('acc-wait'));
         const f2 = g('fixedForMonth')();
         return (!inRange && f.expected - f2.expected === 7777 && f.income === f2.income && /Still expected/.test(html)) || `insights counted waiting ${inRange}, expected +${f.expected - f2.expected}, income changed ${f.income !== f2.income}`;
+    });
+
+    await T('A new bank is learned: reviewed until 3 of its messages were confirmed unchanged, a correction starts again', async () => {
+        freshEngine();
+        const hnb = (n, at) => smsMsg(`learn-${n}`, `HNB SMS ALERT: PURCHASE, Debit account:2080***2939,Location:SHOP ${'ABCDE'[n]}, LK,Amount(Approx.):${100 + n}.00 LKR,Av.Bal:100.00 LKR,Date:${new Date().toLocaleDateString('en-GB').replace(/\//g, '.').replace(/\.20(\d\d)$/, '.$1')},Time:10:0${n}, Hot Line:0112462462`, at);
+        const read = (n) => g('parseBankSms')({ ...hnb(n, NOW + n * 600000), address: 'HNB' });
+        const first = read(0);
+        for (let n = 0; n < 3; n++) { g('smsTake')([{ ...hnb(n, NOW + n * 600000), address: 'HNB' }]); g('smsAdd')(`learn-${n}`); await wait(120); }
+        const learned = read(3);
+        g('smsLearn')(learned, false);
+        const again = read(4);
+        s().transactions = s().transactions.filter((t) => !(t.bank && /^learn-/.test(t.bank.smsId || '')));
+        freshEngine();
+        return (first.confidence === 'medium' && /still learning HNB/.test(first.checks.join()) && learned.confidence === 'high' && again.confidence === 'medium')
+            || JSON.stringify({ first: [first.confidence, first.checks], learned: [learned.confidence, learned.checks], again: again.confidence });
+    });
+
+    await T('One payment announced twice is not added twice: reversal pair merged, look-alike alerts flagged', () => {
+        freshEngine();
+        g('smsTake')([{ ...smsMsg('rv-1', 'TRANSACTION REVERSAL, Credit account:2080***2939,Location:UBER, LK,Amount:207.65 LKR,Av.Bal:11762.17 LKR,Date:16.11.26,Time:05:54, Hot Line:0112462462', NOW), address: 'HNB' }]);
+        g('smsTake')([{ ...smsMsg('rv-2', 'LKR 207.65 credited to Ac No:20802XXXXX39 on 16/11/26 05:54:22 Reason:ECOM REV/002117/ID:113007 Bal:LKR 11,762.17', NOW + 20000), address: 'HNB' }]);
+        const reversals = g('smsQueue').length;
+        freshEngine();
+        g('smsTake')([smsMsg('tw-1', 'Dear Cardholder, Purchase at SUNIL STORES LK for LKR 1,250.00 on 16/11/26 10:14 AM has been authorised on your debit card ending #5370.', NOW)]);
+        g('smsTake')([smsMsg('tw-2', 'Your A/C ...1234 has been debited with LKR 1,250.00 at SUNIL STORES on 16/11/2026', NOW + 30000)]);
+        const q = g('smsQueue');
+        const flagged = q.length === 2 && q.some((i) => /same as another/.test(i.checks.join()) && i.confidence === 'medium');
+        // Two withdrawals in a row (same wording, other time and balance) and two shops charging the same amount are separate.
+        freshEngine();
+        const wd = (n) => smsMsg(`wd-${n}`, `Withdrawal at COMBANK ATM KANDY LK for LKR 40,000.00 on 16/11/26 06:5${n} PM from your debit card ending #5370. Avl Bal LKR ${90 - n * 40},000.00`, NOW + n * 60000);
+        g('smsTake')([wd(1)]); g('smsTake')([wd(2)]);
+        const twoCash = g('smsQueue').length === 2 && g('smsQueue').every((i) => i.confidence === 'high');
+        freshEngine();
+        g('smsTake')([smsMsg('sh-1', 'Dear Cardholder, Purchase at SUNIL STORES LK for LKR 700.00 on 16/11/26 10:14 AM has been authorised on your debit card ending #5370.', NOW)]);
+        g('smsTake')([smsMsg('sh-2', 'Your A/C ...1234 has been debited with LKR 700.00 at CITY PHARMACY on 16/11/2026', NOW + 30000)]);
+        const twoShops = g('smsQueue').length === 2 && g('smsQueue').every((i) => i.confidence === 'high');
+        freshEngine();
+        return (reversals === 1 && flagged && twoCash && twoShops) || `reversal pair kept ${reversals} (want 1), look-alike flagged ${flagged}, two withdrawals separate ${twoCash}, two shops separate ${twoShops}`;
+    });
+
+    await T('Payment to your own card: offered as a transfer or ignored, never added as income', async () => {
+        freshEngine();
+        const inc0 = g('monthStats')().income;
+        g('smsTake')([{ ...smsMsg('cp-1', 'Thank you for your payment of LKR 57,018.67 made to Card # 123456*****1234 on ' + new Date().toLocaleDateString('en-GB').replace(/\//g, '-') + '.', NOW), address: 'NTB' }]);
+        g('showSmsSheet')(); await wait(300);
+        const card = document.querySelector('#sms-list .sms-card');
+        const buttons = !!card.querySelector('[data-sms-move="cp-1"]') && !card.querySelector('[data-sms-add]') && /transfer, not income/.test(card.innerText);
+        document.querySelector('#btn-sms-all').click(); await wait(200);
+        const stillWaiting = g('smsQueue').some((i) => i.id === 'cp-1');
+        g('smsIgnore')('cp-1'); await wait(300);
+        freshEngine();
+        return (buttons && stillWaiting && g('monthStats')().income === inc0) || `buttons ${buttons}, add-all left it ${stillWaiting}, income ${inc0}->${g('monthStats')().income}`;
     });
 
     await T('Same SMS received live AND read from the inbox (different ids, seconds apart) is offered once', () => {

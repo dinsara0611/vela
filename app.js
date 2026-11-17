@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.19.1';
+const APP_VERSION = '4.20.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -446,6 +446,7 @@ const normalizeBankMeta = (b) => {
         smsId: str(b.smsId, 120), dedupe: str(b.dedupe, 200), time: str(b.time, 5),
         sources: strs(b.sources, 20).length ? strs(b.sources, 20) : ['sms'], sourceIds: strs(b.sourceIds, 120),
         bodyKeys: Array.isArray(b.bodyKeys) ? b.bodyKeys.slice(0, 20).filter((k) => Number.isFinite(k)) : [],
+        shape: Number.isFinite(b.shape) ? b.shape : null,
         arrivedAt: Number.isFinite(b.arrivedAt) ? b.arrivedAt : null, confidence: str(b.confidence, 10), verifiedAt: str(b.verifiedAt, 40)
     };
 };
@@ -1003,34 +1004,68 @@ const updateThemeChrome = () => {
     }
 };
 
-const applyTheme = (theme) => {
-    state.config.theme = theme === 'light' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', state.config.theme);
-    saveState();
-    updateThemeChrome();
-    renderActive();
+// Only the charts read their colours in JavaScript; everything else follows the CSS variables by itself.
+// So a theme switch redraws the charts on screen (without their grow-in animation) instead of rebuilding the tab.
+const recolorCharts = () => {
+    chartsInstant = true;
+    try {
+        if (currentTab === 'dashboard') renderTrendChart();
+        else if (currentTab === 'analytics') renderAnalytics();
+    } catch (e) { /* charts not ready yet */ } finally { chartsInstant = false; }
 };
 
+const applyTheme = (theme) => {
+    const root = document.documentElement;
+    state.config.theme = theme === 'light' ? 'light' : 'dark';
+    // While the whole palette changes, per-element colour transitions are switched off: hundreds of them
+    // running at once is what made the switch stutter. They come back two frames later.
+    root.classList.add('theme-switching');
+    root.setAttribute('data-theme', state.config.theme);
+    updateThemeChrome();
+    recolorCharts();
+    const done = () => root.classList.remove('theme-switching');
+    requestAnimationFrame(() => requestAnimationFrame(done));
+    setTimeout(done, 400);
+    // Saving (and syncing the setting) can wait until the screen has changed.
+    setTimeout(saveState, 0);
+};
+
+let themeSwitchNo = 0;
 const setTheme = (theme, originEvent) => {
     if (theme === state.config.theme) return;
     const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (!document.startViewTransition || reduce) { applyTheme(theme); return; }
+    // Phones and the Android app: a short cross-fade, which the graphics chip animates on its own, so it stays
+    // smooth at any screen size. The circular reveal repaints the whole screen every frame, so it is kept for
+    // desktop pointers only.
+    const circle = !isNative() && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+    const root = document.documentElement;
+    // The animation needs the browser to draw a frame. If it can't (busy or background tab),
+    // switch the theme anyway so the button never appears to do nothing.
+    let applied = false;
+    const run = () => { if (!applied) { applied = true; applyTheme(theme); } };
+    const mine = ++themeSwitchNo;
+    root.classList.toggle('theme-fade', !circle);
+    const transition = document.startViewTransition(run);
+    setTimeout(run, 400);
+    const cleanup = () => { if (mine === themeSwitchNo) root.classList.remove('theme-fade'); };
+    transition.finished.then(cleanup, cleanup);
+    // A second tap or a background tab skips the animation (the theme is still applied): that is not an error.
+    const ready = transition.ready.then(() => true, () => false);
+    if (!circle) return;
     let x = window.innerWidth / 2;
     let y = window.innerHeight / 2;
     if (originEvent && originEvent.clientX) { x = originEvent.clientX; y = originEvent.clientY; }
     const endRadius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
-    // The animated reveal needs the browser to draw a frame. If it can't (busy or background tab),
-    // switch the theme anyway so the button never appears to do nothing.
-    let applied = false;
-    const run = () => { if (!applied) { applied = true; applyTheme(theme); } };
-    const transition = document.startViewTransition(run);
-    setTimeout(run, 400);
-    transition.ready.then(() => {
-        document.documentElement.animate(
-            { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${endRadius}px at ${x}px ${y}px)`] },
-            { duration: 480, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', pseudoElement: '::view-transition-new(root)' }
-        );
-    }).catch(() => {});
+    ready.then((ok) => {
+        if (!ok) return;
+        try {
+            root.animate(
+                { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${endRadius}px at ${x}px ${y}px)`] },
+                { duration: 480, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', pseudoElement: '::view-transition-new(root)' }
+            );
+        } catch (e) { /* the plain cross-fade is used instead */ }
+    });
 };
 
 /* =========================================================================
@@ -1545,12 +1580,13 @@ const txRow = (t, { showDate = true } = {}) => {
 };
 
 /* ---- Bank SMS tracking (Android): a structured parser for bank transaction messages ----
-   Starts with Commercial Bank of Ceylon; other Sri Lankan banks are read too but always shown for review.
-   Nothing is added without the user's confirmation unless they turn on automatic adding for confident
-   messages. OTPs, promotions, login alerts, balance messages and failed or declined payments are never used. */
+   Reads debit and credit alerts from every Sri Lankan bank Vela knows by name and, with a review, from any other
+   named sender whose wording is clearly about an account or card. Nothing is added without the user's confirmation
+   unless they turn on automatic adding, which only applies to banks whose messages Vela already reads correctly.
+   One-time codes, promotions, login alerts, balance messages, reminders and failed payments are never used. */
 const SMS_KEY = 'VELA_SMS';
 const smsPrefs = () => {
-    const base = { enabled: false, paused: false, autoAdd: false, since: 0, seen: [], accountId: null, lastDetected: 0, lastSync: 0, windowMin: 15 };
+    const base = { enabled: false, paused: false, autoAdd: false, since: 0, seen: [], accountId: null, lastDetected: 0, lastSync: 0, windowMin: 15, trust: {} };
     try { return { ...base, ...(JSON.parse(localStorage.getItem(SMS_KEY) || '{}')) }; } catch (e) { return base; }
 };
 const saveSmsPrefs = (p) => { try { localStorage.setItem(SMS_KEY, JSON.stringify({ ...p, seen: p.seen.slice(-800) })); } catch (e) { /* storage blocked */ } };
@@ -1558,114 +1594,312 @@ const smsPlugin = () => nativePlugin('SmsReader');
 let smsQueue = [];
 let smsEditing = null; // the message being edited in the entry form
 
-// Sender IDs and names. Commercial Bank is the bank this parser is tuned for.
+// Banks, card issuers and wallets whose alerts Vela knows by name. `sender` is tested against the letters of the SMS
+// sender ID, `body` against the text (shared or pasted messages have no sender ID). Sender IDs and message shapes
+// follow real alerts: the owner's own ComBank messages and samples published in open-source Sri Lankan trackers
+// (see tests/feature-check.js). `verified` banks can be added automatically from the start; the others first have
+// to be read correctly a few times on this phone (see smsLearn).
 const SMS_BANKS = [
-    { name: 'Commercial Bank', sender: /^(combank|com ?bank|commercial|cbc|combnk)/i, body: /\b(combank|com ?bank|commercial bank)\b/i, tuned: true },
-    { name: 'BOC', sender: /^boc\b|bankofceylon/i, body: /\bbank of ceylon\b/i },
-    { name: 'HNB', sender: /^hnb\b/i, body: /\bhatton national\b/i },
-    { name: 'Sampath Bank', sender: /^sampath/i, body: /\bsampath bank\b/i },
-    { name: "People's Bank", sender: /^people'?s/i, body: /\bpeople'?s bank\b/i },
-    { name: 'NSB', sender: /^nsb\b/i, body: /\bnational savings bank\b/i },
-    { name: 'Nations Trust', sender: /^(ntb|nations)/i, body: /\bnations trust\b/i },
-    { name: 'Seylan Bank', sender: /^seylan/i, body: /\bseylan\b/i },
-    { name: 'DFCC', sender: /^dfcc/i, body: /\bdfcc\b/i },
-    { name: 'NDB', sender: /^ndb\b/i, body: /\bndb bank\b/i },
-    { name: 'Pan Asia Bank', sender: /^(pabc|panasia)/i, body: /\bpan asia bank\b/i },
-    { name: 'Amana Bank', sender: /^amana/i, body: /\bamana bank\b/i }
+    { name: 'Commercial Bank', short: 'ComBank', logo: 'combank', sender: /^(combank|combnk|commercialb|cbc$)/i, body: /\b(combank|com ?bank|commercial bank)\b/i, verified: true },
+    { name: 'Sampath Bank', short: 'Sampath', logo: 'sampath', sender: /^(sampath|samp(cc|txn|bank))/i, body: /\bsampath\b/i },
+    { name: 'HNB', short: 'HNB', logo: 'hnb', sender: /^hnb/i, body: /\b(hnb|hatton national)\b/i },
+    { name: 'BOC', short: 'BOC', logo: 'boc', sender: /^(boc$|boc(sl|bank|alert|smart)|bankofceylon)/i, body: /\b(boc|bank of ceylon)\b/i },
+    { name: "People's Bank", short: "People's", logo: 'peoples', sender: /^(peoplesb|peoplebank|peoples$|pbank$|pplbank)/i, body: /\bpeople'?s bank\b/i },
+    { name: 'NSB', short: 'NSB', logo: 'nsb', sender: /^nsb/i, body: /\b(nsb|national savings bank)\b/i },
+    { name: 'Nations Trust', short: 'NTB', logo: 'ntb', sender: /^(ntb|nationstrust|nations$|amex)/i, body: /\b(ntb|nations trust|american express|amex)\b/i },
+    { name: 'NDB', short: 'NDB', logo: 'ndb', sender: /^ndb/i, body: /\b(ndb|national development bank)\b/i },
+    { name: 'Seylan Bank', short: 'Seylan', logo: 'seylan', sender: /^seylan/i, body: /\bseylan\b/i },
+    { name: 'DFCC', short: 'DFCC', logo: 'dfcc', sender: /^dfcc/i, body: /\bdfcc\b/i },
+    { name: 'Pan Asia Bank', short: 'Pan Asia', logo: 'pabc', sender: /^(pabc|panasia)/i, body: /\b(pabc|pan asia)\b/i },
+    { name: 'Union Bank', short: 'Union Bank', logo: 'unionbank', sender: /^(unionb|ubc$)/i, body: /\bunion bank\b/i },
+    { name: 'Amana Bank', short: 'Amana', logo: 'amana', sender: /^amana/i, body: /\bamana bank\b/i },
+    { name: 'Cargills Bank', short: 'Cargills Bank', logo: 'cargillsbank', sender: /^cargillsb/i, body: /\bcargills bank\b/i },
+    { name: 'HSBC', short: 'HSBC', logo: 'hsbc', sender: /^hsbc/i, body: /\bhsbc\b/i },
+    { name: 'Standard Chartered', short: 'StanChart', logo: 'scb', sender: /^(scb|stanchart|standardchart)/i, body: /\b(standard chartered|stanchart)\b/i },
+    { name: 'MCB', short: 'MCB', logo: 'mcb', sender: /^mcb/i, body: /\bmcb bank\b/i },
+    { name: 'SDB', short: 'SDB', logo: 'sdb', sender: /^(sdb|sanasa)/i, body: /\b(sdb bank|sanasa development)\b/i },
+    { name: 'RDB', short: 'RDB', logo: 'rdb', sender: /^(rdb|pradeshiya)/i, body: /\b(rdb bank|pradeshiya sanwardhana|regional development bank)\b/i },
+    { name: 'HDFC', short: 'HDFC', logo: 'hdfc', sender: /^hdfc/i, body: /\bhdfc bank\b/i },
+    { name: 'LOLC', short: 'LOLC', logo: 'lolc', sender: /^lolc/i, body: /\blolc\b/i },
+    { name: 'FriMi', short: 'FriMi', logo: 'frimi', sender: /^frimi/i, body: /\bfrimi\b/i },
+    { name: 'eZ Cash', short: 'eZ Cash', logo: 'ezcash', sender: /^ezcash/i, body: /\bez ?cash\b/i },
+    { name: 'mCash', short: 'mCash', logo: 'mcash', sender: /^mcash/i, body: /\bmcash\b/i }
 ];
-// Messages that are never transactions.
-const SMS_IGNORE = [
-    [/\b(otp|one[- ]?time (pass(word|code)?|pin)|verification code|security code|passcode)\b/i, 'one-time code'],
-    [/\b(declined|was not successful|unsuccessful|failed|rejected|could not be (processed|completed)|insufficient (funds|balance))\b/i, 'failed or declined'],
+// Named senders that are never bank alerts, even when they talk about money (telecoms, utilities, shops, apps).
+const SMS_NOT_BANKS = /^(dialog|mobitel|sltmobitel|slt$|hutch|airtel|etisalat|lankabell|ceb|leco|nwsdb|waterboard|litro|laugfs|pickme|uber|daraz|kapruka|keells|cargills$|cargillsfood|glomark|arpico|spar|pizzahut|kfc|dominos|mcdonalds|burgerking|koko|mintpay|netflix|spotify|google|facebook|whatsapp|instagram|tiktok|youtube|amazon|temu|aliexpress|govlk|health|police|election)/i;
+
+// A real one-time code message carries the code itself. A transaction alert that only says "Do not share OTP"
+// in its footer (Sampath and HNB do) is not one.
+const SMS_OTP = [
+    /(otp|one[ -]?time ?(pass(word|code)?|pin|code)?|verification ?code|security ?code|passcode|auth(entication)? ?code)[\s\S]{0,90}?(\bis\b|:|=)\s*\d{4,8}\b(?![.,]\d)/i,
+    /(otp|one[ -]?time password)\s*[:\-=]?\s*\d{4,8}\b(?![.,]\d)/i,
+    /\b\d{4,8}\b\s*(is|as) (your|the) (otp|one[ -]?time|verification|security|pin|password|code)/i
+];
+// Never transactions, whatever else the text says.
+const SMS_HARD_IGNORE = [
+    [/\b(declined|was not successful|unsuccessful|not successful|failed|rejected|could not be (processed|completed)|insufficient (funds|balance))\b/i, 'failed or declined'],
     [/\b(log(ged)?[- ]?in|sign(ed)?[- ]?in|login attempt|new device|password (was )?changed|pin (was )?changed)\b/i, 'login or security alert'],
-    [/(\d+ ?% ?off|\boffer\b|\bdiscount\b|\bcashback\b|\bwin\b|\bcongratulations\b|\bapply now\b|\binstalment plan\b|\bpromo)/i, 'promotion'],
-    [/\b(will be debited|is due on|payment due|due date|minimum (payment|due)|reminder)\b/i, 'reminder, not a transaction'],
-    [/\b(security (alert|warning)|beware of|scheduled maintenance|system maintenance|will be unavailable|temporarily unavailable|auth(entication)? code)\b/i, 'security warning or announcement']
+    [/\b(will be debited|is due on|payment due|due date|minimum (payment|due|amount)|min\.? ?(amt|amount|payment)? ?due|e-?statement|statement (is )?(ready|generated))\b/i, 'reminder or statement, not a transaction']
 ];
-const SMS_AMOUNT_RE = /(LKR|SLR|Rs\.?|USD|US\$)\s*([0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]{1,2})?|[0-9]+(?:\.[0-9]{1,2})?)/gi;
-// Numbers that are a balance or a limit, not what moved.
-const SMS_BALANCE_BEFORE = /(bal(ance)?|avl|avail(able)?|a\/?v ?bal|limit|outstanding|o\/s|current bal|ledger)[^0-9]{0,18}$/i;
-// Kinds of transaction, most specific first. dir: 'out' expense, 'in' income, 'move' transfer to cash, 'rev' reversal.
-const SMS_KINDS = [
-    { kind: 'reversal', dir: 'rev', label: 'Reversal', re: /\b(revers(al|ed)|reverted|void(ed)?|cancell?ed transaction|transaction cancell?ed)\b/i },
-    { kind: 'refund', dir: 'in', label: 'Refund', re: /\brefund(ed)?\b/i },
-    { kind: 'fee', dir: 'out', label: 'Bank charge', re: /\b((service|annual|sms|alert|ledger|maintenance|card|stamp|commission|bank|atm)[ -]?(fee|fees|charge|charges)|charges? (of|debited|levied)|fee (of|debited))\b/i },
-    { kind: 'atm', dir: 'move', label: 'ATM withdrawal', re: /\b(atm|cash withdrawal|cash wdl|withdrawn at|cdm)\b/i },
-    { kind: 'transfer_in', dir: 'in', label: 'Transfer in', re: /\b((fund|ceft|slips|online|inward|ib) ?transfer|transfer(red)?)\b.{0,60}\b(received|credited)\b|\b(received|credited)\b.{0,60}\b(from|via ceft|by transfer)\b|\binward (fund )?transfer\b|\btransfer(red)? from\b(?!.{0,60}\bto\b)/i },
-    { kind: 'transfer_out', dir: 'out', label: 'Transfer out', re: /\b((fund|ceft|slips|online|outward|ib) ?transfer|transfer(red)?|sent)\b.{0,60}\bto\b/i },
-    { kind: 'online', dir: 'out', label: 'Online payment', re: /\b(online|e-?commerce|internet|card not present|ecom|web)\b.{0,40}\b(purchase|payment|transaction|txn|debited|spent)\b|\b(purchase|payment|transaction)\b.{0,30}\b(online|internet)\b|\bat\s+[A-Z0-9 .*]*\.(COM|LK|NET)\b/i },
-    { kind: 'card', dir: 'out', label: 'Card payment', re: /\b(pos|purchase|purchased|card (was )?used|spent|paid at|payment at|txn at|transaction at)\b|\b(payment|transaction|txn) of\b.{0,30}\bat\b/i },
-    { kind: 'bill', dir: 'out', label: 'Bill payment', re: /\b(bill payment|utility payment|paid to|payment to)\b/i },
-    { kind: 'salary', dir: 'in', label: 'Salary', re: /\bsalary\b/i },
-    { kind: 'deposit', dir: 'in', label: 'Deposit', re: /\b(cash deposit|deposited|deposit of|cdm deposit)\b/i },
-    { kind: 'debit', dir: 'out', label: 'Debit', re: /\b(debited|debit of|withdrawn|deducted|charged|has been debited)\b/i, generic: true },
-    { kind: 'credit', dir: 'in', label: 'Credit', re: /\b(credited|credit of|has been credited)\b/i, generic: true }
+// Marketing and announcements: ignored unless the text is also worded like a real, completed transaction.
+const SMS_SOFT_IGNORE = [
+    [/(\d+ ?% ?off|\boffer\b|\bdiscount\b|\bcashback\b|\bwin\b|\bcongratulations\b|\bapply now\b|\binstalment plan\b|\bpromo|\bt&c\b|conditions apply|\benjoy\b)/i, 'promotion'],
+    [/\b(security (alert|warning)|beware of|scheduled maintenance|system maintenance|will be unavailable|temporarily unavailable)\b/i, 'security warning or announcement']
 ];
+const SMS_CONDITIONAL = /\b(will be (credited|debited|given|added)|when you|if you|up ?to|stand a chance|valid (till|until|thru|through|from)|t&c|conditions apply|offer valid)\b/i;
+// Wording only a real transaction alert uses.
+const SMS_STRONG = /\b(debited|credited|purchase (at|of)|withdrawal (at|of|from)|cash withdrawal|transaction (approved|of|alert)|txn (of|at)|auth(orised|orized)? pmt|has been authori[sz]ed|paid to|transferred|transfer (to|from|of)|payment of|deposit(ed)? (to|of|in|at)|used (for|at)|spent|reversal|reversed|refund(ed)?|sms alert|debit (for|of)|credit (for|of)|cefts?|slips|pos)\b/i;
+// For senders Vela doesn't know: the text must be about an account or card being debited or credited.
+const SMS_ACCOUNT_WORDING = /\b(a\/c|acc?|account|acct|card|crd|savings|current)\b[\s\S]{0,80}\b(debited|credited)\b|\b(debited|credited)\b[\s\S]{0,60}\b(a\/c|acc?|account|acct|card|crd)\b/i;
+
+// Amounts: "LKR 1,500.00", "Rs.1,500", "USD 12.99" and (HNB) "670.59 LKR".
+const SMS_CODES = Object.keys(CURRENCIES).join('|');
+const SMS_NUM = '([0-9]{1,3}(?:,[0-9]{3})+(?:\\.[0-9]{1,2})?|[0-9]+(?:\\.[0-9]{1,2})?)';
+const SMS_AMOUNT_A = new RegExp(`(${SMS_CODES}|SLR|Rs\\.?|US\\$)\\s*[:.]?\\s*${SMS_NUM}`, 'gi');
+const SMS_AMOUNT_B = new RegExp(`${SMS_NUM}\\s*(${SMS_CODES}|SLR)\\b`, 'gi');
+const smsCurrency = (c) => { const u = String(c).toUpperCase().replace(/\./g, ''); return u === 'RS' || u === 'SLR' ? 'LKR' : u === 'US$' ? 'USD' : u; };
+// A number is a balance or a limit (not what moved) when one of these labels sits right before it.
+// Whole words only: "HERBAL CARE for LKR 950" is a shop, not a balance.
+const SMS_BALANCE_BEFORE = /\b(?:(?:avl|av|avail|available|curr?|current|ledger|closing|a\/c|acc?|account)?\.?\s?bal(?:ance)?|avl|avail(?:able)?(?:\s+(?:credit|limit))?|(?:credit\s+|cr\.?\s*)?limit|outstanding|o\/s|ledger)\b[\s.:\-]*(?:is|of|now|amt|amount)?[\s.:\-]*$/i;
+const smsAmounts = (body) => {
+    const out = [];
+    let m;
+    SMS_AMOUNT_A.lastIndex = 0;
+    while ((m = SMS_AMOUNT_A.exec(body))) {
+        if (/[A-Za-z]/.test(body[m.index - 1] || '')) continue; // "ORDERS 12" is not "Rs 12"
+        out.push({ cur: smsCurrency(m[1]), value: toNumber(m[2], NaN), at: m.index, end: m.index + m[0].length });
+    }
+    SMS_AMOUNT_B.lastIndex = 0;
+    while ((m = SMS_AMOUNT_B.exec(body))) {
+        const at = m.index;
+        const end = at + m[0].length;
+        if (out.some((o) => at < o.end && end > o.at)) continue; // already read as "LKR 500.00"
+        if (/[\d.,]/.test(body[at - 1] || '')) continue;
+        out.push({ cur: smsCurrency(m[2]), value: toNumber(m[1], NaN), at, end });
+    }
+    out.sort((a, b) => a.at - b.at);
+    out.forEach((a) => { a.balance = SMS_BALANCE_BEFORE.test(body.slice(Math.max(0, a.at - 34), a.at)); });
+    return out.filter((a) => a.value > 0);
+};
+
+// Kinds of transaction. dir: 'out' expense, 'in' income, 'move' cash withdrawal (bank to Cash),
+// 'rev' reversal of an earlier payment, 'card' a payment to the user's own card (a transfer, never income).
+const SMS_KIND = {
+    reversal: { kind: 'reversal', dir: 'rev', label: 'Reversal' },
+    refund: { kind: 'refund', dir: 'in', label: 'Refund' },
+    card_payment: { kind: 'card_payment', dir: 'card', label: 'Card payment' },
+    fee: { kind: 'fee', dir: 'out', label: 'Bank charge' },
+    interest: { kind: 'interest', dir: 'in', label: 'Interest' },
+    salary: { kind: 'salary', dir: 'in', label: 'Salary' },
+    deposit: { kind: 'deposit', dir: 'in', label: 'Deposit' },
+    atm: { kind: 'atm', dir: 'move', label: 'ATM withdrawal' },
+    transfer_in: { kind: 'transfer_in', dir: 'in', label: 'Transfer in' },
+    transfer_out: { kind: 'transfer_out', dir: 'out', label: 'Transfer out' },
+    bill: { kind: 'bill', dir: 'out', label: 'Bill payment' },
+    online: { kind: 'online', dir: 'out', label: 'Online payment' },
+    card: { kind: 'card', dir: 'out', label: 'Card payment' },
+    debit: { kind: 'debit', dir: 'out', label: 'Debit', generic: true },
+    credit: { kind: 'credit', dir: 'in', label: 'Credit', generic: true }
+};
+const SMS_KINDS = Object.values(SMS_KIND);
+// Lower case, with "credit card" / "debit card" / "credit limit" taken out of the way so they are never read
+// as money being credited or debited ("Cr Crd … Auth Pmt" is a purchase on a credit card).
+const smsNorm = (body) => body.toLowerCase()
+    .replace(/credit\s*card|\bcr\.?\s*crd\b|\bcr\.?\s*card\b/g, 'cc-card')
+    .replace(/debit\s*card|\bdr\.?\s*crd\b|\bdr\.?\s*card\b/g, 'dc-card')
+    .replace(/credit\s*limit/g, 'cc-limit')
+    .replace(/available\s*credit/g, 'avl-cc');
+// What kind of transaction the (normalised) text describes, most specific first; null when it isn't one.
+const smsKindOf = (t) => {
+    if (/\b(revers(al|ed)|reverted|void(ed)?|cancell?ed transaction|transaction cancell?ed|(ecom|pos|atm|txn|trx|pur) ?rev)\b/.test(t)) return SMS_KIND.reversal;
+    if (/\brefund(ed)?\b/.test(t)) return SMS_KIND.refund;
+    if (/\bthank you for (your |the )?payment\b|\bpayment\b.{0,60}\b(to|towards|for) (your )?(cc-card|card)\b|\bcard (re)?payment\b|\bcc-card (bill )?(payment|settlement)\b/.test(t)) return SMS_KIND.card_payment;
+    const cr = t.search(/\b(credited|credit (for|of))\b/);
+    const dr = t.search(/\b(debited|debit (for|of)|deducted|charged|withdrawn)\b/);
+    const dir = cr >= 0 && (dr < 0 || cr < dr) ? 'in' : dr >= 0 ? 'out' : null;
+    if (/\b((service|annual|sms|alert|ledger|maintenance|card|stamp|commission|bank|atm)[ -]?(fee|fees|charge|charges)|charges? (of|debited|levied)|fee (of|debited))\b/.test(t)) return SMS_KIND.fee;
+    if (dir !== 'out' && /\b(int\.? ?pd|interest (paid|credited|credit|payment))\b/.test(t)) return SMS_KIND.interest;
+    if (dir !== 'out' && /\bsalary\b/.test(t)) return SMS_KIND.salary;
+    if (dir !== 'out' && /\b(cash deposit|deposited|deposit (of|to|at|in)|cdm)\b/.test(t)) return SMS_KIND.deposit;
+    // "ATM POS Transaction" (NSB) is a card purchase; a withdrawal says so, or mentions an ATM and no purchase.
+    if (dir !== 'in' && (/\b(cash withdrawal|cash wdl|atm (cash )?(withdrawal|wdl|w\/d)|withdrawal (at|from|of)|withdrawn (at|from))\b/.test(t)
+        || (/\batm\b/.test(t) && !/\b(pos|purchase|e-?com|internet)\b/.test(t)))) return SMS_KIND.atm;
+    if (/\b(cefts?|slips|rtgs|(fund|funds|ib|online|inward|outward|bank) ?transfer|transfer(red)?|remittance)\b/.test(t)) {
+        if (dir === 'in' || (dir === null && /\b(inward|received|remittance|transfer(red)? from)\b/.test(t))) return SMS_KIND.transfer_in;
+        if (dir === 'out' || /\bto\b/.test(t)) return SMS_KIND.transfer_out;
+    }
+    if (dir !== 'in' && /\b(bill ?pmt|bill payment|utility payment|paid to|payment to)\b/.test(t)) return SMS_KIND.bill;
+    if (dir !== 'in' && /\b(online|e-?commerce|internet|card not present|ecom|web)\b.{0,40}\b(purchase|payment|transaction|txn|debited|spent)\b|\b(purchase|payment|transaction)\b.{0,30}\b(online|internet)\b|\bsms alert:\s*internet\b|\bat\s+[a-z0-9 .*]*\.(com|lk|net)\b/.test(t)) return SMS_KIND.online;
+    if (dir !== 'in' && /\b(pos|purchase|purchased|card (was )?used|used (for|at)|spent|paid at|payment at|txn at|transaction at|transaction approved|auth(orised|orized)? pmt|has been authori[sz]ed)\b|\b(payment|transaction|txn) of\b.{0,30}\bat\b/.test(t)) return SMS_KIND.card;
+    if (dir === 'out') return SMS_KIND.debit;
+    if (dir === 'in') return SMS_KIND.credit;
+    return null;
+};
 const MONTHS = { jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5, jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11 };
 const titleCase = (s) => s.toLowerCase().replace(/\b[a-z]/g, (c) => c.toUpperCase());
 
-/* ---- Known shops and services: a clean name, the right category and a badge in the brand's colours.
-   Drawn here (no logo files are downloaded), so nothing about your spending leaves the phone.
-   [match, name, category id, badge background, badge text colour, mark] ---- */
+/* ---- Known shops, services and banks: a clean name, the right category and a badge.
+   [logo slug, pattern, name, category, badge background, badge text colour, letters]. More specific brands come
+   first ("Uber Eats" before "Uber"). The real logo (bundled in logos/, see LOGO_SLUGS) is shown when there is one;
+   otherwise a badge in the brand's colours. Banks have no category: they only get the badge. ---- */
 const BRANDS = [
-    [/\bkeells\b|\bjaykay\b/i, 'Keells', 'Food', '#00843D', '#ffffff', 'K'],
-    [/\bcargills\b|\bfood ?city\b/i, 'Cargills', 'Food', '#E31837', '#ffffff', 'C'],
-    [/\bglomark\b/i, 'Glomark', 'Food', '#E2001A', '#ffffff', 'G'],
-    [/\bspar\b/i, 'SPAR', 'Food', '#DA1F26', '#ffffff', 'S'],
-    [/\bsathosa\b/i, 'Sathosa', 'Food', '#0A7A3D', '#ffffff', 'S'],
-    [/\barpico\b/i, 'Arpico', 'Shopping', '#00529B', '#ffffff', 'A'],
-    [/\blaugfs\b/i, 'Laugfs', 'Food', '#E30613', '#ffffff', 'L'],
-    [/uber ?eats/i, 'Uber Eats', 'Food', '#06C167', '#000000', 'UE'],
-    [/\bkfc\b/i, 'KFC', 'Food', '#A3080C', '#ffffff', 'KFC'],
-    [/mcdonald/i, "McDonald's", 'Food', '#DA291C', '#FFC72C', 'M'],
-    [/pizza ?hut/i, 'Pizza Hut', 'Food', '#EE3124', '#ffffff', 'PH'],
-    [/domino/i, "Domino's", 'Food', '#006491', '#ffffff', 'D'],
-    [/burger ?king/i, 'Burger King', 'Food', '#D62300', '#F5EBDC', 'BK'],
-    [/\bkoko\b/i, 'Koko', 'Shopping', '#111111', '#FFD400', 'K'],
-    [/\bdaraz\b/i, 'Daraz', 'Shopping', '#F57224', '#ffffff', 'D'],
-    [/\bodel\b/i, 'ODEL', 'Shopping', '#111111', '#ffffff', 'O'],
-    [/fashion ?bug/i, 'Fashion Bug', 'Shopping', '#E4007C', '#ffffff', 'FB'],
-    [/cool ?planet/i, 'Cool Planet', 'Shopping', '#00A3E0', '#ffffff', 'CP'],
-    [/\bnolimit\b/i, 'Nolimit', 'Shopping', '#E30613', '#ffffff', 'N'],
-    [/\bsinger\b/i, 'Singer', 'Shopping', '#E30613', '#ffffff', 'S'],
-    [/\babans\b/i, 'Abans', 'Shopping', '#0057A8', '#ffffff', 'A'],
-    [/\bsoftlogic\b/i, 'Softlogic', 'Shopping', '#ED1C24', '#ffffff', 'S'],
-    [/aliexpress/i, 'AliExpress', 'Shopping', '#E62E04', '#ffffff', 'A'],
-    [/\btemu\b/i, 'Temu', 'Shopping', '#FB7701', '#ffffff', 'T'],
-    [/\bamazon\b/i, 'Amazon', 'Shopping', '#232F3E', '#FF9900', 'a'],
-    [/\bnetflix\b/i, 'Netflix', 'Entertainment', '#141414', '#E50914', 'N'],
-    [/\bspotify\b/i, 'Spotify', 'Entertainment', '#1DB954', '#000000', 'S'],
-    [/\byoutube\b/i, 'YouTube', 'Entertainment', '#FF0000', '#ffffff', '▶'],
-    [/\bapple\.com|\bitunes\b|\bapple\b/i, 'Apple', 'Entertainment', '#1D1D1F', '#ffffff', ''],
-    [/\bgoogle\b/i, 'Google', 'Entertainment', '#ffffff', '#4285F4', 'G'],
-    [/\buber\b/i, 'Uber', 'Travel', '#000000', '#ffffff', 'U'],
-    [/pick ?me/i, 'PickMe', 'Travel', '#FFC72C', '#111111', 'P'],
-    [/lanka ?ioc|\bioc\b/i, 'Lanka IOC', 'Travel', '#F37021', '#ffffff', 'IOC'],
-    [/ceypetco|ceylon petroleum/i, 'Ceypetco', 'Travel', '#00539F', '#ffffff', 'C'],
-    [/\bdialog\b/i, 'Dialog', 'Utilities', '#E4002B', '#ffffff', 'D'],
-    [/mobitel/i, 'SLT-Mobitel', 'Utilities', '#0054A6', '#ffffff', 'M'],
-    [/\bslt\b|sri lanka telecom/i, 'SLT', 'Utilities', '#0054A6', '#ffffff', 'SLT'],
-    [/\bhutch\b/i, 'Hutch', 'Utilities', '#F58220', '#ffffff', 'H'],
-    [/\bairtel\b/i, 'Airtel', 'Utilities', '#E40000', '#ffffff', 'A'],
-    [/\bceb\b|ceylon electricity/i, 'CEB', 'Utilities', '#FDB913', '#111111', 'CEB'],
-    [/\bleco\b/i, 'LECO', 'Utilities', '#00843D', '#ffffff', 'L'],
-    [/\bnwsdb\b|water ?board/i, 'Water Board', 'Utilities', '#0072BC', '#ffffff', 'W']
-];
-const brandFor = (text) => { const s = String(text || ''); return s ? BRANDS.find(([re]) => re.test(s)) || null : null; };
-// Town, country and company suffixes that bank SMS add after a shop name.
+    // Supermarkets and groceries
+    ['keells', 'keells|jaykay', 'Keells', 'Food', '#00843D', '#ffffff', 'K'],
+    ['cargills', 'cargills(?! ?bank)|food ?city', 'Cargills', 'Food', '#E31837', '#ffffff', 'C'],
+    ['glomark', 'glomark', 'Glomark', 'Food', '#E2001A', '#ffffff', 'G'],
+    ['spar', 'spar\\b', 'SPAR', 'Food', '#DA1F26', '#ffffff', 'S'],
+    ['sathosa', 'sathosa', 'Sathosa', 'Food', '#0A7A3D', '#ffffff', 'S'],
+    ['arpico', 'arpico', 'Arpico', 'Shopping', '#00529B', '#ffffff', 'A'],
+    ['laugfsgas', 'laugfs gas', 'Laugfs Gas', 'Utilities', '#E30613', '#ffffff', 'L'],
+    ['laugfs', 'laugfs', 'Laugfs', 'Food', '#E30613', '#ffffff', 'L'],
+    // Food and delivery
+    ['ubereats', 'uber ?eats', 'Uber Eats', 'Food', '#06C167', '#000000', 'UE'],
+    ['pickmefood', 'pick ?me ?food', 'PickMe Food', 'Food', '#FFC72C', '#111111', 'P'],
+    ['kfc', 'kfc\\b', 'KFC', 'Food', '#A3080C', '#ffffff', 'KFC'],
+    ['mcdonalds', 'mc ?donald', "McDonald's", 'Food', '#DA291C', '#FFC72C', 'M'],
+    ['pizzahut', 'pizza ?hut', 'Pizza Hut', 'Food', '#EE3124', '#ffffff', 'PH'],
+    ['dominos', 'domino', "Domino's", 'Food', '#006491', '#ffffff', 'D'],
+    ['burgerking', 'burger ?king', 'Burger King', 'Food', '#D62300', '#F5EBDC', 'BK'],
+    ['subway', 'subway', 'Subway', 'Food', '#008C15', '#FFC600', 'S'],
+    ['tacobell', 'taco ?bell', 'Taco Bell', 'Food', '#702082', '#ffffff', 'TB'],
+    ['popeyes', 'popeyes', 'Popeyes', 'Food', '#F26722', '#ffffff', 'P'],
+    ['barista', 'barista', 'Barista', 'Food', '#5C3317', '#ffffff', 'B'],
+    ['dinemore', 'dinemore', 'Dinemore', 'Food', '#E31E24', '#ffffff', 'D'],
+    ['pereraandsons', 'perera (?:&|and) sons|p ?& ?s\\b', 'Perera & Sons', 'Food', '#E4002B', '#ffffff', 'P&S'],
+    // Shopping
+    ['koko', 'koko\\b', 'Koko', 'Shopping', '#1B3FA0', '#ffffff', 'K'],
+    ['mintpay', 'mintpay', 'Mintpay', 'Shopping', '#3DDC97', '#0B1F17', 'M'],
+    ['daraz', 'daraz', 'Daraz', 'Shopping', '#F57224', '#ffffff', 'D'],
+    ['kapruka', 'kapruka', 'Kapruka', 'Shopping', '#E4002B', '#ffffff', 'K'],
+    ['odel', 'odel\\b', 'ODEL', 'Shopping', '#111111', '#ffffff', 'O'],
+    ['fashionbug', 'fashion ?bug', 'Fashion Bug', 'Shopping', '#E4007C', '#ffffff', 'FB'],
+    ['coolplanet', 'cool ?planet', 'Cool Planet', 'Shopping', '#00A3E0', '#ffffff', 'CP'],
+    ['nolimit', 'nolimit', 'Nolimit', 'Shopping', '#E30613', '#ffffff', 'N'],
+    ['houseoffashions', 'house of fashions?', 'House of Fashions', 'Shopping', '#111111', '#ffffff', 'HF'],
+    ['singer', 'singer\\b', 'Singer', 'Shopping', '#E30613', '#ffffff', 'S'],
+    ['abans', 'abans', 'Abans', 'Shopping', '#0057A8', '#ffffff', 'A'],
+    ['softlogic', 'softlogic', 'Softlogic', 'Shopping', '#ED1C24', '#ffffff', 'S'],
+    ['damro', 'damro', 'Damro', 'Shopping', '#E30613', '#ffffff', 'D'],
+    ['aliexpress', 'ali ?express', 'AliExpress', 'Shopping', '#E62E04', '#ffffff', 'A'],
+    ['temu', 'temu\\b', 'Temu', 'Shopping', '#FB7701', '#ffffff', 'T'],
+    ['shein', 'shein', 'SHEIN', 'Shopping', '#111111', '#ffffff', 'S'],
+    ['ebay', 'ebay', 'eBay', 'Shopping', '#ffffff', '#0064D2', 'e'],
+    // Entertainment and subscriptions
+    ['netflix', 'netflix', 'Netflix', 'Entertainment', '#141414', '#E50914', 'N'],
+    ['spotify', 'spotify', 'Spotify', 'Entertainment', '#1DB954', '#000000', 'S'],
+    ['youtube', 'youtube', 'YouTube', 'Entertainment', '#FF0000', '#ffffff', '▶'],
+    ['primevideo', 'prime ?video|amazon prime', 'Prime Video', 'Entertainment', '#00A8E1', '#ffffff', 'P'],
+    ['disney', 'disney', 'Disney+', 'Entertainment', '#113CCF', '#ffffff', 'D+'],
+    ['steam', 'steam ?(?:games|powered)?\\b|valve\\b', 'Steam', 'Entertainment', '#171A21', '#ffffff', 'S'],
+    ['playstation', 'playstation|sony interactive', 'PlayStation', 'Entertainment', '#003791', '#ffffff', 'PS'],
+    ['openai', 'openai|chatgpt', 'ChatGPT', 'Other', '#10A37F', '#ffffff', 'AI'],
+    ['claude', 'anthropic|claude\\b', 'Claude', 'Other', '#D97757', '#ffffff', 'C'],
+    ['adobe', 'adobe', 'Adobe', 'Other', '#FA0F00', '#ffffff', 'A'],
+    ['canva', 'canva', 'Canva', 'Other', '#00C4CC', '#ffffff', 'C'],
+    ['microsoft', 'microsoft|msft\\b', 'Microsoft', 'Other', '#ffffff', '#737373', 'M'],
+    ['github', 'github', 'GitHub', 'Other', '#181717', '#ffffff', 'GH'],
+    ['meta', 'facebk|facebook|meta ?(?:ads|platforms)', 'Meta', 'Other', '#0866FF', '#ffffff', 'M'],
+    ['paypal', 'paypal', 'PayPal', 'Other', '#003087', '#ffffff', 'PP'],
+    ['apple', 'apple\\.com|itunes|apple(?: (?:music|tv|store|one|pay|services|icloud))?$', 'Apple', 'Entertainment', '#1D1D1F', '#ffffff', ''],
+    ['amazon', 'amazon|amzn', 'Amazon', 'Shopping', '#232F3E', '#FF9900', 'a'],
+    ['google', 'google', 'Google', 'Entertainment', '#ffffff', '#4285F4', 'G'],
+    // Transport and travel
+    ['uber', 'uber\\b', 'Uber', 'Travel', '#000000', '#ffffff', 'U'],
+    ['pickme', 'pick ?me', 'PickMe', 'Travel', '#FFC72C', '#111111', 'P'],
+    ['srilankan', 'srilankan|sri lankan air', 'SriLankan Airlines', 'Travel', '#00529B', '#ffffff', 'UL'],
+    ['booking', 'booking\\.com', 'Booking.com', 'Travel', '#003580', '#ffffff', 'B.'],
+    ['agoda', 'agoda', 'Agoda', 'Travel', '#ffffff', '#5392F9', 'a'],
+    ['airbnb', 'airbnb', 'Airbnb', 'Travel', '#FF5A5F', '#ffffff', 'A'],
+    ['lankaioc', 'lanka ?ioc|ioc\\b', 'Lanka IOC', 'Travel', '#F37021', '#ffffff', 'IOC'],
+    ['ceypetco', 'ceypetco|ceylon petroleum', 'Ceypetco', 'Travel', '#00539F', '#ffffff', 'C'],
+    ['sinopec', 'sinopec', 'Sinopec', 'Travel', '#E60012', '#ffffff', 'S'],
+    // Phone, internet and utilities
+    ['dialog', 'dialog\\b', 'Dialog', 'Utilities', '#E4002B', '#ffffff', 'D'],
+    ['mobitel', 'mobitel', 'SLT-Mobitel', 'Utilities', '#0054A6', '#ffffff', 'M'],
+    ['slt', 'slt\\b|sri lanka telecom', 'SLT', 'Utilities', '#0054A6', '#ffffff', 'SLT'],
+    ['hutch', 'hutch\\b', 'Hutch', 'Utilities', '#F58220', '#ffffff', 'H'],
+    ['airtel', 'airtel', 'Airtel', 'Utilities', '#E40000', '#ffffff', 'A'],
+    ['ceb', 'ceb\\b|ceylon electricity', 'CEB', 'Utilities', '#FDB913', '#111111', 'CEB'],
+    ['leco', 'leco\\b', 'LECO', 'Utilities', '#00843D', '#ffffff', 'L'],
+    ['waterboard', 'nwsdb|water ?board', 'Water Board', 'Utilities', '#0072BC', '#ffffff', 'W'],
+    ['litro', 'litro', 'Litro Gas', 'Utilities', '#0054A6', '#ffffff', 'L'],
+    // Health
+    ['healthguard', 'healthguard', 'Healthguard', 'Health', '#00A651', '#ffffff', 'H'],
+    ['asiri', 'asiri\\b', 'Asiri Hospitals', 'Health', '#00A0AF', '#ffffff', 'A'],
+    ['nawaloka', 'nawaloka', 'Nawaloka', 'Health', '#0054A6', '#ffffff', 'N'],
+    ['durdans', 'durdans', 'Durdans', 'Health', '#00529B', '#ffffff', 'D'],
+    ['osusala', 'osu ?sala|state pharm', 'Osu Sala', 'Health', '#00843D', '#ffffff', 'O'],
+    // Banks and wallets (badge only)
+    ['combank', 'combank|commercial bank', 'Commercial Bank', null, '#0B4EA2', '#ffffff', 'CB'],
+    ['sampath', 'sampath', 'Sampath Bank', null, '#F58220', '#ffffff', 'S'],
+    ['hnb', 'hnb\\b|hatton national', 'HNB', null, '#FDB913', '#111111', 'HNB'],
+    ['boc', 'boc\\b|bank of ceylon', 'BOC', null, '#FFC20E', '#111111', 'BOC'],
+    ['peoples', "people'?s bank", "People's Bank", null, '#D71920', '#ffffff', 'PB'],
+    ['nsb', 'nsb\\b|national savings bank', 'NSB', null, '#F58220', '#ffffff', 'NSB'],
+    ['ntb', 'ntb\\b|nations trust', 'Nations Trust', null, '#00843D', '#ffffff', 'NTB'],
+    ['ndb', 'ndb\\b|national development bank', 'NDB', null, '#00529B', '#ffffff', 'NDB'],
+    ['seylan', 'seylan', 'Seylan Bank', null, '#C8102E', '#ffffff', 'S'],
+    ['dfcc', 'dfcc', 'DFCC', null, '#E4002B', '#ffffff', 'DFCC'],
+    ['pabc', 'pabc\\b|pan asia', 'Pan Asia Bank', null, '#0D47A1', '#ffffff', 'PABC'],
+    ['unionbank', 'union bank', 'Union Bank', null, '#1565C0', '#ffffff', 'UB'],
+    ['amana', 'amana', 'Amana Bank', null, '#00897B', '#ffffff', 'A'],
+    ['cargillsbank', 'cargills ?bank', 'Cargills Bank', null, '#D32F2F', '#ffffff', 'CB'],
+    ['hsbc', 'hsbc', 'HSBC', null, '#DB0011', '#ffffff', 'HSBC'],
+    ['scb', 'standard chartered|stanchart', 'Standard Chartered', null, '#0072AA', '#ffffff', 'SC'],
+    ['frimi', 'frimi', 'FriMi', null, '#E91E63', '#ffffff', 'F'],
+    ['ezcash', 'ez ?cash', 'eZ Cash', null, '#FF6F00', '#ffffff', 'eZ'],
+    ['mcash', 'mcash', 'mCash', null, '#0054A6', '#ffffff', 'm'],
+    ['mcb', 'mcb\b', 'MCB', null, '#006A4E', '#ffffff', 'MCB'],
+    ['sdb', 'sdb\b|sanasa', 'SDB', null, '#00843D', '#ffffff', 'SDB'],
+    ['rdb', 'rdb\b|pradeshiya', 'RDB', null, '#0A7A8C', '#ffffff', 'RDB'],
+    ['hdfc', 'hdfc', 'HDFC', null, '#004C8F', '#ffffff', 'HDFC'],
+    ['lolc', 'lolc', 'LOLC', null, '#C8102E', '#ffffff', 'LOLC']
+].map(([slug, src, name, cat, bg, fg, mark]) => ({
+    slug, name, cat, bg, fg, mark,
+    // At the start of a name, optionally after "The" or a payment processor's prefix ("GOOGLE *YouTube", "PAYPAL *NETFLIX").
+    start: new RegExp(`^(?:the\\s+|[a-z0-9]{2,8}\\s?\\*\\s?)?(?:${src})`, 'i'),
+    any: new RegExp(`\\b(?:${src})`, 'i')
+}));
+// The brand a name belongs to. Names read from bank SMS must start with it ("BARISTA - CARGILLS SQUARE" is Barista,
+// not Cargills). Short hand-written names may mention it anywhere ("Lunch at KFC"); the first one mentioned wins.
+const brandFor = (text, startOnly = false) => {
+    const s = String(text || '').trim();
+    if (!s) return null;
+    const first = BRANDS.find((b) => b.start.test(s));
+    if (first || startOnly || s.split(/\s+/).length > 3) return first || null;
+    let best = null;
+    let at = Infinity;
+    BRANDS.forEach((b) => { const m = b.any.exec(s); if (m && m.index < at) { best = b; at = m.index; } });
+    return best;
+};
+// Town, country, company and terminal codes that bank SMS add after a shop name:
+// "KOKO COLOMBO 03 LK" -> "Koko", "Google One 650-2530000 US" -> "Google One", "UBER EATS 852 LK" -> "Uber Eats".
 const SL_PLACES = 'colombo|col|kandy|galle|negombo|maharagama|nugegoda|dehiwala|mount lavinia|moratuwa|kotte|battaramulla|kollupitiya|wellawatte|bambalapitiya|rajagiriya|malabe|kadawatha|kiribathgoda|wattala|ja-?ela|gampaha|panadura|kurunegala|matara|jaffna|anuradhapura|kaduwela|homagama|piliyandala|boralesgamuwa|pannipitiya|ratmalana|kelaniya|kalutara|horana|chilaw|badulla|ratnapura|trincomalee|batticaloa';
+const SMS_COUNTRY = /[\s,*#\-]+(LK|LKA|SL|US|USA|SE|IE|GB|UK|SG|IN|AE|AU|NL|DE|FR|HK|CA|JP|LU|CY|MT|CH|MY|TH|CN)$/i;
 const cleanMerchant = (raw) => {
-    let s = String(raw || '').replace(/\s{2,}/g, ' ').trim();
-    for (let i = 0; i < 4; i++) {
+    let s = String(raw || '').replace(/\s+/g, ' ').trim();
+    s = s.replace(/^(the|merchant|m\/s)\s+/i, '').replace(/[\s.,:;\-*#]+$/, '');
+    // The country code comes last, once ("TOYS R US LK" keeps its "US").
+    s = s.replace(SMS_COUNTRY, '');
+    for (let i = 0; i < 6; i++) {
         const before = s;
-        s = s.replace(/[\s,*#\-]+(lk|lka|sl|sri lanka|ceylon|sg|in|us|gb)$/i, '')
-            .replace(/[\s,]+\(?(pvt|private)?\)?\s*(ltd|limited|plc)\.?$/i, '')
-            .replace(new RegExp(`[\\s,]+(${SL_PLACES})(\\s*0?\\d{1,2})?$`, 'i'), '')
-            .replace(/[\s,*#\-]+\d{1,6}$/, '')
+        s = s.replace(/[\s.,:;\-*#]+$/, '')
+            .replace(/[\s,]+\+?\d[\d\s\-]{6,}\d$/, '') // phone numbers
+            .replace(/\s*@\s*\d+$/, '')
+            .replace(/[\s,]+\(?(pvt|private)\)?\.?(\s*\(?(ltd|limited)\)?\.?)?$/i, '')
+            .replace(/[\s,]+(ltd|limited|plc|llc|inc|sarl|pte|gmbh)\.?$/i, '')
+            .replace(new RegExp(`[\\s,\\-]+(${SL_PLACES})(\\s*0?\\d{1,2})?$`, 'i'), '')
+            .replace(/(\s+#?\d{2,8})+$/, '') // shop or terminal numbers
+            .replace(/\s+-\s*\d{4,}$/, '')
             .trim();
         if (s === before) break;
     }
-    return s ? titleCase(s) : '';
+    // A payment processor's code, with the city after it: "Spotify P47EA6D4BC STOCKHOLM" -> "Spotify".
+    s = s.replace(/\s+(?=[a-z*]*\d)(?=\d*[a-z])[a-z0-9*]{4,12}(\s+[a-z]+)?$/i, '').replace(/[\s.,:;\-*#]+$/, '').trim();
+    if (s.length < 2) return '';
+    if (s.length > 48) s = s.slice(0, 48).trim();
+    // SHOUTED names are tidied; names the bank already wrote in mixed case are kept as they are.
+    return s === s.toUpperCase() ? titleCase(s) : s;
 };
 // Entries added from bank SMS before shop names were cleaned ("Koko Colombo 03 Lk"): tidy the ones the user hasn't
 // renamed (name still equals the shop name Vela read). Runs on start; changes nothing it isn't sure about.
@@ -1683,53 +1917,139 @@ const tidyBankEntryNames = () => {
             return;
         }
         const clean = cleanMerchant(t.bank.merchant);
-        const b = brandFor(clean);
-        const name = b ? b[1] : clean;
+        const b = brandFor(clean, true);
+        const name = b ? b.name : clean;
         if (!name || name === t.desc) return;
         t.desc = name;
         t.bank.merchant = name;
-        if (b && t.type === 'expense' && t.category === 'Other' && expenseCatExists(b[2])) t.category = b[2];
+        if (b && b.cat && t.type === 'expense' && t.category === 'Other' && expenseCatExists(b.cat)) t.category = b.cat;
         changed++;
         queueSync('transaction', t.id, 'upsert', false);
     });
     if (changed) saveState();
 };
-// Real logos bundled with the app in logos/ (downloaded once by scripts/fetch-logos.mjs and checked by eye),
-// so showing them never contacts anyone. Brands without a verified logo get a badge in their colours.
-const LOGO_SLUGS = new Set(['aliexpress', 'amazon', 'apple', 'arpico', 'burgerking', 'cargills', 'ceb', 'ceypetco', 'combank', 'daraz', 'dialog', 'dominos', 'glomark', 'google', 'keells', 'kfc', 'koko', 'lankaioc', 'mcdonalds', 'mobitel', 'netflix', 'nolimit', 'pickme', 'pizzahut', 'singer', 'slt', 'spar', 'spotify', 'temu', 'uber', 'ubereats', 'waterboard', 'youtube']);
-const LOGO_ALIAS = { sltmobitel: 'mobitel' };
-const logoSlug = (name) => { const s = String(name || '').toLowerCase().replace(/[^a-z0-9]/g, ''); const k = LOGO_ALIAS[s] || s; return LOGO_SLUGS.has(k) ? k : null; };
-const logoImg = (slug, alt = '') => `<img src="logos/${slug}.png" alt="${escapeHtml(alt)}" loading="lazy" decoding="async" draggable="false" onerror="this.parentNode.classList.remove('has-logo');this.remove()">`;
+// Real logos bundled with the app in logos/: each brand's official Google Play app icon (or its site icon when it has
+// no app), fetched once by scripts/fetch-logos.mjs and checked by eye, so showing them never contacts anyone.
+// Brands without a verified logo get a badge in their colours.
+const LOGO_SLUGS = new Set(['abans', 'agoda', 'airbnb', 'airtel', 'aliexpress', 'amana', 'amazon', 'apple', 'arpico', 'boc', 'booking', 'burgerking', 'canva', 'cargills', 'cargillsbank', 'ceb', 'ceypetco', 'claude', 'combank', 'daraz', 'dfcc', 'dialog', 'disney', 'dominos', 'ebay', 'frimi', 'github', 'glomark', 'google', 'hdfc', 'hnb', 'hsbc', 'hutch', 'kapruka', 'keells', 'kfc', 'koko', 'lankaioc', 'laugfsgas', 'leco', 'litro', 'lolc', 'mcash', 'mcb', 'mcdonalds', 'mintpay', 'mobitel', 'nawaloka', 'ndb', 'netflix', 'nsb', 'ntb', 'openai', 'pabc', 'paypal', 'peoples', 'pickme', 'pizzahut', 'playstation', 'primevideo', 'rdb', 'sampath', 'seylan', 'singer', 'slt', 'softlogic', 'spar', 'spotify', 'srilankan', 'steam', 'subway', 'tacobell', 'temu', 'uber', 'ubereats', 'unionbank', 'waterboard', 'youtube']);
+const LOGO_ALIAS = { pickmefood: 'pickme' };
+const logoSlug = (slug) => { const k = LOGO_SLUGS.has(slug) ? slug : LOGO_ALIAS[slug]; return k && LOGO_SLUGS.has(k) ? k : null; };
+const logoImg = (slug, alt = '') => `<img src="logos/${slug}.png" alt="${escapeHtml(alt)}" decoding="async" draggable="false" onerror="this.parentNode.classList.remove('has-logo');this.remove()">`;
+const brandBadge = (b, extra = '') => {
+    const slug = logoSlug(b.slug);
+    const mark = b.mark ? `<span class="brand-mark${b.mark.length > 2 ? ' is-long' : ''}">${escapeHtml(b.mark)}</span>` : icon('c-Shopping');
+    return `<span class="cat-badge brand-badge${slug ? ' has-logo' : ''}${extra}" style="--brand-bg:${b.bg};--brand-fg:${b.fg}" title="${escapeHtml(b.name)}">${slug ? logoImg(slug) : ''}${mark}</span>`;
+};
 // The badge for an entry: the shop's real logo when bundled, else its brand colours, else its category icon.
 const entryBadge = (desc, category, type) => {
     const b = brandFor(desc);
-    if (!b) return catBadge(category, type);
-    const slug = logoSlug(b[1]);
-    const mark = b[5] ? `<span class="brand-mark${b[5].length > 2 ? ' is-long' : ''}">${escapeHtml(b[5])}</span>` : icon('c-Shopping');
-    return `<span class="cat-badge brand-badge${slug ? ' has-logo' : ''}" style="--brand-bg:${b[3]};--brand-fg:${b[4]}" title="${escapeHtml(b[1])}">${slug ? logoImg(slug) : ''}${mark}</span>`;
+    return b ? brandBadge(b) : catBadge(category, type);
 };
 // Account and card numbers are shown as their last 4 digits only.
 const maskSms = (body) => String(body || '')
     .replace(/\b(?:[0-9][0-9 *xX#-]{6,}[0-9])\b/g, (m) => { const d = m.replace(/\D/g, ''); return d.length >= 8 ? `••${d.slice(-4)}` : m; })
     .replace(/\b[xX*#]{2,}\s?([0-9]{3,4})\b/g, '••$1');
-// Date written in the message (Sri Lankan banks use day/month), checked against when it arrived.
+// The date and time written in the message. Sri Lankan banks write day/month; every date found is checked
+// against when the message arrived and the closest plausible one wins (up to 60 days old, at most a day ahead).
+const SMS_MONTH = 'jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?';
 const smsDateTime = (body, receivedMs) => {
     const got = new Date(receivedMs || Date.now());
-    let d = null;
-    let m = /\b(\d{1,2})[\/.-](\d{1,2})[\/.-](\d{2,4})\b/.exec(body);
-    if (m) { const y = Number(m[3].length === 2 ? `20${m[3]}` : m[3]); d = new Date(y, Number(m[2]) - 1, Number(m[1])); }
-    if (!d && (m = /\b(\d{4})-(\d{2})-(\d{2})\b/.exec(body))) d = new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
-    if (!d && (m = /\b(\d{1,2})[\s-]([A-Za-z]{3})[a-z]*[\s,-]+(\d{2,4})\b/.exec(body)) && MONTHS[m[2].toLowerCase()] !== undefined) d = new Date(Number(m[3].length === 2 ? `20${m[3]}` : m[3]), MONTHS[m[2].toLowerCase()], Number(m[1]));
-    const t = /\b(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp][Mm])?\b/.exec(body);
+    const year4 = (y) => (y < 100 ? 2000 + y : y);
+    const cands = [];
+    let m;
+    const ymd = /\b(\d{4})[\/\-.](\d{1,2})[\/\-.](\d{1,2})\b/g;
+    while ((m = ymd.exec(body))) cands.push(new Date(+m[1], +m[2] - 1, +m[3]));
+    const dmy = /\b(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2}|\d{4})\b/g;
+    while ((m = dmy.exec(body))) {
+        const a = +m[1];
+        const b = +m[2];
+        const y = year4(+m[3]);
+        if (b >= 1 && b <= 12 && a >= 1 && a <= 31) cands.push(new Date(y, b - 1, a));
+        if (a >= 1 && a <= 12 && b >= 1 && b <= 31 && a !== b) cands.push(new Date(y, a - 1, b));
+    }
+    const mon = new RegExp(`\\b(\\d{1,2})[\\s\\-]?(${SMS_MONTH})\\b(?:[\\s\\-,]+(\\d{4}|\\d{2})(?![:\\d]))?`, 'gi');
+    while ((m = mon.exec(body))) cands.push(new Date(m[3] ? year4(+m[3]) : got.getFullYear(), MONTHS[m[2].slice(0, 3).toLowerCase()], +m[1]));
+    const valid = cands.filter((d) => !isNaN(d) && d.getTime() - got.getTime() > -60 * 86400000 && d.getTime() - got.getTime() < 86400000);
+    valid.sort((x, y) => Math.abs(x - got) - Math.abs(y - got));
+    // A time is hh:mm[:ss] [am/pm]; never part of an amount.
     let time = null;
-    if (t) { let hh = Number(t[1]); if (t[3] && /p/i.test(t[3]) && hh < 12) hh += 12; if (t[3] && /a/i.test(t[3]) && hh === 12) hh = 0; if (hh < 24) time = `${pad2(hh)}:${t[2]}`; }
-    const valid = d && !isNaN(d) && Math.abs(daysBetween(d, got)) <= 45;
-    return { date: toISODate(valid ? d : got), time, fromMessage: !!valid };
+    const tre = /\b(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp][Mm])?\b/g;
+    while ((m = tre.exec(body))) {
+        if (/(lkr|rs\.?|usd|[,.])\s*$/i.test(body.slice(Math.max(0, m.index - 6), m.index))) continue;
+        let hh = +m[1];
+        if (m[3] && /p/i.test(m[3]) && hh < 12) hh += 12;
+        if (m[3] && /a/i.test(m[3]) && hh === 12) hh = 0;
+        if (hh < 24 && +m[2] < 60) { time = `${pad2(hh)}:${m[2]}`; break; }
+    }
+    return { date: toISODate(valid[0] || got), time, fromMessage: valid.length > 0 };
+};
+// Last 4 digits of the card or account ("card ending #5370", "A/C No.8001234567", "AC **8758", "Account:2080***2939").
+const smsLast4 = (body) => {
+    const kw = /(card|\bcrd\b|a\/c|\bac\b|\bacc\b|account|acct)/gi;
+    let k;
+    while ((k = kw.exec(body))) {
+        const m = /^([^\d*xX•]{0,25}?)([0-9Xx*•#.\-]{3,26})/.exec(body.slice(k.index + k[0].length, k.index + k[0].length + 50));
+        if (!m || /\b(lkr|rs|usd|on|at|for)\b|rs\./i.test(m[1])) continue;
+        const run = m[2].replace(/[.\-]+$/, '');
+        if (/^\d+\.\d{1,2}$/.test(run)) continue; // an amount like 2450.00
+        const d = /(\d{4})$/.exec(run);
+        if (d) return d[1];
+    }
+    const e = /\bending(?: in| with)?\s*#?\s*([0-9]{4})\b/i.exec(body);
+    return e ? e[1] : null;
+};
+// Who the money went to or came from.
+const SMS_NAME_STOP = '(?=\\s+(?:on|for|from|using|with|via|by|card|a\\/c|ac|acc|account|ref|reference|dated|date|avl|available|bal|balance|has|was|amount|amt|txn|successful|credited|debited|into|to|\\d{1,2}[\\/\\-.]\\d{1,2})\\b|\\s*[,;(]|\\.\\s|\\.$|\\s+-\\s+(?:avl|bal|ref)|$)';
+const SMS_NOT_A_NAME = /^(your|a\/c|ac\b|acc|account|card|crd|cardholder|customer|x{2,}|\*|\d|lkr|rs\.?\b|usd|any\b|more\b|info|inquir|enquir|further|details|banking|us\b|inq|enq|call\b|get\b|for\b|the\b|an?\b|this\b|atm\b|pos\b|sms\b)/i;
+const smsMerchant = (body, kind) => {
+    const first = (sources) => {
+        for (const src of sources) {
+            const g = new RegExp(src, 'gi');
+            let m;
+            while ((m = g.exec(body))) {
+                const c = cleanMerchant(m[1]);
+                if (c && !SMS_NOT_A_NAME.test(c)) return c;
+                if (m.index === g.lastIndex) g.lastIndex++;
+            }
+        }
+        return '';
+    };
+    // HNB card alerts: "Location:KEELLS SUPER, COLOMBO 03, LK,Amount(Approx.):..."
+    const loc = /\blocation:\s*(.+?)\s*,\s*amount\b/i.exec(body);
+    if (loc) return cleanMerchant(loc[1]);
+    // HNB account alerts: "Reason:MB BillPmt/Mobitel/0701...", "Reason:CEFT/JOHN/DOE". Other reasons are a kind, not a name.
+    const reason = /\breason:\s*(.+?)(?=\s+bal\b|\s+protect\b|\s+hot ?line\b|$)/i.exec(body);
+    if (reason) {
+        const bill = /bill ?pmt\/([^\/]+)/i.exec(reason[1]);
+        if (bill) return cleanMerchant(bill[1]);
+        const xfer = /^(?:cefts?|slips|rtgs)\/(.+)$/i.exec(reason[1].trim());
+        return xfer ? cleanMerchant(xfer[1].split('/').filter((p) => /[A-Za-z]/.test(p)).join(' ')) : '';
+    }
+    const who = kind.dir === 'in' || kind.dir === 'rev' ? `\\b(?:from|by)\\s+(.+?)${SMS_NAME_STOP}` : `\\b(?:paid to|transfer(?:red)? to|payment to|to)\\s+(.+?)${SMS_NAME_STOP}`;
+    const found = first([`\\bat\\s+(?!\\d{1,2}[:.]\\d{2})(.+?)${SMS_NAME_STOP}`, `@\\s*(?!\\d{1,2}[:.]\\d{2})(.+?)${SMS_NAME_STOP}`]) || first([who]);
+    if (found) return found;
+    // Sampath: "LKR 4,025.00 debited from AC **8758 for PICKME - 37419306"
+    const forWhat = first([`\\bfor\\s+(.+?)${SMS_NAME_STOP}`]);
+    return forWhat && !/\b(transaction|payment|purchase|withdrawal|transfer|alerts?|inquir|enquir)/i.test(forWhat) ? forWhat : '';
+};
+
+// A bank Vela hasn't read on this phone before is "learned": each detection the user confirms unchanged counts,
+// and only after a few does that bank become eligible for automatic adding. A corrected amount, date or
+// direction starts the count again.
+const SMS_TRUST_NEEDED = 3;
+const smsTrustCount = (name) => Math.min(SMS_TRUST_NEEDED, Number((smsPrefs().trust || {})[name]) || 0);
+const smsBankTrusted = (bank) => !!bank && (!!bank.verified || smsTrustCount(bank.name) >= SMS_TRUST_NEEDED);
+const smsLearn = (i, ok) => {
+    const bank = i && SMS_BANKS.find((b) => b.name === i.bank);
+    if (!bank || bank.verified || sourceList(i).every((s) => s === 'shared')) return;
+    const p = smsPrefs();
+    p.trust = { ...(p.trust || {}), [bank.name]: ok ? Math.min(SMS_TRUST_NEEDED, (Number((p.trust || {})[bank.name]) || 0) + 1) : 0 };
+    saveSmsPrefs(p);
 };
 
 /* Reads one SMS. Returns null (with the reason in smsLastReason) when it isn't a transaction, or
-   { type: 'expense' | 'income' | 'atm' | 'reversal', kind, amount, currency, bank, desc, merchant, date, time,
-     ref, last4, confidence: 'high' | 'medium', checks: [...], dedupe, masked } */
+   { type: 'expense' | 'income' | 'atm' | 'reversal' | 'cardpay', kind, amount, currency, bank, desc, merchant, date, time,
+     ref, last4, confidence: 'high' | 'medium', checks: [...], dedupe, masked, fx? } */
 let smsLastReason = '';
 const parseBankSms = (msg) => {
     smsLastReason = '';
@@ -1737,73 +2057,84 @@ const parseBankSms = (msg) => {
     const address = String(msg.address || '').trim();
     const no = (why) => { smsLastReason = why; return null; };
     if (!body) return no('empty');
-    const ignored = SMS_IGNORE.find(([re]) => re.test(body));
-    if (ignored) return no(ignored[1]);
-    const bankBySender = SMS_BANKS.find((b) => b.sender.test(address.replace(/[^A-Za-z']/g, '')));
-    const bankByBody = SMS_BANKS.find((b) => b.body.test(body));
-    const bank = bankBySender || bankByBody;
-    const source = msg.source === 'notification' ? 'notification' : (msg.shared || /^shared|^pasted/i.test(address) || msg.source === 'shared') ? 'shared' : 'sms';
-    const shared = source === 'shared';
-    // Notifications come from a verified Commercial Bank app (checked on the phone by its package name).
-    const fromBankApp = source === 'notification';
-    const bankApp = fromBankApp ? SMS_BANKS[0] : null;
-    if (!bank && !shared && !fromBankApp) return no('not from a known bank');
+    if (SMS_OTP.some((re) => re.test(body))) return no('one-time code');
+    const hard = SMS_HARD_IGNORE.find(([re]) => re.test(body));
+    if (hard) return no(hard[1]);
+    const t = smsNorm(body);
+    const soft = SMS_SOFT_IGNORE.find(([re]) => re.test(body));
+    if (soft && (!SMS_STRONG.test(t) || SMS_CONDITIONAL.test(t))) return no(soft[1]);
 
-    // Amounts: drop the ones that are a balance or a limit.
-    const all = [];
-    let m;
-    SMS_AMOUNT_RE.lastIndex = 0;
-    while ((m = SMS_AMOUNT_RE.exec(body))) all.push({ cur: /^us/i.test(m[1]) ? 'USD' : 'LKR', value: toNumber(m[2], NaN), at: m.index, before: body.slice(Math.max(0, m.index - 30), m.index) });
-    const moved = all.filter((a) => a.value > 0 && !SMS_BALANCE_BEFORE.test(a.before));
+    const source = (msg.shared || msg.source === 'shared' || /^shared|^pasted/i.test(address)) ? 'shared' : 'sms';
+    const shared = source === 'shared';
+    const senderLetters = shared ? '' : address.replace(/[^A-Za-z]/g, '');
+    const phoneSender = !shared && !senderLetters && /\d{4,}/.test(address);
+    // A bank named only in the text counts for shared or pasted messages and for plain phone numbers (flagged below).
+    // A named sender that isn't a bank doesn't become one by mentioning a bank.
+    const bank = (senderLetters ? SMS_BANKS.find((b) => b.sender.test(senderLetters)) : SMS_BANKS.find((b) => b.body.test(body))) || null;
+    let otherSender = '';
+    if (!bank && !shared) {
+        if (!senderLetters) return no('not from a bank');
+        if (SMS_NOT_BANKS.test(senderLetters) || !SMS_ACCOUNT_WORDING.test(t)) return no('not from a known bank');
+        otherSender = address.replace(/[^A-Za-z0-9 +&.\-]/g, '').trim().slice(0, 24);
+    }
+
+    const all = smsAmounts(body);
+    const moved = all.filter((a) => !a.balance);
     if (!moved.length) return no(all.length ? 'only a balance, no transaction' : 'no amount');
-    const kindHit = SMS_KINDS.find((k) => k.re.test(body));
-    if (!kindHit) return no('no transaction wording');
+    let kind = smsKindOf(t);
+    if (!kind) return no('no transaction wording');
     const checks = [];
-    // Two different amounts (e.g. LKR and the USD it was charged in): take the first, ask to check.
-    const amt = moved[0];
-    if (moved.some((a) => a.cur === amt.cur && Math.abs(a.value - amt.value) > 0.005)) checks.push('more than one amount in the message');
+    let amt = moved[0];
+    let fx = null;
+    // A foreign purchase with the bank's rupee figure beside it ("USD 9.99 (LKR 3,312.45)"): the rupees are what left the account.
+    if (amt.cur !== 'LKR') {
+        const lkr = moved.find((a) => a.cur === 'LKR' && a.at > amt.at && a.at - amt.end <= 6);
+        if (lkr) { fx = { amount: amt.value, currency: amt.cur }; amt = lkr; }
+    }
+    if (moved.some((a) => a !== amt && a.cur === amt.cur && Math.abs(a.value - amt.value) > 0.005)) checks.push('more than one amount in the message');
 
     const when = smsDateTime(body, msg.date);
-    // A bank-app notification is posted as the transaction happens, so the time it arrived is the date.
-    if (!when.fromMessage && !fromBankApp) checks.push('date taken from when the message arrived');
-    const ref = (/\b(?:ref(?:erence)?(?: ?no\.?| ?number)?|txn ?(?:id|no)|trx ?(?:id|no)|transaction (?:id|no)|auth(?:orization)? code|approval code|rrn|trace no)\s*[:#.\-]?\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/i.exec(body) || [])[1] || null;
-    const last4 = (/(?:card|a\/c|acc(?:oun)?t|acct)\b[^0-9]{0,25}(?:[0-9xX*#•]{0,14})?([0-9]{4})\b/i.exec(body) || /\bending(?: in| with)?\s*#?\s*([0-9]{4})\b/i.exec(body) || [])[1] || null;
-    const place = /\b(?:at|@)\s+([A-Za-z0-9][A-Za-z0-9 &'.*\-\/]{1,40}?)(?=\s+(?:on|for|via|ref|dated|from|using|with|\d{1,2}[\/.-])\b|\s*[.,;(]|\s*$)/i.exec(body);
-    const party = kindHit.dir === 'in'
-        ? /\bfrom\s+([A-Za-z][A-Za-z0-9 &'.\-]{1,40}?)(?=\s+(?:on|to|ref|dated|via|into|credited|a\/c|acc)\b|\s*[.,;(]|\s*$)/i.exec(body)
-        : /\bto\s+([A-Za-z][A-Za-z0-9 &'.\-]{1,40}?)(?=\s+(?:on|from|ref|dated|via|a\/c|acc)\b|\s*[.,;(]|\s*$)/i.exec(body);
-    let merchant = place && !/^(atm|your|the|a\/c)\b/i.test(place[1]) ? place[1].trim() : (party && !/^(your|the|a\/c|acc)/i.test(party[1]) ? party[1].trim() : '');
-    if (/^\d|^(on|ref)$/i.test(merchant)) merchant = '';
-    // Shop names in bank SMS carry the town and country ("KOKO COLOMBO 03 LK"): keep the shop only.
-    merchant = merchant ? cleanMerchant(merchant) : '';
-    const brand = merchant ? brandFor(merchant) : null;
-    if (brand) merchant = brand[1];
-    if (!merchant && (kindHit.kind === 'card' || kindHit.kind === 'online')) checks.push('no shop name in the message');
-    if (kindHit.generic) checks.push('the message does not say what kind of payment it was');
-    const theBank = bankApp || bank;
-    if (!theBank || !theBank.tuned) checks.push(theBank ? `${theBank.name} messages are read with general rules` : 'sender not recognised as a bank');
-    // Pasted or shared text didn't come straight from the bank's number: always look before adding.
+    // A live SMS arrives as the transaction happens, so its arrival date is the date. Shared text may be old.
+    if (!when.fromMessage && shared) checks.push('date taken from when the message was shared');
+    const refM = /\b(?:ref(?:erence)?(?: ?no\.?| ?number)?|txn ?(?:id|no)|trx ?(?:id|no)|transaction (?:id|no)|auth(?:orization)? code|approval code|rrn|trace no)\s*[:#.\-]?\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/i.exec(body);
+    const ref = refM && /\d/.test(refM[1]) ? refM[1].replace(/[\-\/.]+$/, '') : null;
+    const last4 = smsLast4(body);
+    let merchant = smsMerchant(body, kind);
+    const brand = merchant ? brandFor(merchant, true) : null;
+    if (brand) merchant = brand.name;
+    // Money coming back from a shop is a refund, not income.
+    if (kind.kind === 'credit' && brand && brand.cat) kind = SMS_KIND.refund;
+    if (!merchant && (kind.kind === 'card' || kind.kind === 'online')) checks.push('no shop name in the message');
+    if (kind.generic && !merchant) checks.push('the message does not say what it was for');
+    if (!bank) checks.push(otherSender ? `${otherSender} isn’t in Vela’s bank list yet` : 'sender not recognised as a bank');
+    else if (phoneSender) checks.push('it came from a phone number, not the bank’s sender name, so check your bank app first');
     else if (shared) checks.push(SMS_CHECK_SHARED);
+    else if (!smsBankTrusted(bank)) checks.push(`Vela is still learning ${bank.name} messages (${smsTrustCount(bank.name)} of ${SMS_TRUST_NEEDED} confirmed)`);
 
-    const bankName = theBank ? theBank.name : 'Bank';
-    const type = kindHit.dir === 'in' ? 'income' : kindHit.dir === 'out' ? 'expense' : kindHit.dir === 'move' ? 'atm' : 'reversal';
-    const desc = kindHit.kind === 'atm' ? 'ATM withdrawal'
-        : kindHit.kind === 'fee' ? `${bankName} charges`
-        : kindHit.kind === 'refund' ? `Refund${merchant ? `: ${merchant}` : ''}`
-        : kindHit.kind === 'reversal' ? `Reversal${merchant ? `: ${merchant}` : ''}`
-        : merchant || (kindHit.kind === 'salary' ? 'Salary' : `${bankName} ${kindHit.label.toLowerCase()}`);
+    const bankName = bank ? bank.name : (otherSender || 'Bank');
+    const type = { in: 'income', out: 'expense', move: 'atm', rev: 'reversal', card: 'cardpay' }[kind.dir];
+    const desc = kind.kind === 'atm' ? 'ATM withdrawal'
+        : kind.kind === 'fee' ? `${bankName} charges`
+        : kind.kind === 'card_payment' ? 'Card payment'
+        : kind.kind === 'interest' ? `${bankName} interest`
+        : kind.kind === 'refund' ? `Refund${merchant ? `: ${merchant}` : ''}`
+        : kind.kind === 'reversal' ? `Reversal${merchant ? `: ${merchant}` : ''}`
+        : merchant || (kind.kind === 'salary' ? 'Salary' : `${bankName} ${kind.label.toLowerCase()}`);
     let category = type === 'income'
-        ? (kindHit.kind === 'salary' || /\bsalary\b/i.test(body) ? 'Salary' : 'OtherIncome')
-        : kindHit.kind === 'fee' ? 'Other' : ((brand && expenseCatExists(brand[2]) ? brand[2] : null) || guessCategory(merchant) || (kindHit.kind === 'bill' ? 'Utilities' : 'Other'));
+        ? (kind.kind === 'salary' || /\bsalary\b/i.test(body) ? 'Salary' : kind.kind === 'interest' ? 'Investment' : 'OtherIncome')
+        : kind.kind === 'fee' ? 'Other' : ((brand && brand.cat && expenseCatExists(brand.cat) ? brand.cat : null) || guessCategory(merchant) || (kind.kind === 'bill' ? 'Utilities' : 'Other'));
     const catType = type === 'income' ? 'income' : 'expense';
     if (!state.categories.some((c) => c.id === category && c.type === catType)) category = FALLBACK_CATEGORY[catType];
-    const confidence = checks.length ? 'medium' : 'high';
-    const dedupe = ref ? `ref:${bankName}:${ref.toUpperCase()}` : `sig:${bankName}:${kindHit.dir}:${amt.cur}:${amt.value}:${when.date}:${when.time || ''}:${last4 || ''}`;
+    const dedupe = ref ? `ref:${bankName}:${ref.toUpperCase()}` : `sig:${bankName}:${kind.dir}:${amt.cur}:${amt.value}:${when.date}:${when.time || ''}:${last4 || ''}`;
+    if (type === 'cardpay') checks.push('a payment to your own card is a transfer, not income');
     return {
-        id: String(msg.id), type, kind: kindHit.kind, kindLabel: kindHit.label, amount: amt.value, currency: amt.cur,
+        id: String(msg.id), type, kind: kind.kind, kindLabel: kind.label, amount: amt.value, currency: amt.cur, fx,
         bank: bankName, desc: desc.slice(0, 80), merchant, category, date: when.date, time: when.time, ref, last4,
-        confidence, checks, dedupe, masked: maskSms(body).slice(0, 400),
-        source, sources: [source], sourceIds: [String(msg.id)], bodyKeys: [hashToInt(body.toLowerCase())], arrivedAt: Number(msg.date) || Date.now(), fromMessage: when.fromMessage || fromBankApp
+        confidence: checks.length ? 'medium' : 'high', checks, dedupe, masked: maskSms(body).slice(0, 400),
+        cardSide: /\bdebited\b/.test(t) ? 'from' : 'to',
+        source, sources: [source], sourceIds: [String(msg.id)], bodyKeys: [hashToInt(body.toLowerCase())],
+        shape: hashToInt(body.toLowerCase().replace(/\d+/g, '#')), // the wording without its numbers
+        arrivedAt: Number(msg.date) || Date.now(), fromMessage: when.fromMessage || !shared
     };
 };
 
@@ -1817,7 +2148,7 @@ const sourceShort = (sources) => (sources || ['sms']).map((s) => ({ sms: 'SMS', 
 // The message text itself is not kept.
 const bankMeta = (i) => ({
     bank: i.bank, kind: i.kind, ref: i.ref, last4: i.last4, merchant: i.merchant || '', smsId: i.id, dedupe: i.dedupe, time: i.time,
-    sources: sourceList(i), sourceIds: i.sourceIds || [i.id], bodyKeys: i.bodyKeys || [], arrivedAt: i.arrivedAt || null,
+    sources: sourceList(i), sourceIds: i.sourceIds || [i.id], bodyKeys: i.bodyKeys || [], shape: i.shape || null, arrivedAt: i.arrivedAt || null,
     confidence: i.confidence, verifiedAt: new Date().toISOString()
 });
 const merchantWord = (s) => String(s || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').split(' ').filter((w) => w.length > 2)[0] || '';
@@ -1841,10 +2172,22 @@ const sameDetection = (a, b) => {
     const onlyNotif = (x) => sourceList(x).every((s) => s === 'notification');
     if (sameText && !(onlyNotif(a) && onlyNotif(b)) && a.arrivedAt && b.arrivedAt && Math.abs(a.arrivedAt - b.arrivedAt) <= 2 * 60000) return 'same';
     if (a.ref && b.ref) return a.ref.toUpperCase() === b.ref.toUpperCase() ? 'same' : null;
+    const near = (ms) => !!a.arrivedAt && !!b.arrivedAt && Math.abs(a.arrivedAt - b.arrivedAt) <= ms;
+    // Some banks announce one reversal twice (an alert and an account credit): one event.
+    if (a.type === 'reversal' && b.type === 'reversal' && a.currency === b.currency && Math.abs(a.amount - b.amount) <= 0.005 && near(10 * 60000)) return 'same';
     if (a.type !== b.type || a.currency !== b.currency || Math.abs(a.amount - b.amount) > 0.005) return null;
     const sa = sourceList(a);
     const sb = sourceList(b);
-    if (sa.some((s) => sb.includes(s))) return null;
+    // Two SMS for the same amount are two purchases... unless they arrive together and are worded differently
+    // (a card alert and an account message for one payment; the card and the account have different numbers).
+    // Then the later one is flagged for the user to decide, never merged. The same wording with other numbers
+    // (two withdrawals in a row) or two different shops are two transactions.
+    if (sa.some((s) => sb.includes(s))) {
+        if (!near(3 * 60000) || sameText) return null;
+        if (a.shape && b.shape && a.shape === b.shape) return null;
+        if (a.merchant && b.merchant && !merchantsAgree(a.merchant, b.merchant)) return null;
+        return 'maybe';
+    }
     if (a.last4 && b.last4 && a.last4 !== b.last4) return null;
     const windowMs = (smsPrefs().windowMin || 15) * 60000;
     if (!a.arrivedAt || !b.arrivedAt || Math.abs(a.arrivedAt - b.arrivedAt) > windowMs) return null;
@@ -1855,7 +2198,7 @@ const sameDetection = (a, b) => {
 const recordedAsDetection = (t) => ({
     bank: t.bank.bank, ref: t.bank.ref, last4: t.bank.last4, merchant: t.bank.merchant, amount: t.amount, currency: t.currency,
     type: t.bank.kind === 'atm' || t.type === 'transfer' ? 'atm' : t.bank.kind === 'reversal' ? 'reversal' : t.type,
-    sources: t.bank.sources || ['sms'], bodyKeys: t.bank.bodyKeys || [], arrivedAt: t.bank.arrivedAt
+    sources: t.bank.sources || ['sms'], bodyKeys: t.bank.bodyKeys || [], shape: t.bank.shape || null, arrivedAt: t.bank.arrivedAt
 });
 // The confirmed transaction a detection is already recorded as (by id, reference, same text, or the other source).
 const recordedMatch = (i) => state.transactions.find((t) => t.bank && (
@@ -1900,7 +2243,7 @@ const smsMatchFor = (i) => {
             .sort((a, b) => Math.abs(daysBetween(parseDate(a.date), parseDate(i.date))) - Math.abs(daysBetween(parseDate(b.date), parseDate(i.date))))[0];
         return t ? { how: 'reverse', tx: t } : null;
     }
-    if (i.type === 'atm') return null;
+    if (i.type === 'atm' || i.type === 'cardpay') return null;
     // A refund belongs to the purchase it pays back (same shop when both are known, not more than was paid,
     // within 60 days before): it lowers that spending instead of counting as new income.
     if (i.kind === 'refund') {
@@ -1920,21 +2263,26 @@ const smsMatchFor = (i) => {
 
 const smsCardHtml = (i) => {
     const match = smsMatchFor(i);
-    const typeText = i.type === 'atm' ? 'ATM withdrawal (moved to Cash)' : i.type === 'reversal' ? 'Reversal (cancels an earlier payment)' : `${i.type === 'income' ? 'Income' : 'Expense'} · ${i.kindLabel}`;
-    const amountText = `${i.type === 'income' ? '+' : i.type === 'reversal' ? '' : '−'}${formatCurrency(i.amount, i.currency)}`;
+    const typeText = i.type === 'atm' ? 'ATM withdrawal (moved to Cash)' : i.type === 'reversal' ? 'Reversal (cancels an earlier payment)'
+        : i.type === 'cardpay' ? 'Payment to your card (a transfer, not income)' : `${i.type === 'income' ? 'Income' : 'Expense'} · ${i.kindLabel}`;
+    const amountText = `${i.type === 'income' ? '+' : (i.type === 'reversal' || i.type === 'cardpay') ? '' : '−'}${formatCurrency(i.amount, i.currency)}`;
+    const bankBrand = brandFor(i.bank, true);
     const rows = [
         ['Amount', `<strong class="amount ${i.type === 'income' ? 'text-income' : ''}">${escapeHtml(amountText)}</strong>`],
-        ['Bank', escapeHtml(`${i.bank}${i.last4 ? ` · ••${i.last4}` : ''}`)],
+        ['Bank', `<span class="sms-bank">${bankBrand && logoSlug(bankBrand.slug) ? brandBadge(bankBrand, ' is-mini') : ''}${escapeHtml(`${i.bank}${i.last4 ? ` · ••${i.last4}` : ''}`)}</span>`],
         ['Type', escapeHtml(typeText)],
         ['Description', escapeHtml(i.desc)],
         ['Date', escapeHtml(`${relativeDayLabel(i.date)}${i.time ? `, ${i.time}` : ''}`)],
+        ...(i.fx ? [['Charged in', escapeHtml(formatCurrency(i.fx.amount, i.fx.currency))]] : []),
         ...(i.ref ? [['Reference', escapeHtml(i.ref)]] : []),
         ['Detected through', `<span class="sms-sources">${sourceList(i).map((s) => `<span class="sms-source" data-source="${s}">${escapeHtml(SOURCE_NAMES[s] || s)}</span>`).join('<span class="faint" aria-hidden="true">+</span>')}</span>`]
     ];
     const moveBtn = /^transfer_/.test(i.kind) ? `<button type="button" class="link-btn sms-move" data-sms-move="${escapeHtml(i.id)}">Between my own accounts? Record it as a transfer</button>` : '';
     let actions;
     const refundNote = i.kind === 'refund' && !match ? '<p class="sms-note">No matching purchase found, so this is added as income labelled Refund.</p>' : '';
-    if (i.type === 'reversal') {
+    if (i.type === 'cardpay') {
+        actions = `<p class="sms-note">Paying your card moves money between your own accounts, so it isn't income or spending.</p><div class="sms-actions"><button type="button" class="btn btn-secondary btn-sm" data-sms-ignore="${escapeHtml(i.id)}">Ignore</button><button type="button" class="btn btn-primary btn-sm" data-sms-move="${escapeHtml(i.id)}">Record as transfer</button></div>`;
+    } else if (i.type === 'reversal') {
         actions = match
             ? `<button type="button" class="btn btn-secondary btn-sm" data-sms-ignore="${escapeHtml(i.id)}">Ignore</button><button type="button" class="btn btn-primary btn-sm" data-sms-match="${escapeHtml(i.id)}">Remove “${escapeHtml(match.tx.desc)}”</button>`
             : `<span class="sms-note">No matching payment found to reverse, so nothing is added.</span><button type="button" class="btn btn-secondary btn-sm" data-sms-ignore="${escapeHtml(i.id)}">OK</button>`;
@@ -1984,6 +2332,8 @@ const smsChosenAccount = (i) => {
 // Adds one confirmed message. ATM withdrawals become a move from the bank account to Cash, so the cash
 // isn't counted as spent twice (once when withdrawn, again when spent).
 const smsApply = (i, accountId) => {
+    if (i.type === 'cardpay' || i.type === 'reversal') return null; // never an entry of their own
+    const note = `From ${i.bank} (${sourceShort(i.sources)})${i.fx ? ` · ${formatCurrency(i.fx.amount, i.fx.currency)}` : ''}`;
     if (i.type === 'atm') {
         const from = accountById(accountId);
         const cash = state.accounts.find((a) => a.kind === 'cash' && a.id !== from.id);
@@ -2001,7 +2351,7 @@ const smsApply = (i, accountId) => {
         queueSync('transaction', rec.id, 'upsert');
         return rec;
     }
-    const rec = quickSaveTx({ type: i.type, desc: i.desc, amount: i.amount, currency: i.currency, category: i.category, date: i.date, accountId, note: `From ${i.bank} (${sourceShort(i.sources)})` });
+    const rec = quickSaveTx({ type: i.type, desc: i.desc, amount: i.amount, currency: i.currency, category: i.category, date: i.date, accountId, note });
     rec.pending = false; // it already happened: the bank says so
     rec.bank = bankMeta(i);
     saveState();
@@ -2013,7 +2363,8 @@ const smsAdd = (id) => {
     const i = smsQueue.find((x) => x.id === id);
     if (!i) return;
     if (smsAlreadyRecorded(i)) { showToast('That transaction is already in Vela.', 'info'); smsHandled([id]); return; }
-    smsApply(i, smsChosenAccount(i));
+    if (!smsApply(i, smsChosenAccount(i))) return;
+    smsLearn(i, true); // read correctly: confirmed as it was
     showToast(`Added from ${i.bank}: ${formatCurrency(i.amount, i.currency)}`, 'success');
     smsHandled([id]);
 };
@@ -2056,6 +2407,7 @@ const smsConfirmMatch = (id) => {
         queueSync('transaction', t.id, 'delete');
         showToast(`Removed “${t.desc}”: the bank reversed it`, 'success');
     }
+    smsLearn(i, true);
     renderActive();
     smsHandled([id]);
 };
@@ -2069,8 +2421,10 @@ const smsEdit = (id, asMove = false) => {
         openTransfer();
         smsEditing = i;
         const other = state.accounts.find((a) => a.id !== accountId);
-        $('transfer-from').value = i.type === 'income' && other ? other.id : accountId;
-        $('transfer-to').value = i.type === 'income' ? accountId : (other ? other.id : accountId);
+        // Money that came into the chosen account (a credit, or a payment landing on the card) moves from the other one.
+        const into = i.type === 'income' || (i.type === 'cardpay' && i.cardSide !== 'from');
+        $('transfer-from').value = into && other ? other.id : accountId;
+        $('transfer-to').value = into ? accountId : (other ? other.id : accountId);
         $('transfer-amount').value = i.amount;
         $('transfer-date').value = i.date;
         $('transfer-note').value = i.desc;
@@ -2108,6 +2462,8 @@ const smsEditSaved = (record) => {
     smsEditing = null;
     record.pending = false;
     record.bank = bankMeta(i);
+    // Saved with the amount and date Vela read: the message was understood. Corrected: start learning that bank again.
+    smsLearn(i, Math.abs(record.amount - i.amount) <= 0.005 && record.currency === i.currency && record.date === i.date);
     saveState();
     queueSync('transaction', record.id, 'upsert');
     smsHandled([i.id]);
@@ -2147,7 +2503,8 @@ const smsTake = (messages) => {
         // A shared or pasted copy of text that's already waiting is never a new transaction, even if it matches more than one.
         const isCopy = i.sources.includes('shared') && same.some((w) => (w.bodyKeys || []).some((k) => i.bodyKeys.includes(k)));
         if (same.length === 1 || isCopy) { mergeDetection(same[0], i); return; }
-        if (same.length > 1 || maybe.length) {
+        const likeRecorded = !same.length && state.transactions.some((tx) => tx.bank && sameDetection(i, recordedAsDetection(tx)) === 'maybe');
+        if (same.length > 1 || maybe.length || likeRecorded) {
             i.checks.push('it may be the same as another detected transaction');
             i.confidence = 'medium';
         }
@@ -2163,7 +2520,7 @@ const smsTake = (messages) => {
     fresh.sort((x, y) => (x.date < y.date ? 1 : -1));
     // Optional: confident detections with nothing to match are added straight away.
     if (p.autoAdd) {
-        const auto = fresh.filter((i) => i.confidence === 'high' && i.type !== 'reversal' && !smsMatchFor(i));
+        const auto = fresh.filter((i) => i.confidence === 'high' && i.type !== 'reversal' && i.type !== 'cardpay' && !smsMatchFor(i));
         auto.forEach((i) => smsApply(i, smsAccountFor(i)));
         if (auto.length) {
             showToast(`Added ${plural(auto.length, 'bank transaction')} automatically`, 'success');
@@ -2349,7 +2706,12 @@ const renderBankConnections = () => {
     $('btn-bank-review').textContent = `Review ${plural(waiting, 'transaction')}`;
     $('sms-auto-row').hidden = shareOnly;
     const warnNotif = s && s.smsEnabled && !s.postNotifications;
-    $('bank-sub').textContent = warnNotif ? 'Vela’s notifications are off: you’ll see new transactions when you open Vela.' : 'Detects your transactions from bank SMS';
+    $('bank-sub').textContent = warnNotif ? 'Vela’s notifications are off: you’ll see new transactions when you open Vela.' : 'All banks: reads debit and credit SMS';
+    // Every bank Vela knows by name, with its logo; other named banks and cards are read too, with a review.
+    $('bank-chips').innerHTML = SMS_BANKS.map((b) => {
+        const br = BRANDS.find((x) => x.slug === b.logo);
+        return `<span class="bank-chip" title="${escapeHtml(b.name)}">${br ? brandBadge(br, ' is-mini') : ''}<span>${escapeHtml(b.short)}</span></span>`;
+    }).join('') + '<span class="bank-chip is-more">+ other banks and cards</span>';
 };
 // Asks the phone for the real state (SMS permission, restricted setting) and redraws.
 const refreshBankStatus = async () => {
@@ -2391,7 +2753,7 @@ const deleteDetectionRecords = () => showConfirm({
     }
 });
 const disconnectBank = () => showConfirm({
-    title: 'Disconnect Commercial Bank?',
+    title: 'Turn off bank SMS tracking?',
     message: 'Vela stops reading bank SMS and deletes everything waiting for review. Transactions you already added stay. To remove the permission too, open App info › Permissions › SMS › Don’t allow.',
     confirmLabel: 'Disconnect',
     danger: true,
@@ -2404,7 +2766,7 @@ const disconnectBank = () => showConfirm({
         smsQueue = [];
         closeSheet('modal-sms');
         await refreshBankStatus();
-        showToast('Commercial Bank disconnected', 'success');
+        showToast('Bank SMS tracking is off', 'success');
     }
 });
 
@@ -3086,11 +3448,14 @@ const chartTheme = () => ({
     tooltipBg: cssVar('--bg-elevated'), tooltipText: cssVar('--text'), tooltipBorder: cssVar('--border-strong'), track: cssVar('--surface-2')
 });
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+// Charts normally grow in over 450 ms; when only their colours change (theme switch) they are drawn at once.
+let chartsInstant = false;
+const chartAnim = () => ({ duration: chartsInstant || reducedMotion() ? 0 : 450 });
 
 const baseOptions = (t) => ({
     responsive: true,
     maintainAspectRatio: false,
-    animation: { duration: reducedMotion() ? 0 : 450 },
+    animation: chartAnim(),
     interaction: { mode: 'index', intersect: false },
     plugins: {
         legend: { display: false },
@@ -3209,7 +3574,7 @@ const renderCategoryChart = (out, total) => {
             responsive: true,
             maintainAspectRatio: false,
             cutout: '74%',
-            animation: { duration: reducedMotion() ? 0 : 450 },
+            animation: chartAnim(),
             plugins: {
                 legend: { display: false },
                 tooltip: {
@@ -5957,6 +6322,8 @@ const initEvents = () => {
     initMoneyInputs();
     let refitTimer = null;
     window.addEventListener('resize', () => { clearTimeout(refitTimer); refitTimer = setTimeout(() => refitAmounts(), 150); });
+    // The display font arrives after the first paint and is wider than the fallback: fit the amounts again then.
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(() => refitAmounts()).catch(() => {});
     document.addEventListener('click', (e) => {
         const el = e.target.closest('button, [data-tab], [data-goto]');
         if (!el) return;
@@ -6243,7 +6610,7 @@ const initEvents = () => {
     $('btn-bank-review').addEventListener('click', showSmsSheet);
     $('btn-sms-check').addEventListener('click', checkPastedSms);
     // "Add all" only takes confident messages; anything that needs a check stays for review.
-    $('btn-sms-all').addEventListener('click', () => { [...smsQueue].filter((i) => i.confidence === 'high' && i.type !== 'reversal').forEach((i) => (smsMatchFor(i) ? smsConfirmMatch(i.id) : smsAdd(i.id))); });
+    $('btn-sms-all').addEventListener('click', () => { [...smsQueue].filter((i) => i.confidence === 'high' && i.type !== 'reversal' && i.type !== 'cardpay').forEach((i) => (smsMatchFor(i) ? smsConfirmMatch(i.id) : smsAdd(i.id))); });
     $('btn-forgot-pin').addEventListener('click', forgotPin);
 
     $('btn-report-pdf').addEventListener('click', (e) => withBusy(e.currentTarget, exportPdf));

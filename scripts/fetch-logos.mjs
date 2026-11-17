@@ -1,9 +1,11 @@
-// One-time (build-time) download of brand logos into ./logos, so the app shows real logos without ever
+// One-time (build-time) download of shop and bank logos into ./logos, so the app shows real logos without ever
 // contacting anyone while it runs (no spending data leaves the phone).
-// Source: each brand's own site icon, through Google's public favicon service (128 px).
+// Source: each brand's own app icon on Google Play (192 px PNG). Every app below was checked to be published by the
+// brand itself (the developer name must match), and every icon was checked by eye before it was added to the app.
+// Brands with no official app keep the site icon saved earlier, or Vela's badge in the brand's colours.
+// Logos are trademarks of their owners and are shown only to identify where money was spent.
 // Run: node scripts/fetch-logos.mjs
-import { mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs';
-import { createHash } from 'node:crypto';
+import { mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -11,58 +13,66 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const out = join(root, 'logos');
 mkdirSync(out, { recursive: true });
 
-// slug -> official domain (slugs must match LOGO_SLUGS in app.js)
-const DOMAINS = {
-    keells: 'keellssuper.com', cargills: 'cargillsonline.com', glomark: 'glomark.lk', spar: 'spar2u.lk', sathosa: 'lankasathosa.lk',
-    arpico: 'arpicosupercentre.com', laugfs: 'laugfs.lk', ubereats: 'ubereats.com', kfc: 'kfc.lk', mcdonalds: 'mcdonalds.lk',
-    pizzahut: 'pizzahut.lk', dominos: 'dominos.lk', burgerking: 'burgerking.lk', koko: 'paykoko.com', daraz: 'daraz.lk',
-    odel: 'odel.lk', fashionbug: 'fashionbug.lk', coolplanet: 'coolplanet.lk', nolimit: 'nolimit.lk', singer: 'singersl.com',
-    abans: 'abans.lk', softlogic: 'softlogic.lk', aliexpress: 'aliexpress.com', temu: 'temu.com', amazon: 'amazon.com',
-    netflix: 'netflix.com', spotify: 'spotify.com', youtube: 'youtube.com', apple: 'apple.com', google: 'google.com',
-    uber: 'uber.com', pickme: 'pickme.lk', lankaioc: 'lankaioc.com', ceypetco: 'ceypetco.gov.lk', dialog: 'dialog.lk',
-    mobitel: 'mobitel.lk', slt: 'slt.lk', hutch: 'hutch.lk', airtel: 'airtel.lk', ceb: 'ceb.lk', leco: 'leco.lk',
-    waterboard: 'waterboard.lk', combank: 'combank.lk'
-};
-// Other official sites to try when the first gives no icon.
-const ALTERNATES = {
-    combank: ['combank.net'], koko: ['koko.lk', 'mykoko.lk'], mcdonalds: ['mcdonalds.com'], pizzahut: ['pizzahut.com'],
-    dominos: ['dominos.com'], arpico: ['arpico.com'], abans: ['abans.com'], airtel: ['airtel.in'], spar: ['spar-international.com'],
-    laugfs: ['laugfsgas.lk', 'laugfssupermarkets.lk'], hutch: ['hutch.com'], softlogic: ['softlogiclife.lk'], fashionbug: ['fashionbug.com'],
-    sathosa: ['sathosa.lk'], coolplanet: ['coolplanet.com'], leco: ['leco.lk']
+// slug (as in BRANDS in app.js) -> [Google Play package, text the developer name must contain]
+// Left out after checking by eye (16-17 Nov 2026): Daraz and SHEIN use seasonal sale icons (Daraz keeps its site icon),
+// Standard Chartered's Sri Lankan app isn't on Play (the Indian one is labelled IN), Nolimit's site icon is blurry.
+const APPS = {
+    netflix: ['com.netflix.mediaclient', 'Netflix'], spotify: ['com.spotify.music', 'Spotify'], youtube: ['com.google.android.youtube', 'Google'],
+    primevideo: ['com.amazon.avod.thirdpartyclient', 'Amazon'], disney: ['com.disney.disneyplus', 'Disney'], steam: ['com.valvesoftware.android.steam.community', 'Valve'],
+    playstation: ['com.scee.psxandroid', 'PlayStation'], openai: ['com.openai.chatgpt', 'OpenAI'], claude: ['com.anthropic.claude', 'Anthropic'],
+    canva: ['com.canva.editor', 'Canva'], github: ['com.github.android', 'GitHub'], paypal: ['com.paypal.android.p2pmobile', 'PayPal'],
+    amazon: ['com.amazon.mShop.android.shopping', 'Amazon'], google: ['com.google.android.googlequicksearchbox', 'Google'],
+    uber: ['com.ubercab', 'Uber'], ubereats: ['com.ubercab.eats', 'Uber'], booking: ['com.booking', 'Booking.com'], agoda: ['com.agoda.mobile.consumer', 'agoda'],
+    airbnb: ['com.airbnb.android', 'Airbnb'], aliexpress: ['com.alibaba.aliexpresshd', 'Alibaba'], temu: ['com.einnovation.temu', 'Temu'],
+    ebay: ['com.ebay.mobile', 'eBay'], pickme: ['com.pickme.passenger', 'Digital Mobility'],
+    koko: ['com.sl.koko.bnpl', 'Koko'], mintpay: ['lk.mintpay.app', 'Mintpay'], subway: ['com.subway.mobile.subwayapp03', 'SUBWAY'],
+    tacobell: ['com.tacobell.ordering', 'Taco Bell'], pizzahut: ['lk.gamma.pizzakraft.PizzaHut', 'Pizzakraft'], dominos: ['com.dominos.srilanka', 'Jubilant'],
+    burgerking: ['in.burgerking.android', 'Restaurant Brands'], keells: ['com.jkit.keellsretailapp', 'Keells'], cargills: ['com.service.online.cargills', 'Cargills'],
+    spar: ['com.sparsrilanka.apps', 'SPAR'], arpico: ['com.arpico.groupit.myarpico', 'RICHARD PIERIS'], laugfsgas: ['com.laugfsgaseasyconnect.laugfs_easy_connect', 'LAUGFS'],
+    kapruka: ['com.kapruka.kaprukamobile', 'Kapruka'], singer: ['com.singersl.androidapp', 'Singer'], abans: ['com.abans.myabans', 'Sirius'],
+    softlogic: ['com.mobileapp.softlogiccare', 'Softlogic'], srilankan: ['com.sla.android.app', 'SriLankan'], dialog: ['net.omobio.dialogsc', 'Dialog'],
+    mobitel: ['com.mobitel.selfcare', 'Mobitel'], slt: ['com.slt.selfcare', 'Sri Lanka Telecom'], hutch: ['com.omobio.etisalatone', 'Hutch'],
+    airtel: ['com.tsdc.selfcare', 'Airtel'], leco: ['com.leco.myleco', 'LANKA ELECTRICITY'], waterboard: ['com.SadeepDhananjana.NWSDBSelfCare', 'National Water'],
+    litro: ['lk.litro.fixel', 'Fixel'], nawaloka: ['com.health_assist', 'Nawaloka'],
+    // Banks and wallets
+    combank: ['combank.com.combankdigital', 'Commercial Bank'], sampath: ['lk.sampath.sampathvishwa', 'Sampath'], hnb: ['com.hnb.DigitalApp', 'Hatton National'],
+    boc: ['com.ofss.fcdb.mobile.android.phone.boc.launcher', 'Bank of Ceylon'], peoples: ['com.peoplesbank.retailbanking', "People's Bank"],
+    nsb: ['lk.nsbpay.user', 'National Savings'], ntb: ['com.nationstrust.mobilebanking', 'Nations Trust'], ndb: ['com.ndb.mobilebanking', 'National Development'],
+    seylan: ['com.fg.seylan', 'Seylan'], dfcc: ['com.dfcc.digitalapp', 'DFCC'], pabc: ['com.panasia.retail.digital', 'PAN ASIA'], unionbank: ['com.epic.ubmobilebank', 'Union Bank'],
+    amana: ['lk.amanabank.onlinebanking', 'Amana'], cargillsbank: ['com.fg.wallet', 'Cargills Bank'], hsbc: ['com.hsbc.hsbcnet', 'HSBC'], mcb: ['com.mcb.mobilebanking', 'MCB'], rdb: ['lk.rdbquick.app', 'Pradeshiya'],
+    hdfc: ['com.hdfcbank.android.now', 'HDFC'], lolc: ['com.fg.lolc', 'LOLC'], frimi: ['com.nationstrust.frimi', 'Nations Trust'], mcash: ['family.mobitel.mcash', 'Mobitel']
 };
 
-// Google returns the same generic globe for unknown sites: learn its hash and skip it.
-const fetchIcon = async (domain) => {
-    const res = await fetch(`https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=128`, { headers: { 'User-Agent': 'vela-build' } });
-    if (!res.ok) return null;
-    const type = res.headers.get('content-type') || '';
-    if (!type.startsWith('image/png')) return null;
-    return Buffer.from(await res.arrayBuffer());
+const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const get = async (url, as = 'text') => {
+    for (let n = 0; n < 3; n++) {
+        try {
+            const res = await fetch(url, { headers: { 'User-Agent': UA, 'Accept-Language': 'en' } });
+            if (res.ok) return as === 'text' ? res.text() : Buffer.from(await res.arrayBuffer());
+            if (res.status !== 429 && res.status < 500) return null;
+        } catch (e) { /* retry */ }
+        await sleep(3000 * (n + 1));
+    }
+    return null;
 };
-const md5 = (b) => createHash('md5').update(b).digest('hex');
-const globe = await fetchIcon('no-such-site-for-vela-logos.invalid');
-const globeHash = globe ? md5(globe) : '';
 
 const got = [];
-const skipped = [];
-for (const [slug, domain] of Object.entries(DOMAINS)) {
-    try {
-        // A real icon: PNG, not the placeholder globe, and not a tiny 16 px fallback.
-        const usable = (p) => p && md5(p) !== globeHash && p.length > 24 && p.readUInt32BE(16) >= 48;
-        let png = null;
-        for (const d of [domain, ...(ALTERNATES[slug] || [])]) {
-            const p = await fetchIcon(d);
-            if (usable(p)) { png = p; break; }
-        }
-        if (!png) { skipped.push(`${slug} (${domain})`); continue; }
-        writeFileSync(join(out, `${slug}.png`), png);
-        got.push(slug);
-    } catch (e) {
-        skipped.push(`${slug} (${domain}: ${e.message})`);
-    }
+const failed = [];
+for (const [slug, [pkg, dev]] of Object.entries(APPS)) {
+    const html = await get(`https://play.google.com/store/apps/details?id=${pkg}&hl=en&gl=LK`);
+    const ld = html && /<script type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/.exec(html);
+    let info = null;
+    try { info = ld && JSON.parse(ld[1]); } catch (e) { /* unreadable page */ }
+    const author = info && info.author ? String(info.author.name) : '';
+    if (!info || !info.image || !author.toLowerCase().includes(dev.toLowerCase())) { failed.push(`${slug} (${pkg}: developer "${author}")`); continue; }
+    const png = await get(`${info.image}=s192-rp`, 'buffer');
+    if (!png || png.readUInt32BE(0) !== 0x89504e47) { failed.push(`${slug} (no PNG)`); continue; }
+    writeFileSync(join(out, `${slug}.png`), png);
+    got.push(slug);
+    await sleep(400);
 }
-// Checked by eye on 16 Nov 2026: these sites return another company's icon, so they're left to Vela's badge.
-for (const bad of ['hutch', 'odel', 'fashionbug', 'softlogic']) { const i = got.indexOf(bad); if (i >= 0) { got.splice(i, 1); try { (await import('node:fs')).rmSync(join(out, `${bad}.png`)); } catch (e) { /* gone */ } } }
-writeFileSync(join(out, 'index.json'), JSON.stringify(got.sort(), null, 1));
-console.log(`saved ${got.length}: ${got.join(', ')}`);
-console.log(`no usable logo (Vela draws a brand-coloured badge instead): ${skipped.join(', ') || 'none'}`);
+const all = readdirSync(out).filter((f) => f.endsWith('.png')).map((f) => f.slice(0, -4)).sort();
+writeFileSync(join(out, 'index.json'), JSON.stringify(all, null, 1));
+console.log(`app icons saved: ${got.length}\nnot saved: ${failed.join(', ') || 'none'}\nlogos now: ${all.length}`);
+if (!existsSync(join(out, 'koko.png'))) console.log('note: koko has no logo');

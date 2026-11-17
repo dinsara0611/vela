@@ -43,7 +43,7 @@
     <h2>Bank SMS tracking (optional, Android)</h2>
     <ul>
         <li>Only works after you turn it on in Vela and allow the <strong>SMS</strong> permission in Android. You can turn it off any time in Vela (Pause or Disconnect bank) or in Android (App info › Permissions › SMS).</li>
-        <li>Vela looks only at bank transaction messages (Commercial Bank, and other Sri Lankan banks with general rules). One-time codes (OTPs), login and security alerts, promotions, balance messages, failed payments and personal messages are ignored and never stored.</li>
+        <li>Vela looks only at bank transaction messages: from the Sri Lankan banks and wallets it knows by name, and (always for you to review) from other named senders whose text is clearly about your account or card. One-time codes (OTPs), login and security alerts, promotions, balance messages, failed payments and personal messages are ignored and never stored.</li>
         <li>From a bank SMS Vela keeps only what's needed to record the transaction: amount, currency, date, reference, shop and the last 4 digits of the card or account. Account numbers are shortened to their last 4 digits.</li>
         <li>A detected transaction waits on your phone, encrypted with the Android Keystore, until you confirm or ignore it. Nothing is added to your records without your confirmation unless you turn on "Add confident ones automatically". Waiting detections are excluded from phone backups and are deleted when you Disconnect or tap Delete detection records.</li>
         <li>When turned on, Vela also looks at bank messages from the last 3 days once, so you can add recent transactions.</li>

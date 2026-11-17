@@ -89,7 +89,7 @@ Every upload needs a higher `versionCode` (in `mobile/android/app/build.gradle`)
 2. Upload it to **Internal testing** (a new release). Play Console then asks for the
    **Permissions Declaration Form** for SMS (Policy › App content › Sensitive app permissions).
 3. Core functionality: choose **SMS-based money management** ("apps that track and manage budget").
-4. Explain: *Vela reads Commercial Bank transaction SMS on the device to suggest expense and income
+4. Explain: *Vela reads bank transaction SMS (debit and credit alerts) on the device to suggest expense and income
    entries, which the user confirms. OTPs and personal messages are ignored. Nothing is uploaded.*
 5. Attach a short screen recording: turning on SMS tracking, the explanation, the permission dialog,
    and a detected transaction being confirmed.
@@ -98,7 +98,7 @@ Every upload needs a higher `versionCode` (in `mobile/android/app/build.gradle`)
 
 ## 8. What to test on the phone after installing from Play
 
-- Share a ComBank SMS from Messages to Vela → review → Confirm & add.
+- Share a bank SMS (any bank) from Messages to Vela → review → Confirm & add.
 - Paste one in Settings › Bank connections › Check a bank SMS.
-- If the full edition is approved: turn on SMS tracking, allow SMS, receive a real ComBank SMS with Vela
+- If the full edition is approved: turn on SMS tracking, allow SMS, receive a real bank SMS with Vela
   open and with Vela closed; check the "Bank transaction detected" notification opens the review.

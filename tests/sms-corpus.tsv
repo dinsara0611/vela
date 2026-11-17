@@ -1,0 +1,93 @@
+# Sample bank messages and what Vela must make of each. Read by BOTH readers, so they cannot drift apart:
+#   the app (app.js parseBankSms, checked in tests/feature-check.js) and
+#   the Android filter (BankSms.java, checked in BankSmsTest.java) that decides what is kept while Vela is closed.
+# One message per line: expected <tab> sender <tab> text ("\n" stands for a line break in the text).
+# expected is "none", or: direction currency amount bank     direction = in | out | atm | reversal | cardpay
+# The shapes follow real alerts; every name, number and amount is made up.
+# Commercial Bank
+out LKR 2765.62 Commercial Bank	COMBANK	Dear Cardholder, Purchase at UBER EATS 852 LK for LKR 2,765.62 on 15/11/26 01:23 PM has been authorised on your debit card ending #5370.
+atm LKR 20000 Commercial Bank	COMBANK	Withdrawal at Hatton National Bank HNB PANNIPITI LK for LKR 20,000.00 on 14/11/26 06:52 PM from your debit card ending #5370.
+out LKR 3312.45 Commercial Bank	COMBANK	Purchase at NETFLIX.COM for USD 9.99 (LKR 3,312.45) on 16/11/26 from card ending #5370. Avl Bal LKR 80,000.00
+out USD 20 Commercial Bank	COMBANK	Dear Cardholder, Purchase at ANTHROPIC* CLAUDE SUB +14152360599 US for USD 20.00 on 16/11/26 08:01 AM has been authorised on your debit card ending #5370.
+in LKR 25000 Commercial Bank	COMBANK	Credit for Rs. 25,000.00 to A/C #1234 on 16/11/26.
+out LKR 950 Commercial Bank	COMBANK	Dear Cardholder, Purchase at HERBAL CARE LK for LKR 950.00 on 16/11/26 09:10 AM has been authorised on your debit card ending #5370.
+out LKR 3450 Commercial Bank	COMBANK	Transaction Alert: LKR 3,450.00 POS purchase at KEELLS SUPER COLOMBO 07 on your ComBank Debit Card ending 4321 on 16/11/2026 10:20:15. Avl Bal: LKR 12,345.67
+out LKR 3450 Commercial Bank	COMBANK	Dear Customer, Your A/C No.8001234567 has been debited for LKR 3,450.00 on 16/11/2026 at 10:15 Ref:FT2632012345. Avl Bal LKR 45,230.50
+in LKR 150000 Commercial Bank	COMBANK	LKR 150,000.00 credited to A/C 8001234567 on 16/11/26 SALARY ABC PVT LTD. Avl Bal LKR 200,000.00
+out USD 12.99 Commercial Bank	COMBANK	Your ComBank Card ending 4321 was used for an online transaction of USD 12.99 at NETFLIX.COM on 16/11/2026
+atm LKR 10000 Commercial Bank	COMBANK	ATM Cash Withdrawal LKR 10,000.00 from A/C ...1234 at COMBANK ATM KOLLUPITIYA on 16/11/2026 11:02
+out LKR 25000 Commercial Bank	COMBANK	CEFT transfer of LKR 25,000.00 to NIMAL PERERA from A/C ...1234 successful on 16/11/2026. Ref 778899
+in LKR 20000 Commercial Bank	COMBANK	Fund transfer LKR 20,000.00 received from KAMAL SILVA via CEFT to A/C ...1234 on 16/11/2026 Ref:FT123456
+in LKR 2500 Commercial Bank	COMBANK	LKR 2,500.00 refund from DARAZ credited to your card ending 4321 on 15/11/2026
+reversal LKR 2500 Commercial Bank	COMBANK	Reversal of LKR 2,500.00 transaction at KEELLS SUPER on card ending 4321 on 16/11/2026
+out LKR 150 Commercial Bank	COMBANK	Service charge of LKR 150.00 debited from A/C ...1234 for SMS alerts on 16/11/2026
+out LKR 4320 Commercial Bank	COMBANK	LKR 4,320.00 (USD 12.99) debited at NETFLIX.COM on card ending 4321 on 16/11/2026
+out LKR 1200 Commercial Bank	COMBANK	Your A/C ...1234 has been debited with LKR 1,200.00 on 16/11/2026
+out LKR 500 Commercial Bank	COMBANK	LKR 500.00 POS purchase at CARGILLS on card ending 4321
+in LKR 50000 Commercial Bank	+94771234567	ComBank: LKR 50,000.00 credited to your A/C ...1234 on 16/11/2026
+out LKR 1200 Commercial Bank	+94112353353	ComBank: LKR 1,200.00 debited from your A/C ...1234 at CARGILLS
+# HNB: card alerts ("SMS ALERT") and account alerts ("Reason:")
+out LKR 670.59 HNB	HNB	HNB SMS ALERT:INTERNET, Account:2080***2939,Location:UBER, LK,Amount(Approx.):670.59 LKR,Av.Bal:14621.99 LKR,Date:16.11.26,Time:17:06, Hot Line:0112462462
+out LKR 715 HNB	HNB	HNB SMS ALERT: PURCHASE, Debit account:2080***2939,Location:BARISTA - CARGILLS SQUARE, LK,Amount(Approx.):715.00 LKR,Av.Bal:17573.58 LKR,Date:16.11.26,Time:09:12, Hot Line:0112462462
+reversal LKR 207.65 HNB	HNB	HNB SMS ALERT: TRANSACTION REVERSAL, Credit account:2080***2939,Location:UBER, LK,Amount:207.65 LKR,Av.Bal:11762.17 LKR,Date:16.11.26,Time:05:54, Hot Line:0112462462
+out LKR 1598 HNB	HNB	LKR 1,598.00 debited to Ac No:20802XXXXX39 on 16/11/26 10:18:43 Reason:MB BillPmt/Mobitel/0701150250/0701150250 Bal:LKR 15,975.58 Protect from scams *DO NOT SHARE ACCOUNT DETAILS /OTP* Hotline 0112462462
+out LKR 5000 HNB	HNB	LKR 5,000.00 debited to Ac No:20802XXXXX39 on 16/11/26 10:18:43 Reason:CEFT/JOHN/DOE Bal:LKR 10,000.00
+reversal LKR 207.65 HNB	HNB	LKR 207.65 credited to Ac No:20802XXXXX39 on 16/11/26 05:54:22 Reason:ECOM REV/002117/ID:113007 Bal:LKR 11,762.17
+cardpay LKR 10000 HNB	HNB	LKR 10,000.00 debited to Ac No:20802XXXXX39 on 16/11/26 10:18:43 Reason:CARD PAYMENT Bal:LKR 5,000.00
+atm LKR 5000 HNB	HNB	LKR 5,000.00 debited to Ac No:20802XXXXX39 on 16/11/26 10:18:43 Reason:ATM WDL Bal:LKR 5,000.00
+in LKR 12.5 HNB	HNB	LKR 12.50 credited to Ac No:20802XXXXX39 on 16/11/26 00:10:43 Reason:Int.Pd Bal:LKR 5,012.50
+out USD 12.99 HNB	HNB	Purchase of USD 12.99 at NETFLIX.COM on your card ending 1111
+# Sampath Bank (the footer mentions OTP; "Cr Crd" is a credit card, not a credit)
+in LKR 5000 Sampath Bank	SAMPATHTXN	LKR 5,000.00 credited to AC **8758 for PICKME - 37419306\n16/11/2026 11:36:52\nTo Inq Call 0112303050\nGet protected -Do not Share OTP
+out LKR 4025 Sampath Bank	SAMPATHTXN	LKR 4,025.00 debited from AC **8758 for PICKME - 37419306\n16/11/2026 11:36:52\nTo Inq Call 0112303050\nGet protected -Do not Share OTP
+out LKR 2100 Sampath Bank	SAMPCCTXN	Cr Crd no..**0282 Auth Pmt LKR 2,100.00 at SPICE ASIA - DELIVERY Avl Bal LKR 250,000.00 Enq Call 0112300604\n- Sampath Bank 16-NOV
+# Nations Trust, NDB, NSB
+out LKR 771.51 Nations Trust	NTB	Transaction Approved on your Card 123456******5678 for LKR 771.51 at PICKME RIDE Available Bal LKR 16730.45  Call 0114315315 for any inquiry.
+cardpay LKR 57018.67 Nations Trust	NTB	Thank you for your payment of LKR 57,018.67 made to Card # 123456*****1234 on 16-11-2026.
+out LKR 12724 NDB	NDB	LKR 12,724.00 debited from AC XXXXXXXX7497 as POS TXN on 16 Nov 2026 10:28 at COLOMBAY COLOMBO 2. Avl Bal 2,582.08 Call 94112448888 for info
+in LKR 60076.25 NDB	NDB	LKR 60,076.25 credited to AC XXXXXXXX1427 on 16 Nov 2026 09:53 as CEFTS Inward Transfer. Avl Bal 1,789,349.08 Call 94112448888 for info
+out LKR 3216 NSB	NSB	Dear MR SAMPLE,LKR 3,216.00 Debited from your A/c XXXXXXXX5678 on 16/11/2026 at 11:14.AvlBal LKR 9,437.61. @ Wetara Pharamcy & Groc Polgasowita. ATM POS Transaction.Thank you for banking with us.Call Centre 1972.
+# Every other bank and wallet on Vela's list, by sender name
+out LKR 1000 BOC	BOC	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 People's Bank	PeoplesBank	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 Seylan Bank	SEYLAN	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 DFCC	DFCC	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 Pan Asia Bank	PABC	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 Union Bank	UnionBank	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 Amana Bank	AmanaBank	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 Cargills Bank	CargillsBnk	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 HSBC	HSBC	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 Standard Chartered	StanChart	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 MCB	MCB	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 SDB	SDB	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 RDB	RDB	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 HDFC	HDFC	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 LOLC	LOLC	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 FriMi	FriMi	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 eZ Cash	eZCash	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 mCash	mCash	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+out LKR 1000 Nations Trust	AMEX	Your A/C XXXXXX1234 has been debited by LKR 1,000.00 on 16/11/2026. Bal LKR 5,000.00
+in LKR 2500.5 BOC	BOC	Your A/C XXXXXX1234 has been credited by Rs 2,500.50 on 16/11/2026. Balance available Rs 7,500.50
+# Senders Vela does not know: kept only when the text is clearly about an account or card, never for shops and telecoms
+out LKR 2000 XYZ Finance	XYZ Finance	Your account 1234 has been debited with Rs. 2,000.00 at CITY PHARMACY on 16/11/2026
+none	SuperDeals	Flash sale! Pay only Rs. 999 for shoes today
+none	Dialog	Your account has been debited with Rs. 100.00 for the data pack you activated
+none	+94771234567	LKR 5,000.00 credited to your account today
+none	0771234567	Hi machan, send me Rs. 500 for the bus
+none	SLT-Mobitel	You have recharged Rs. 1000.00  Your account balance is Rs. 754.55 ,expires on 15/12/2026
+none	Pizza Hut	Weekend Vibes at Pizza Hut! Get 2 Lava Cakes & 1 Portion of Garlic Bread for Rs.1,990 with any pizza. Pay by card.
+none	Daraz	Your payment of Rs. 2,500 using ComBank card ending 1234 was successful. Thank you for shopping with us
+# From a bank, but never a transaction
+none	COMBANK	Your OTP for the transaction of LKR 3,450.00 at DARAZ is 123456. Do not share. ComBank
+none	HNB	482913 is your one time password for HNB online banking.
+none	COMBANK	Your transaction of LKR 5,000.00 at ABC STORE was declined due to insufficient funds. ComBank
+none	COMBANK	ComBank: Fund transfer of LKR 10,000.00 failed. Please try again.
+none	COMBANK	Your A/C ...1234 Avl Bal is LKR 45,230.50 as at 16/11/2026. ComBank
+none	COMBANK	You have logged in to ComBank Digital on 16/11/2026 10:00. If this was not you call 0112353353
+none	COMBANK	Enjoy 20% off at ODEL with ComBank cards. Spend LKR 10,000 and win! ComBank
+none	COMBANK	ComBank: Your credit card payment of LKR 15,000.00 is due on 25/11/2026.
+none	COMBANK	ComBank security alert: beware of calls asking for your PIN. Never share LKR 0.00
+none	COMBANK	ComBank Digital will be unavailable on 20/11 due to scheduled maintenance.
+none	ComBank Q+	Pay Bills. Collect Cashback!  Get 10% cashback up to Rs1,500/- when you pay your bills with ComBank Q+. T&C apply.
+none	COMBANK	Rs. 500 cashback will be credited to your account when you spend Rs. 5,000 at Keells. ComBank
+none	NTB	Your credit card statement is ready. Total due LKR 45,000.00, minimum due LKR 2,250.00. Payment due date 05/12/2026.
