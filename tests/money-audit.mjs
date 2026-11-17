@@ -120,7 +120,11 @@ try {
     check('Home: BOC balance (Rs. 3,000 still lent out)', await v('#dash-balance'), 96000);
     check('Home: BOC spent', await v('#dash-spent'), 1000);
     const msB = await page.evaluate('monthStats()');
-    if (!(msB.budget > 0)) problems.push(`BOC budget is ${msB.budget}: "from income" with no income this month leaves it at nothing`);
+    // BOC "from income" with no income: its balance (Rs. 96,000 now) plus what it spent this month (Rs. 1,000).
+    check('Plan: BOC budget from its balance (no income yet)', msB.budget, 96000 + 1000);
+    check('Plan: BOC left to spend = its balance', msB.budget - msB.spent, 96000);
+    const msBal = await page.evaluate("(() => { setViewAccount('A'); const keep = state.config.budgetMode; state.config.budgetMode = 'balance'; const r = monthStats(); state.config.budgetMode = keep; setViewAccount('B'); return r; })()");
+    check('Plan: Commercial bank budget "my balance"', msBal.budget, balA + 7050);
     await page.evaluate("planTab = 'bills'; go('plan')"); await settle();
     const fixedB = await page.evaluate("$('plan-content').innerText");
     if (/Dialog/.test(fixedB)) problems.push("Plan > Fixed in BOC lists Commercial bank's Dialog bill");

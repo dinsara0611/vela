@@ -106,7 +106,8 @@ final class BankSms {
     private static final Pattern ACCOUNT_WORDING = lc("\\b(a/c|acc?|account|acct|card|crd|savings|current)\\b[\\s\\S]{0,80}\\b(debited|credited)\\b|\\b(debited|credited)\\b[\\s\\S]{0,60}\\b(a/c|acc?|account|acct|card|crd)\\b"
         + "|\\b(credit|debit)\\s+(for|of)\\b[\\s\\S]{0,40}\\b(to|from)\\s+(a/c\\s*)?[x*\\d]{6,}"
         + "|\\b(purchase|payment|withdrawal|transaction|txn)\\b[\\s\\S]{0,160}\\b(authori[sz]ed|approved|successful)\\b[\\s\\S]{0,80}\\b(dc-card|cc-card|card|a/c|account)\\b"
-        + "|\\b(purchase|payment|withdrawal|transaction|txn)\\b[\\s\\S]{0,160}\\byour\\s+(dc-card|cc-card|card|a/c|account)\\b");
+        + "|\\b(purchase|payment|withdrawal|transaction|txn)\\b[\\s\\S]{0,160}\\byour\\s+(dc-card|cc-card|card|a/c|account)\\b"
+        + "|\\b(purchase|payment|withdrawal|transaction|txn)\\b[\\s\\S]{0,160}\\b(dc-card|cc-card|card|a/c|account)\\s+(ending|no\\.?|number)\\b");
 
     // ---- Amounts (app.js smsAmounts): "LKR 1,500.00", "Rs.1,500", "USD 12.99" and (HNB) "670.59 LKR" ----
     private static final String CODES = "USD|LKR|EUR|GBP|INR|AED|SAR|QAR|KWD|OMR|AUD|CAD|SGD|MYR|JPY|CNY|MVR";

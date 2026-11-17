@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.32.3';
+const APP_VERSION = '4.33.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -82,7 +82,7 @@ const createDefaultState = () => ({
         budget: 1000,              // overall monthly budget, in budgetCurrency
         categoryBudgets: {},       // categoryId -> monthly limit, in budgetCurrency
         budgetCurrency: null,      // currency the budgets were typed in (null = old data, US dollars)
-        budgetMode: 'fixed',       // 'fixed' = the amount typed in; 'income' = this month's income
+        budgetMode: 'fixed',       // 'fixed' = the amount typed in; 'income' = this month's income; 'balance' = the money in the account
         budgetSavePct: 0,          // with 'income': the part of income kept aside for saving
         lastCategory: { expense: 'Food', income: 'Salary' },
         priceBook: {},             // currency -> item name -> { price, added?, category? } (your own prices)
@@ -725,7 +725,7 @@ const normalizeState = (raw) => {
     const budget = toNumber(cfg.budget, 1000);
     base.config.budget = budget > 0 ? budget : 1000;
     base.config.budgetCurrency = isCurrency(cfg.budgetCurrency) ? cfg.budgetCurrency : null;
-    base.config.budgetMode = cfg.budgetMode === 'income' ? 'income' : 'fixed';
+    base.config.budgetMode = ['income', 'balance'].includes(cfg.budgetMode) ? cfg.budgetMode : 'fixed';
     base.config.budgetSavePct = Math.min(90, Math.max(0, Math.round(toNumber(cfg.budgetSavePct, 0))));
     if (cfg.categoryBudgets && typeof cfg.categoryBudgets === 'object') {
         Object.keys(cfg.categoryBudgets).forEach((k) => {
@@ -842,7 +842,7 @@ const applyCloudSettings = (d) => {
     if (toNumber(d.budget, 0) > 0) c.budget = toNumber(d.budget, 1000);
     if (d.categoryBudgets && typeof d.categoryBudgets === 'object') c.categoryBudgets = { ...d.categoryBudgets };
     c.budgetCurrency = isCurrency(d.budgetCurrency) ? d.budgetCurrency : null;
-    if (d.budgetMode === 'income' || d.budgetMode === 'fixed') c.budgetMode = d.budgetMode;
+    if (['income', 'fixed', 'balance'].includes(d.budgetMode)) c.budgetMode = d.budgetMode;
     if (d.budgetSavePct !== undefined) c.budgetSavePct = Math.min(90, Math.max(0, Math.round(toNumber(d.budgetSavePct, 0))));
     if (d.accountBudgets && typeof d.accountBudgets === 'object') c.accountBudgets = cleanAccountBudgets(d.accountBudgets);
     if (isCurrency(d.currency)) c.currency = d.currency;
@@ -1407,7 +1407,7 @@ const cleanAccountBudgets = (o) => {
         if (b.categoryBudgets && typeof b.categoryBudgets === 'object') Object.entries(b.categoryBudgets).forEach(([k, v]) => { const n = toNumber(v, 0); if (n > 0) cats[k] = n; });
         out[String(id)] = {
             budget: budget > 0 ? budget : 1000, categoryBudgets: cats, budgetCurrency: isCurrency(b.budgetCurrency) ? b.budgetCurrency : null,
-            budgetMode: b.budgetMode === 'income' ? 'income' : 'fixed', budgetSavePct: Math.min(90, Math.max(0, Math.round(toNumber(b.budgetSavePct, 0))))
+            budgetMode: ['income', 'balance'].includes(b.budgetMode) ? b.budgetMode : 'fixed', budgetSavePct: Math.min(90, Math.max(0, Math.round(toNumber(b.budgetSavePct, 0))))
         };
     });
     return out;
@@ -1438,9 +1438,14 @@ function allAccountsBudget(y, m) {
     return state.accounts.reduce((sum, a) => {
         const b = a.id === v ? budgetSnapshot() : (state.config.accountBudgets || {})[a.id];
         if (!b) return sum;
+        const balanceWay = () => {
+            const spentHere = sumDisplay(state.transactions.filter((t) => t.type === 'expense' && t.accountId === a.id && inMonth(t, y, m) && !isUpcoming(t)));
+            return Math.max(0, toDisplay(accountBalance(a), a.currency) + spentHere);
+        };
+        if (b.budgetMode === 'balance') return sum + balanceWay();
         if (b.budgetMode === 'income') {
             const inc = sumDisplay(state.transactions.filter((t) => t.type === 'income' && t.accountId === a.id && inMonth(t, y, m) && !isUpcoming(t)));
-            if (inc > 0) return sum + inc * (1 - (b.budgetSavePct || 0) / 100);
+            return sum + (inc > 0 ? inc * (1 - (b.budgetSavePct || 0) / 100) : balanceWay());
         }
         return sum + convertAmount(b.budget, b.budgetCurrency || 'USD', cur);
     }, 0);
@@ -1486,13 +1491,16 @@ const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => 
     const plannedIncome = income;
     const expectedIncome = sumDisplay(viewTx().filter((t) => t.type === 'income' && inMonth(t, y, m) && isUpcoming(t)));
     const fromIncome = state.config.budgetMode === 'income';
-    // From income, but no income in this account this month (yet): the amount set for it is used, not nothing.
+    // From income, but no income in this account this month (yet): the account's balance is used, not nothing.
     const incomeFallback = !scopeAll && fromIncome && plannedIncome <= 0;
+    // From the balance: what you can spend this month is what's in the account now plus what you already spent.
+    const fromBalance = !scopeAll && (state.config.budgetMode === 'balance' || incomeFallback);
     const budget = scopeAll ? allAccountsBudget(y, m)
-        : fromIncome && !incomeFallback ? plannedIncome * (1 - state.config.budgetSavePct / 100) : budgetIn(state.config.budget, dcur());
+        : fromBalance ? Math.max(0, viewBalance() + spent)
+        : fromIncome ? plannedIncome * (1 - state.config.budgetSavePct / 100) : budgetIn(state.config.budget, dcur());
     const byCat = {};
     spentList.forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + toDisplay(e.amount, e.currency); });
-    return { list, spentList, incomeList, spent, income, net: income - spent, prevSpent, budget, budgetPct: budget > 0 ? (spent / budget) * 100 : (spent > 0 && fromIncome ? 100 : 0), byCat, fromIncome, plannedIncome, incomeFallback, expectedIncome };
+    return { list, spentList, incomeList, spent, income, net: income - spent, prevSpent, budget, budgetPct: budget > 0 ? (spent / budget) * 100 : (spent > 0 && fromIncome ? 100 : 0), byCat, fromIncome, fromBalance, plannedIncome, incomeFallback, expectedIncome };
 };
 
 const rangeBounds = (range) => {
@@ -1900,7 +1908,7 @@ const SMS_CONDITIONAL = /\b(will be (credited|debited|given|added)|when you|if y
 const SMS_STRONG = /\b(debited|credited|purchase (at|of)|withdrawal (at|of|from)|cash withdrawal|transaction (approved|of|alert)|txn (of|at)|auth(orised|orized)? pmt|has been authori[sz]ed|paid to|transferred|transfer (to|from|of)|payment of|deposit(ed)? (to|of|in|at)|used (for|at)|spent|reversal|reversed|refund(ed)?|sms alert|debit (for|of)|credit (for|of)|cefts?|slips|pos)\b/i;
 // For senders Vela doesn't know: the text must be about an account or card being debited or credited.
 // "Credit for Rs. 3,000.00 to 8024585190" (an account number) counts too.
-const SMS_ACCOUNT_WORDING = /\b(a\/c|acc?|account|acct|card|crd|savings|current)\b[\s\S]{0,80}\b(debited|credited)\b|\b(debited|credited)\b[\s\S]{0,60}\b(a\/c|acc?|account|acct|card|crd)\b|\b(credit|debit)\s+(for|of)\b[\s\S]{0,40}\b(to|from)\s+(a\/c\s*)?[x*\d]{6,}|\b(purchase|payment|withdrawal|transaction|txn)\b[\s\S]{0,160}\b(authori[sz]ed|approved|successful)\b[\s\S]{0,80}\b(dc-card|cc-card|card|a\/c|account)\b|\b(purchase|payment|withdrawal|transaction|txn)\b[\s\S]{0,160}\byour\s+(dc-card|cc-card|card|a\/c|account)\b/i;
+const SMS_ACCOUNT_WORDING = /\b(a\/c|acc?|account|acct|card|crd|savings|current)\b[\s\S]{0,80}\b(debited|credited)\b|\b(debited|credited)\b[\s\S]{0,60}\b(a\/c|acc?|account|acct|card|crd)\b|\b(credit|debit)\s+(for|of)\b[\s\S]{0,40}\b(to|from)\s+(a\/c\s*)?[x*\d]{6,}|\b(purchase|payment|withdrawal|transaction|txn)\b[\s\S]{0,160}\b(authori[sz]ed|approved|successful)\b[\s\S]{0,80}\b(dc-card|cc-card|card|a\/c|account)\b|\b(purchase|payment|withdrawal|transaction|txn)\b[\s\S]{0,160}\byour\s+(dc-card|cc-card|card|a\/c|account)\b|\b(purchase|payment|withdrawal|transaction|txn)\b[\s\S]{0,160}\b(dc-card|cc-card|card|a\/c|account)\s+(ending|no\.?|number)\b/i;
 
 // Amounts: "LKR 1,500.00", "Rs.1,500", "USD 12.99" and (HNB) "670.59 LKR".
 const SMS_CODES = Object.keys(CURRENCIES).join('|');
@@ -3462,7 +3470,7 @@ const renderDashboard = () => {
 
     setMeter($('dash-budget-fill'), s.budgetPct, budgetState(s.budgetPct));
     $('dash-budget-meter').setAttribute('aria-valuenow', String(Math.round(Math.min(100, s.budgetPct))));
-    $('dash-budget-desc').textContent = `${Math.round(s.budgetPct)}% of ${fitMoney(s.budget, cur, 11)} budget${s.fromIncome && !s.incomeFallback ? ' (from income)' : ''}`;
+    $('dash-budget-desc').textContent = `${Math.round(s.budgetPct)}% of ${fitMoney(s.budget, cur, 11)} budget${s.fromBalance ? ' (from balance)' : s.fromIncome ? ' (from income)' : ''}`;
     const left = s.budget - s.spent;
     $('dash-budget-left').innerHTML = left >= 0
         ? `<strong>${escapeHtml(fitMoney(left, cur, 12))}</strong> left`
@@ -3680,7 +3688,8 @@ const planBudgetsHtml = () => {
         <div class="card-head"><h2 class="card-title">Monthly budget</h2><button type="button" class="btn btn-secondary btn-xs" data-edit-budget="__overall">${icon('i-edit', 'ic ic-sm')} Edit</button></div>
         <div class="big-number ${left < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(Math.abs(left), cur))}</div>
         <div class="card-sub" style="margin-bottom:var(--sp-3)">${left >= 0 ? `left of ${escapeHtml(formatCurrency(s.budget, cur))}. That's about ${escapeHtml(formatCurrency(perDay, cur))} a day for the next ${plural(daysLeft, 'day')}.` : `over your ${escapeHtml(formatCurrency(s.budget, cur))} budget`}</div>
-        ${s.fromIncome ? `<div class="budget-source">${icon('i-arrow-down', 'ic ic-sm')}<span>${s.incomeFallback ? `No income has come in here this month yet, so the amount you set is used until it does.` : `From your income received: ${escapeHtml(formatCurrency(s.plannedIncome, cur))} this month`}${state.config.budgetSavePct ? `, keeping ${state.config.budgetSavePct}% (${escapeHtml(formatCurrency(s.plannedIncome - s.budget, cur))}) for saving` : ''}</span></div>`
+        ${state.config.budgetMode === 'balance' ? `<div class="budget-source">${icon('i-wallet', 'ic ic-sm')}<span>From your balance: ${escapeHtml(formatCurrency(viewBalance(), cur))} in this account now</span></div>` : ''}
+        ${s.fromIncome ? `<div class="budget-source">${icon('i-arrow-down', 'ic ic-sm')}<span>${s.incomeFallback ? `No income has come in here this month yet, so your account balance is used until it does.` : `From your income received: ${escapeHtml(formatCurrency(s.plannedIncome, cur))} this month`}${state.config.budgetSavePct ? `, keeping ${state.config.budgetSavePct}% (${escapeHtml(formatCurrency(s.plannedIncome - s.budget, cur))}) for saving` : ''}</span></div>`
             : (s.plannedIncome > 0 ? `<button type="button" class="link-btn budget-switch" data-action="budget-from-income">${icon('i-arrow-down', 'ic ic-sm')} Use my income (${escapeHtml(formatCurrency(s.plannedIncome, cur))}) as the budget</button>` : '')}
         ${s.fromIncome && s.expectedIncome > 0 ? `<div class="budget-source is-expected">${icon('i-calendar', 'ic ic-sm')}<span>+${escapeHtml(formatCurrency(s.expectedIncome, cur))} more when your expected income arrives</span></div>` : ''}
         ${meterHtml(s.budgetPct, budgetState(s.budgetPct), 'Monthly budget used')}
@@ -5084,9 +5093,12 @@ let budgetSaveDraft = 0;
 const syncBudgetModeUi = () => {
     const overall = $('budget-category').value === '__overall';
     const income = overall && budgetModeDraft === 'income';
+    const fromBal = overall && budgetModeDraft === 'balance';
     $('budget-mode-field').hidden = !overall;
     $('budget-income-field').hidden = !income;
-    $('budget-amount-field').hidden = income;
+    $('budget-amount-field').hidden = income || fromBal;
+    $('budget-balance-hint').hidden = !fromBal;
+    if (fromBal) $('budget-balance-hint').textContent = `You have ${formatCurrency(viewBalance(), dcur())} in this account. Your budget is what's in it, and it follows every income and expense.`;
     setPressed('[data-budget-mode]', (b) => b.dataset.budgetMode === budgetModeDraft);
     setPressed('[data-budget-save]', (b) => Number(b.dataset.budgetSave) === budgetSaveDraft);
     if (income) {
@@ -5121,6 +5133,15 @@ const openBudget = (catId) => {
 
 const submitBudget = () => {
     const catId = $('budget-category').value;
+    if (catId === '__overall' && budgetModeDraft === 'balance') {
+        state.config.budgetMode = 'balance';
+        saveState();
+        flushSync();
+        closeSheet('modal-budget');
+        showToast(`Your budget now follows your balance: ${formatCurrency(viewBalance(), dcur())} in this account`, 'success');
+        renderActive();
+        return true;
+    }
     if (catId === '__overall' && budgetModeDraft === 'income') {
         state.config.budgetMode = 'income';
         state.config.budgetSavePct = budgetSaveDraft;
