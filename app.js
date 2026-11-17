@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.26.0';
+const APP_VERSION = '4.27.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -490,6 +490,7 @@ const normalizeGoal = (g) => {
         currency: normCur(g.currency),
         saved: Math.max(0, toNumber(g.saved, 0)),
         deadline: cleanDate(g.deadline),
+        accountId: g.accountId ? String(g.accountId) : null,
         createdAt: stamp(g.createdAt) || stamp(g.created_at)
     };
 };
@@ -529,6 +530,7 @@ const normalizeDebt = (d) => {
         repaid: Math.min(amount, Math.max(0, toNumber(d.repaid, 0))),
         dueDate: cleanDate(d.dueDate),
         note: d.note ? String(d.note).slice(0, 500) : '',
+        accountId: d.accountId ? String(d.accountId) : null,
         createdAt: stamp(d.createdAt)
     };
 };
@@ -572,6 +574,9 @@ const ensureAccounts = (st) => {
         if (t.type === 'transfer' && !ids.has(t.toAccountId)) t.toAccountId = first;
     });
     st.recurring.forEach((b) => { if (!ids.has(b.accountId)) b.accountId = first; });
+    // Goals and debts made before accounts were kept apart belong to the first account.
+    (st.savings || []).forEach((g) => { if (!ids.has(g.accountId)) g.accountId = first; });
+    (st.debts || []).forEach((d) => { if (!ids.has(d.accountId)) d.accountId = first; });
 };
 
 const normalizeCategory = (c) => {
@@ -633,6 +638,7 @@ const normalizeState = (raw) => {
             if (v > 0) base.config.categoryBudgets[k] = v;
         });
     }
+    base.config.accountBudgets = cleanAccountBudgets(cfg.accountBudgets);
     if (cfg.lastCategory && typeof cfg.lastCategory === 'object') {
         base.config.lastCategory = { ...base.config.lastCategory, ...cfg.lastCategory };
     } else if (typeof cfg.lastCategory === 'string') {
@@ -712,6 +718,7 @@ const settingsPayload = () => {
         budgetCurrency: c.budgetCurrency,
         budgetMode: c.budgetMode,
         budgetSavePct: c.budgetSavePct,
+        accountBudgets: c.accountBudgets || {},
         currency: c.currency,
         currencies: c.currencies,
         rateOverrides: c.rateOverrides,
@@ -742,6 +749,7 @@ const applyCloudSettings = (d) => {
     c.budgetCurrency = isCurrency(d.budgetCurrency) ? d.budgetCurrency : null;
     if (d.budgetMode === 'income' || d.budgetMode === 'fixed') c.budgetMode = d.budgetMode;
     if (d.budgetSavePct !== undefined) c.budgetSavePct = Math.min(90, Math.max(0, Math.round(toNumber(d.budgetSavePct, 0))));
+    if (d.accountBudgets && typeof d.accountBudgets === 'object') c.accountBudgets = cleanAccountBudgets(d.accountBudgets);
     if (isCurrency(d.currency)) c.currency = d.currency;
     if (Array.isArray(d.currencies) && d.currencies.some(isCurrency)) c.currencies = [...new Set(d.currencies.filter(isCurrency).concat(dcur()))];
     if (d.rateOverrides && typeof d.rateOverrides === 'object') {
@@ -759,9 +767,14 @@ const applyCloudSettings = (d) => {
             : { enabled: false, hash: null, salt: null, biometric: false };
     }
     if (Array.isArray(d.accounts)) state.accounts = d.accounts.map(normalizeAccount).filter(Boolean);
+    // Per-account budgets from the cloud: use this phone's account's. Settings saved by an older Vela have one
+    // budget only: it becomes the budget of the account this phone is in.
+    if (d.accountBudgets && typeof d.accountBudgets === 'object' && Object.keys(d.accountBudgets).length) applyViewBudget();
+    else stashBudget();
 };
 
 const saveState = () => {
+    if (state.accounts.length) stashBudget();
     watchSettings();
     const ok = storage.set(STORAGE_KEY, JSON.stringify(state));
     if (!ok && !storageWarningShown) {
@@ -1186,7 +1199,7 @@ const renderViewBar = () => {
     document.querySelectorAll('.view-bar').forEach((el) => el.remove());
     const a = viewAccountObj();
     const view = $(`tab-${currentTab}`);
-    if (!a || !view || !['dashboard', 'activity', 'analytics'].includes(currentTab)) return;
+    if (!a || !view || !['dashboard', 'activity', 'plan', 'analytics'].includes(currentTab)) return;
     const bal = accountBalance(a);
     const bar = document.createElement('button');
     bar.type = 'button';
@@ -1244,11 +1257,57 @@ const viewId = () => {
 };
 const viewAccountObj = () => state.accounts.find((a) => a.id === viewId()) || null;
 const viewTx = () => { const v = viewId(); return v === 'all' ? state.transactions : state.transactions.filter((t) => inAccount(t, v)); };
+const ownedBy = (x, v) => (x.accountId || (state.accounts[0] && state.accounts[0].id)) === v;
+const viewGoals = () => { const v = viewId(); return v === 'all' ? state.savings : state.savings.filter((g) => ownedBy(g, v)); };
+const viewDebts = () => { const v = viewId(); return v === 'all' ? state.debts : state.debts.filter((d) => ownedBy(d, v)); };
 const viewBills = () => { const v = viewId(); return v === 'all' ? state.recurring : state.recurring.filter((b) => (b.accountId || (state.accounts[0] && state.accounts[0].id)) === v); };
+// Each account has its own budget (amount, category limits, from-income mode). The usual budget settings always
+// hold the current account's; switching keeps them aside and brings in the other account's. A new account starts
+// with a copy of the one you were in.
+const BUDGET_FIELDS = ['budget', 'categoryBudgets', 'budgetCurrency', 'budgetMode', 'budgetSavePct'];
+const budgetSnapshot = () => {
+    const c = state.config;
+    return { budget: c.budget, categoryBudgets: { ...c.categoryBudgets }, budgetCurrency: c.budgetCurrency, budgetMode: c.budgetMode, budgetSavePct: c.budgetSavePct };
+};
+function stashBudget() {
+    const v = viewId();
+    if (v === 'all') return;
+    state.config.accountBudgets = { ...(state.config.accountBudgets || {}), [v]: budgetSnapshot() };
+}
+function loadBudget(id) {
+    const b = state.config.accountBudgets && state.config.accountBudgets[id];
+    if (!b) return false;
+    BUDGET_FIELDS.forEach((k) => { if (b[k] !== undefined) state.config[k] = k === 'categoryBudgets' ? { ...b[k] } : b[k]; });
+    return true;
+}
+// On start, after cloud settings arrive and after a restore: the current account's budget in place.
+function applyViewBudget() {
+    const v = viewId();
+    if (v === 'all') return;
+    if (!loadBudget(v)) stashBudget();
+}
+const cleanAccountBudgets = (o) => {
+    const out = {};
+    if (!o || typeof o !== 'object') return out;
+    Object.entries(o).forEach(([id, b]) => {
+        if (!b || typeof b !== 'object') return;
+        const budget = toNumber(b.budget, 0);
+        const cats = {};
+        if (b.categoryBudgets && typeof b.categoryBudgets === 'object') Object.entries(b.categoryBudgets).forEach(([k, v]) => { const n = toNumber(v, 0); if (n > 0) cats[k] = n; });
+        out[String(id)] = {
+            budget: budget > 0 ? budget : 1000, categoryBudgets: cats, budgetCurrency: isCurrency(b.budgetCurrency) ? b.budgetCurrency : null,
+            budgetMode: b.budgetMode === 'income' ? 'income' : 'fixed', budgetSavePct: Math.min(90, Math.max(0, Math.round(toNumber(b.budgetSavePct, 0))))
+        };
+    });
+    return out;
+};
 const setViewAccount = (id) => {
     if (!id || !state.accounts.some((a) => a.id === id)) return;
     const changed = id !== viewId();
+    stashBudget();
     try { localStorage.setItem(VIEW_KEY, id); } catch (e) { /* storage blocked */ }
+    if (!loadBudget(id)) stashBudget();
+    saveState();
     activityAccount = id;
     renderActive();
     const a = state.accounts.find((x) => x.id === id);
@@ -1328,7 +1387,7 @@ const txInRange = (range) => {
 const debtTotals = () => {
     let owedToYou = 0;
     let youOwe = 0;
-    state.debts.forEach((d) => {
+    viewDebts().forEach((d) => {
         const left = toDisplay(Math.max(0, d.amount - d.repaid), d.currency);
         if (d.direction === 'lent') owedToYou += left;
         else youOwe += left;
@@ -3236,9 +3295,9 @@ const renderDashboard = () => {
         ? `<strong>${escapeHtml(fitMoney(left, cur, 12))}</strong> left`
         : `<strong>${escapeHtml(fitMoney(-left, cur, 12))}</strong> over`;
 
-    const savedTotal = state.savings.reduce((sum, g) => sum + toDisplay(g.saved, g.currency), 0);
+    const savedTotal = viewGoals().reduce((sum, g) => sum + toDisplay(g.saved, g.currency), 0);
     setMoney($('dash-total-savings'), savedTotal, cur, 12);
-    $('dash-savings-status').textContent = state.savings.length ? `across ${plural(state.savings.length, 'goal')}` : 'Tap to create a goal';
+    $('dash-savings-status').textContent = viewGoals().length ? `across ${plural(viewGoals().length, 'goal')}` : 'Tap to create a goal';
 
     const { owedToYou, youOwe } = debtTotals();
     const netDebt = owedToYou - youOwe;
@@ -3503,13 +3562,13 @@ const planBillsHtml = () => {
 
 const planGoalsHtml = () => {
     const cur = dcur();
-    if (!state.savings.length) {
+    if (!viewGoals().length) {
         return `<div class="card">${emptyState({ iconId: 'i-target', title: 'No savings goals yet', text: 'Pick something to save for, set a date, and Vela tells you how much to put away each month.', actionLabel: 'Create a goal', action: 'add-goal' })}</div>`;
     }
-    const saved = state.savings.reduce((s, g) => s + toDisplay(g.saved, g.currency), 0);
-    const target = state.savings.reduce((s, g) => s + toDisplay(g.target, g.currency), 0);
+    const saved = viewGoals().reduce((s, g) => s + toDisplay(g.saved, g.currency), 0);
+    const target = viewGoals().reduce((s, g) => s + toDisplay(g.target, g.currency), 0);
     const pct = target > 0 ? (saved / target) * 100 : 0;
-    const cards = state.savings.map((g) => {
+    const cards = viewGoals().map((g) => {
         const p = g.target > 0 ? (g.saved / g.target) * 100 : 0;
         const done = p >= 100;
         const remaining = Math.max(0, g.target - g.saved);
@@ -3546,12 +3605,12 @@ const planGoalsHtml = () => {
 
 const planDebtsHtml = () => {
     const cur = dcur();
-    if (!state.debts.length) {
+    if (!viewDebts().length) {
         return `<div class="card">${emptyState({ iconId: 'i-users', title: 'No debts tracked', text: 'Keep track of money you lent to friends or borrowed, and record repayments as they come.', actionLabel: 'Add a debt', action: 'add-debt' })}</div>`;
     }
     const { owedToYou, youOwe } = debtTotals();
-    const open = state.debts.filter((d) => d.repaid < d.amount);
-    const settled = state.debts.filter((d) => d.repaid >= d.amount);
+    const open = viewDebts().filter((d) => d.repaid < d.amount);
+    const settled = viewDebts().filter((d) => d.repaid >= d.amount);
     const card = (d) => {
         const left = d.amount - d.repaid;
         const p = (d.repaid / d.amount) * 100;
@@ -4737,7 +4796,7 @@ const submitGoal = () => {
         record = { ...state.savings[idx], name, target, currency, saved, deadline };
         state.savings[idx] = record;
     } else {
-        record = { id: generateId(), name, target, currency, saved, deadline, createdAt: Date.now() };
+        record = { id: generateId(), name, target, currency, saved, deadline, accountId: viewId() !== 'all' ? viewId() : null, createdAt: Date.now() };
         state.savings.push(record);
     }
     saveState();
@@ -4782,13 +4841,13 @@ const setFundsMode = (mode) => {
 };
 
 const openDeposit = (goalId) => {
-    if (!state.savings.length) {
+    if (!viewGoals().length) {
         showToast('Create a savings goal first, then deposit into it.', 'info');
         openAddGoal();
         return;
     }
     const select = $('funds-goal');
-    select.innerHTML = state.savings.map((g) => `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)}</option>`).join('');
+    select.innerHTML = viewGoals().map((g) => `<option value="${escapeHtml(g.id)}">${escapeHtml(g.name)}</option>`).join('');
     const goal = state.savings.find((g) => g.id === goalId) || state.savings[0];
     select.value = goal.id;
     $('funds-amount').value = '';
@@ -5062,7 +5121,7 @@ const submitDebt = () => {
         record = { ...state.debts[idx], ...data };
         state.debts[idx] = record;
     } else {
-        record = { id: generateId(), ...data, createdAt: Date.now() };
+        record = { id: generateId(), ...data, accountId: viewId() !== 'all' ? viewId() : null, createdAt: Date.now() };
         state.debts.push(record);
     }
     saveState();
@@ -6532,6 +6591,7 @@ const importBackup = (file) => {
                     saveShopLogos();
                 }
                 state.config = { ...incoming.config, theme: state.config.theme, lock: state.config.lock, reminders: state.config.reminders, reminderIds: state.config.reminderIds };
+                applyViewBudget();
                 if (canSync()) queueAllForUpload();
                 saveState();
                 flushSync();
@@ -7198,6 +7258,9 @@ const deleteAccount = (id) => {
                 return !selfTransfer;
             });
             state.recurring.forEach((b) => { if (b.accountId === id) { b.accountId = other.id; queueSync('recurring', b.id, 'upsert', false); } });
+            state.savings.forEach((g) => { if (g.accountId === id) { g.accountId = other.id; queueSync('goal', g.id, 'upsert', false); } });
+            state.debts.forEach((d) => { if (d.accountId === id) { d.accountId = other.id; queueSync('debt', d.id, 'upsert', false); } });
+            if (state.config.accountBudgets) delete state.config.accountBudgets[id];
             state.accounts = state.accounts.filter((x) => x.id !== id);
             if (activityAccount === id) activityAccount = 'all';
             showToast(`${a.name} deleted`, 'success');
@@ -7514,6 +7577,7 @@ const runSplash = () => {
 const init = () => {
     runSplash();
     loadState();
+    applyViewBudget();
     migrateBudgets();
     fixAccountCurrencies();
     tidyBankEntryNames();

@@ -586,6 +586,30 @@ export async function run() {
             || JSON.stringify({ firstId, startSpent, bocSpent, bar, noAll, newGoesHere, actOnly, back });
     });
 
+    await T('Each account keeps its own budget, goals and debts', async () => {
+        const before = { accounts: s().accounts.slice(), savings: s().savings.slice(), debts: s().debts.slice(), config: JSON.parse(JSON.stringify(s().config)) };
+        const home = g('viewId')();
+        s().accounts = before.accounts.concat([{ id: 'acc-sep', name: 'BOC', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 0 }]);
+        s().config.budget = 100000; s().config.categoryBudgets = { Food: 20000 }; g('saveState')();
+        s().savings.push({ id: 'g-home', name: 'Phone', target: 50000, currency: 'LKR', saved: 1000, deadline: null, accountId: home, createdAt: 1 });
+        g('setViewAccount')('acc-sep'); await wait(150);
+        const copied = s().config.budget === 100000;
+        s().config.budget = 5000; s().config.categoryBudgets = {}; g('saveState')();
+        s().debts.push({ id: 'd-sep', direction: 'lent', person: 'Nimal', amount: 2000, currency: 'LKR', repaid: 0, dueDate: null, note: '', accountId: 'acc-sep', createdAt: 1 });
+        const sepGoals = g('viewGoals')().map((x) => x.id);
+        const sepOwed = g('debtTotals')().owedToYou;
+        g('setViewAccount')(home); await wait(150);
+        const homeBudget = s().config.budget === 100000 && s().config.categoryBudgets.Food === 20000;
+        const homeGoals = g('viewGoals')().some((x) => x.id === 'g-home');
+        const homeOwed = g('debtTotals')().owedToYou;
+        g('setViewAccount')('acc-sep'); await wait(150);
+        const sepBudget = s().config.budget === 5000 && !s().config.categoryBudgets.Food;
+        g('setViewAccount')(home); await wait(100);
+        Object.assign(s(), { accounts: before.accounts, savings: before.savings, debts: before.debts }); s().config = before.config; g('saveState')(); g('renderActive')();
+        return (copied && !sepGoals.includes('g-home') && sepOwed === 2000 && homeBudget && homeGoals && homeOwed !== sepOwed && sepBudget)
+            || JSON.stringify({ copied, sepGoals, sepOwed, homeBudget, homeGoals, homeOwed, sepBudget });
+    });
+
     await T('Your own shop logo: pick a photo once, shown for that shop everywhere, kept in backups, removable', async () => {
         // A small test picture, as if picked from the gallery.
         const c = document.createElement('canvas'); c.width = 300; c.height = 200;
@@ -863,6 +887,8 @@ export async function run() {
     await T('Payments: Home card, pop-up on open, fixed expense paid with "Not yet" / "Yes"', async () => {
         const y = iso(addDays(new Date(), -2));
         s().recurring.push({ id: 'pay-bill', type: 'expense', name: 'Boarding fee', amount: 12000, currency: 'LKR', category: 'Rent', frequency: 'monthly', nextDate: y, anchorDay: new Date(y).getDate(), autoLog: false, accountId: 'acc-cash', createdAt: 1 });
+        const viewWas = g('viewId')();
+        g('setViewAccount')('acc-cash'); // the bill belongs to Cash; each account shows only its own payments
         g('saveState')(); g('switchTab')('dashboard'); await wait(400);
         const card = $('due-section');
         const shows = !card.hidden && /overdue/i.test($('pay-summary').textContent) && (!!card.querySelector('[data-pay="bill:pay-bill"]') || !!card.querySelector('.pay-more'));
@@ -880,7 +906,7 @@ export async function run() {
         const tx = s().transactions.find((t) => t.recurringId === 'pay-bill');
         const ok = shows && popup && stillUnpaid && tx && tx.date === today && tx.dueDate === y && bill.nextDate > today && !g('isSheetOpen')('modal-payments');
         s().recurring = s().recurring.filter((b) => b.id !== 'pay-bill');
-        return ok || `card ${shows}, popup ${popup}, not-yet kept ${stillUnpaid}, paid ${tx && tx.date}/${tx && tx.dueDate}, next ${bill.nextDate}`;
+        return ok || `card ${shows}, popup ${popup}, not-yet kept ${stillUnpaid}, paid ${tx && tx.date}/${tx && tx.dueDate}, next ${bill.nextDate}, view was ${viewWas}`;
     });
 
     await T('Reminders stay: rescheduling never cancels an unpaid reminder; paying cancels it', async () => {
