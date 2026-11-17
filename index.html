@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.27.0">
+    <link rel="stylesheet" href="style.css?v=4.28.0">
 </head>
 <body data-view="dashboard">
 
@@ -795,10 +795,6 @@
                 <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
             </div>
             <div class="sheet-body">
-                <div class="field">
-                    <label class="field-label" for="sms-account">Add to account</label>
-                    <div class="select"><select id="sms-account" class="input"></select></div>
-                </div>
                 <ul class="sms-list" id="sms-list"></ul>
             </div>
             <div class="sheet-foot">
@@ -810,6 +806,17 @@
     </div>
 
     <!-- Paste a bank SMS -->
+    <div class="sheet-overlay" id="modal-sms-pick" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sms-pick-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <div><h2 class="sheet-title" id="sms-pick-title">Which account?</h2><span class="card-sub" id="sms-pick-sub"></span></div>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body"><ul class="cat-manage acc-list" id="sms-pick-list"></ul></div>
+        </div>
+    </div>
+
     <div class="sheet-overlay" id="modal-sms-paste" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sms-paste-title">
             <div class="sheet-grabber" aria-hidden="true"></div>
@@ -1440,7 +1447,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.27.0"></script>
+    <script src="app.js?v=4.28.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

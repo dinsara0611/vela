@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.27.0';
+const APP_VERSION = '4.28.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2507,14 +2507,33 @@ const mergeDetection = (into, i) => {
 const sameMoney = (a, cur, b, curB, tol = 0.005) => Math.abs(convertAmount(a, cur, 'USD') - convertAmount(b, curB, 'USD')) <= Math.max(0.01, convertAmount(b, curB, 'USD') * tol);
 
 // The account bank messages go into: the one picked last, else one named like the bank, else a bank/card account.
-const smsAccountFor = (item) => {
-    const p = smsPrefs();
-    if (p.accountId && state.accounts.some((a) => a.id === p.accountId)) return p.accountId;
-    const first = item.bank.toLowerCase().split(' ')[0];
-    const named = state.accounts.find((a) => a.name.toLowerCase().includes(first));
-    const bank = state.accounts.find((a) => a.kind === 'bank' || a.kind === 'card');
-    return (named || bank || state.accounts[0]).id;
+// The account a bank message belongs to:
+//  1. the account you chose before for that bank and card/account number (••5370),
+//  2. else your only account with that bank (named "BOC", "Commercial Bank"...),
+//  3. else, with one account (or one that isn't cash), that one.
+// Otherwise it's undecided ({ id: null }) and Vela asks "Which account?" when you confirm, then remembers.
+const smsLinkKey = (i) => (i.last4 ? `${i.bank}|${i.last4}` : null);
+const smsAccountMatch = (i) => {
+    const valid = (id) => !!id && state.accounts.some((a) => a.id === id);
+    const all = state.accounts.map((a) => a.id);
+    if (i.accountId && valid(i.accountId)) return { id: i.accountId, candidates: [i.accountId] };
+    const key = smsLinkKey(i);
+    const linked = key && (smsPrefs().links || {})[key];
+    if (valid(linked)) return { id: linked, candidates: [linked] };
+    const bb = brandFor(i.bank, true);
+    const word = String(i.bank || '').toLowerCase().split(' ')[0];
+    const same = state.accounts.filter((a) => {
+        const ab = accountBrand(a);
+        return (bb && ab && ab.name === bb.name) || (word.length > 2 && word !== 'unknown' && a.name.toLowerCase().includes(word));
+    }).map((a) => a.id);
+    if (same.length === 1) return { id: same[0], candidates: same };
+    if (same.length > 1) return { id: null, candidates: same };
+    if (all.length === 1) return { id: all[0], candidates: all };
+    const notCash = state.accounts.filter((a) => a.kind !== 'cash').map((a) => a.id);
+    if (notCash.length === 1) return { id: notCash[0], candidates: notCash };
+    return { id: null, candidates: all };
 };
+const smsAccountFor = (i) => smsAccountMatch(i).id;
 // An existing entry this message is about.
 //  - a waiting payment (same direction, amount within 1%, due within 7 days): mark it paid, bank-verified
 //  - an entry already logged by hand (same direction and amount, within 2 days, not yet linked): link it
@@ -2553,6 +2572,11 @@ const smsCardHtml = (i) => {
         ['Amount', `<strong class="amount ${i.type === 'income' ? 'text-income' : ''}">${escapeHtml(amountText)}</strong>`],
         ['Bank', `<span class="sms-bank">${bankBrand && logoSlug(bankBrand.slug) ? brandBadge(bankBrand, ' is-mini') : ''}${escapeHtml(`${i.bank}${i.last4 ? ` · ••${i.last4}` : ''}`)}</span>`],
         ['Type', escapeHtml(typeText)],
+        ...(i.type === 'cardpay' || i.type === 'reversal' ? [] : [['Account', (() => {
+            const m = smsAccountMatch(i);
+            const opts = state.accounts.map((a) => `<option value="${escapeHtml(a.id)}"${a.id === m.id ? ' selected' : ''}>${escapeHtml(a.name)}</option>`).join('');
+            return `<span class="select sms-acc-select${m.id ? '' : ' is-undecided'}"><select class="input" data-sms-acc="${escapeHtml(i.id)}" aria-label="Account for this transaction">${m.id ? '' : '<option value="" selected>Choose account</option>'}${opts}</select></span>`;
+        })()]]),
         ['Description', (() => { const shop = i.merchant || i.desc; const own = customBadge(shop, ' is-mini'); const b = !own && (i.type === 'expense' || i.kind === 'refund') ? brandFor(shop) : null; return `<span class="sms-bank">${own || (b ? brandBadge(b, ' is-mini') : '')}${escapeHtml(i.desc)}</span>`; })()],
         ['Date', escapeHtml(`${relativeDayLabel(i.date)}${i.time ? `, ${i.time}` : ''}`)],
         ...(i.fx ? [['Charged in', escapeHtml(formatCurrency(i.fx.amount, i.fx.currency))]] : []),
@@ -2582,9 +2606,6 @@ const smsCardHtml = (i) => {
 const renderSmsSheet = () => {
     const list = $('sms-list');
     if (!smsQueue.length) { list.innerHTML = ''; return; }
-    $('sms-account').innerHTML = state.accounts.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('');
-    $('sms-account').value = smsAccountFor(smsQueue[0]);
-    syncAccountLogos();
     $('sms-count').textContent = `${plural(smsQueue.length, 'transaction', 'transactions')} to review`;
     list.innerHTML = smsQueue.map(smsCardHtml).join('');
 };
@@ -2604,13 +2625,38 @@ const smsHandled = async (given) => {
     refreshBankStatus();
     if (smsQueue.length) renderSmsSheet(); else closeSheet('modal-sms');
 };
+// The account to use on confirm (null: ask first). Remembered for that bank and card number.
 const smsChosenAccount = (i) => {
-    const sel = $('sms-account');
-    const id = sel && sel.value ? sel.value : smsAccountFor(i);
-    const p = smsPrefs();
-    p.accountId = id;
-    saveSmsPrefs(p);
+    const id = smsAccountFor(i);
+    if (!id) return null;
+    const key = smsLinkKey(i);
+    if (key) { const p = smsPrefs(); p.links = { ...(p.links || {}), [key]: id }; saveSmsPrefs(p); }
     return id;
+};
+// "Which account?" for a message whose account isn't clear, then carry on with what was tapped.
+let smsPick = null;
+const askSmsAccount = (i, then) => {
+    const { candidates } = smsAccountMatch(i);
+    smsPick = { id: i.id, then };
+    $('sms-pick-sub').textContent = `${i.bank}${i.last4 ? ` · ••${i.last4}` : ''} · ${formatCurrency(i.amount, i.currency)}${i.last4 ? '. Vela will remember it for this card or account.' : ''}`;
+    $('sms-pick-list').innerHTML = (candidates.length ? candidates : state.accounts.map((a) => a.id)).map((id) => {
+        const a = state.accounts.find((x) => x.id === id);
+        return `<li class="acc-row"><button type="button" class="row-btn" data-sms-pick-acc="${escapeHtml(a.id)}">
+            ${accountBadge(a, 'is-row', 'row-icon tint')}
+            <span class="row-label"><span>${escapeHtml(a.name)}</span><span>${escapeHtml(ACCOUNT_KINDS[a.kind].label)}, ${a.currency}</span></span>
+        </button></li>`;
+    }).join('');
+    swapSheet('modal-sms', 'modal-sms-pick');
+};
+const pickSmsAccount = (accId) => {
+    const pick = smsPick;
+    smsPick = null;
+    const i = pick && smsQueue.find((x) => x.id === pick.id);
+    if (!i || !state.accounts.some((a) => a.id === accId)) { closeSheet('modal-sms-pick'); return; }
+    i.accountId = accId;
+    swapSheet('modal-sms-pick', 'modal-sms');
+    renderSmsSheet();
+    pick.then();
 };
 // Adds one confirmed message. ATM withdrawals become a move from the bank account to Cash, so the cash
 // isn't counted as spent twice (once when withdrawn, again when spent).
@@ -2646,7 +2692,9 @@ const smsAdd = (id) => {
     const i = smsQueue.find((x) => x.id === id);
     if (!i) return;
     if (smsAlreadyRecorded(i)) { showToast('That transaction is already in Vela.', 'info'); smsHandled([id]); return; }
-    if (!smsApply(i, smsChosenAccount(i))) return;
+    const accountId = smsChosenAccount(i);
+    if (!accountId) { askSmsAccount(i, () => smsAdd(id)); return; }
+    if (!smsApply(i, accountId)) return;
     smsLearn(i, true); // read correctly: confirmed as it was
     showToast(`Added from ${i.bank}: ${formatCurrency(i.amount, i.currency)}`, 'success');
     smsHandled([id]);
@@ -2699,6 +2747,7 @@ const smsEdit = (id, asMove = false) => {
     const i = smsQueue.find((x) => x.id === id);
     if (!i) return;
     const accountId = smsChosenAccount(i);
+    if (!accountId) { askSmsAccount(i, () => smsEdit(id, asMove)); return; }
     // Money moved between two of the user's own accounts: a transfer, so it's neither income nor spending.
     if (asMove) {
         openTransfer();
@@ -2804,7 +2853,7 @@ const smsTake = (messages) => {
     fresh.sort((x, y) => (x.date < y.date ? 1 : -1));
     // Optional: confident detections with nothing to match are added straight away.
     if (p.autoAdd) {
-        const auto = fresh.filter((i) => i.confidence === 'high' && i.type !== 'reversal' && i.type !== 'cardpay' && !smsMatchFor(i));
+        const auto = fresh.filter((i) => i.confidence === 'high' && i.type !== 'reversal' && i.type !== 'cardpay' && !smsMatchFor(i) && smsAccountFor(i));
         auto.forEach((i) => smsApply(i, smsAccountFor(i)));
         if (auto.length) {
             showToast(`Added ${plural(auto.length, 'bank transaction')} automatically`, 'success');
@@ -2924,7 +2973,7 @@ const initSms = () => {
         if (add) {
             const i = smsQueue.find((x) => x.id === e.id || (x.sourceIds || []).includes(e.id));
             const direct = i && (i.type === 'expense' || i.type === 'income' || i.type === 'atm') && !smsMatchFor(i)
-                && !i.checks.some((c) => /same as another/.test(c));
+                && !i.checks.some((c) => /same as another/.test(c)) && !!smsAccountFor(i);
             if (direct) smsAdd(i.id);
             if (smsQueue.length) showSmsSheet();
             if (!i && !smsQueue.length) showToast('That transaction was already added or ignored.', 'info');
@@ -6788,6 +6837,7 @@ const initEvents = () => {
         if (d.addCurrency) { addCurrency(d.addCurrency); return; }
         if (d.removeCurrency) { removeCurrency(d.removeCurrency); return; }
         if (d.editAccount) { openAccountEditor(d.editAccount); return; }
+        if (d.smsPickAcc) { pickSmsAccount(d.smsPickAcc); return; }
         if (d.viewAccount) { setViewAccount(d.viewAccount); if (isSheetOpen('modal-accounts')) closeSheet('modal-accounts'); return; }
         if (d.action === 'switch-account') { if (state.accounts.length > 1) openAccountManager(); return; }
         if (d.themeChoice) { setTheme(d.themeChoice, e); return; }
@@ -6967,7 +7017,15 @@ const initEvents = () => {
     $('tx-logo-remove').addEventListener('click', removeShopLogo);
     $('shop-logo-input').addEventListener('change', onShopLogoPicked);
     $('account-kind').addEventListener('change', () => { accountKindTouched = true; });
-    document.addEventListener('change', (e) => { if (e.target && ACCOUNT_SELECTS.includes(e.target.id)) syncAccountLogos(); });
+    document.addEventListener('change', (e) => {
+        if (e.target && ACCOUNT_SELECTS.includes(e.target.id)) syncAccountLogos();
+        // The account picked on a detected transaction (remembered for its card number when added).
+        const smsAcc = e.target && e.target.dataset && e.target.dataset.smsAcc;
+        if (smsAcc) {
+            const i = smsQueue.find((x) => x.id === smsAcc);
+            if (i && e.target.value) { i.accountId = e.target.value; e.target.closest('.sms-acc-select').classList.remove('is-undecided'); }
+        }
+    });
     $('tx-desc').addEventListener('blur', () => setTimeout(() => { delete $('tx-desc').dataset.typing; updateDescLogo(); }, 200));
     $('tx-date').addEventListener('input', updateDateHint);
     $('tx-repeat').addEventListener('click', (e) => setSwitch(e.currentTarget, !isOn(e.currentTarget)));
@@ -7020,7 +7078,7 @@ const initEvents = () => {
             onConfirm: () => smsHandled(smsQueue.map((i) => i.id))
         });
     });
-    $('btn-sms-all').addEventListener('click', () => { [...smsQueue].filter((i) => i.confidence === 'high' && i.type !== 'reversal' && i.type !== 'cardpay').forEach((i) => (smsMatchFor(i) ? smsConfirmMatch(i.id) : smsAdd(i.id))); });
+    $('btn-sms-all').addEventListener('click', () => { [...smsQueue].filter((i) => i.confidence === 'high' && i.type !== 'reversal' && i.type !== 'cardpay' && (smsMatchFor(i) || smsAccountFor(i))).forEach((i) => (smsMatchFor(i) ? smsConfirmMatch(i.id) : smsAdd(i.id))); });
     $('btn-forgot-pin').addEventListener('click', forgotPin);
 
     $('btn-report-pdf').addEventListener('click', (e) => withBusy(e.currentTarget, exportPdf));

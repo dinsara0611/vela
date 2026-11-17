@@ -367,7 +367,7 @@ export async function run() {
         const spent0 = g('monthStats')().spent;
         g('smsTake')([{ id: 'a1', address: 'COMBANK', body: 'ATM Cash Withdrawal LKR 5,000.00 from A/C ...1234 at COMBANK ATM KANDY on ' + new Date().toLocaleDateString('en-GB'), date: Date.now() }]);
         g('showSmsSheet')(); await wait(400);
-        $('sms-account').value = bank.id;
+        { const sel = document.querySelector('[data-sms-acc="a1"]'); sel.value = bank.id; sel.dispatchEvent(new Event('change', { bubbles: true })); }
         document.querySelector('[data-sms-add="a1"]').click(); await wait(300);
         const tr = s().transactions.find((t) => t.bank && t.bank.smsId === 'a1');
         return (tr && tr.type === 'transfer' && tr.toAccountId === 'acc-cash' && g('monthStats')().spent === spent0) || `entry ${JSON.stringify(tr && { type: tr.type, to: tr.toAccountId })}, spent ${spent0}->${g('monthStats')().spent}`;
@@ -417,7 +417,7 @@ export async function run() {
         const sheetOpen = g('isSheetOpen')('modal-sms');
         const cards = document.querySelectorAll('#sms-list .sms-card').length;
         const matchBtn = document.querySelector('[data-sms-match="sms-2"]');
-        $('sms-account').value = 'acc-cash';
+        { const sel = document.querySelector('[data-sms-acc="sms-1"]'); sel.value = 'acc-cash'; sel.dispatchEvent(new Event('change', { bubbles: true })); }
         document.querySelector('[data-sms-add="sms-1"]').click(); await wait(300);
         const pizza = s().transactions.find((t) => t.desc === 'Pizza Hut');
         // The list redraws after each decision: take the button from the current list.
@@ -633,6 +633,30 @@ export async function run() {
         return (/^data:image\/(webp|jpeg)/.test(data) && offered && inForm && inList && kept && gone) || JSON.stringify({ data: data.slice(0, 20), offered, inForm, inList, kept, gone });
     });
 
+    await T('Bank SMS go to the right account: matched by bank; with two accounts at one bank Vela asks once, then remembers the card', async () => {
+        freshEngine();
+        const before = s().accounts.slice();
+        s().accounts = before.concat([{ id: 'boc-1', name: 'BOC', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 1 }]);
+        const bocMsg = (id, amt, card, at) => ({ id, address: 'BOC', date: at, body: `Your A/C XXXXXX${card} has been debited by LKR ${amt}.00 on ${new Date().toLocaleDateString('en-GB')}. Bal LKR 5,000.00` });
+        g('smsTake')([bocMsg('ra-1', 1000, '1111', NOW)]);
+        const one = g('smsAccountFor')(g('smsQueue')[0]) === 'boc-1';
+        // A second BOC account: which one is unclear until you say.
+        s().accounts.push({ id: 'boc-2', name: 'BOC Savings', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 2 });
+        const undecided = g('smsAccountFor')(g('smsQueue')[0]) === null;
+        g('showSmsSheet')(); await wait(300);
+        document.querySelector('[data-sms-add="ra-1"]').click(); await wait(400);
+        const asked = g('isSheetOpen')('modal-sms-pick') && document.querySelectorAll('#sms-pick-list [data-sms-pick-acc]').length === 2;
+        document.querySelector('#sms-pick-list [data-sms-pick-acc="boc-2"]').click(); await wait(400);
+        const added = s().transactions.find((t) => t.bank && t.bank.smsId === 'ra-1');
+        // Same card later: goes to BOC Savings by itself.
+        g('smsTake')([bocMsg('ra-2', 2000, '1111', NOW + 60000)]);
+        const remembered = g('smsAccountFor')(g('smsQueue').find((i) => i.id === 'ra-2')) === 'boc-2';
+        if (g('isSheetOpen')('modal-sms')) await close('modal-sms');
+        s().transactions = s().transactions.filter((t) => !(t.bank && /^ra-/.test(t.bank.smsId || '')));
+        s().accounts = before; freshEngine(); g('renderActive')();
+        return (one && undecided && asked && added && added.accountId === 'boc-2' && remembered) || JSON.stringify({ one, undecided, asked, addedTo: added && added.accountId, remembered });
+    });
+
     await T('Review screen: Ignore all asks first, then clears every detection without adding anything', async () => {
         freshEngine();
         const n0 = s().transactions.length;
@@ -730,7 +754,7 @@ export async function run() {
         freshEngine();
         g('smsTake')([smsMsg('tr1', 'CEFT transfer of LKR 15,000.00 to D PERERA from A/C ...1234 successful on ' + new Date().toLocaleDateString('en-GB') + '. Ref 556677', NOW)]);
         g('showSmsSheet')(); await wait(300);
-        $('sms-account').value = s().accounts.find((a) => a.kind === 'bank').id;
+        { const sel = document.querySelector('[data-sms-acc="tr1"]'); sel.value = s().accounts.find((a) => a.kind === 'bank').id; sel.dispatchEvent(new Event('change', { bubbles: true })); }
         document.querySelector('[data-sms-move="tr1"]').click(); await wait(400);
         await g('submitTransfer')(); await wait(400);
         const t = s().transactions.find((x) => x.bank && x.bank.smsId === 'tr1');
