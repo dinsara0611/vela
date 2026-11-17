@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.28.0">
+    <link rel="stylesheet" href="style.css?v=4.29.0">
 </head>
 <body data-view="dashboard">
 
@@ -483,11 +483,6 @@
                                     <button class="switch" type="button" role="switch" aria-checked="false" id="switch-reminders" aria-label="Bill reminders"></button>
                                 </div>
                             </div>
-                            <button class="row-btn" type="button" id="btn-test-notif" hidden>
-                                <span class="row-icon"><svg class="ic"><use href="#i-bell"/></svg></span>
-                                <span class="row-label"><span>Send a test notification</span></span>
-                                <svg class="ic chev"><use href="#i-chevron"/></svg>
-                            </button>
                         </div>
                     </div>
 
@@ -1415,31 +1410,12 @@
                     <li class="feature"><span class="cat-badge" style="--cat:var(--pal-violet)"><svg class="ic"><use href="#i-target"/></svg></span><div><h3>Goals and debts</h3><p>Save toward targets and keep track of money you lent or borrowed.</p></div></li>
                     <li class="feature"><span class="cat-badge" style="--cat:var(--pal-pink)"><svg class="ic"><use href="#i-lock"/></svg></span><div><h3>Private by default</h3><p>PIN or fingerprint lock, and your data stays on your phone unless you sign in.</p></div></li>
                 </ul>
-                <div class="auth-nav"><button class="btn btn-primary btn-onboard-next" type="button" data-next-step="3">Continue</button></div>
+                <div class="auth-nav"><button class="btn btn-primary" type="button" id="btn-complete-onboarding">Start using Vela</button></div>
             </div>
 
-            <div class="auth-step" id="auth-step-3">
-                <div class="auth-heading">
-                    <h1 class="auth-title">How do you want to start?</h1>
-                    <p class="auth-sub">You can delete sample data later in Settings.</p>
-                </div>
-                <div class="choice-list">
-                    <button class="choice" type="button" id="opt-fresh-start" aria-pressed="true">
-                        <span class="cat-badge" style="--cat:var(--pal-violet)"><svg class="ic"><use href="#i-plus"/></svg></span>
-                        <span class="choice-text"><span class="choice-title">Start empty</span><span class="choice-desc">A clean slate for your own income and expenses.</span></span>
-                    </button>
-                    <button class="choice" type="button" id="opt-demo-data" aria-pressed="false">
-                        <span class="cat-badge" style="--cat:var(--pal-orange)"><svg class="ic"><use href="#i-chart"/></svg></span>
-                        <span class="choice-text"><span class="choice-title">Try with sample data</span><span class="choice-desc">Example income, expenses, bills, goals and debts to explore.</span></span>
-                    </button>
-                </div>
-                <div class="auth-nav">
-                    <button class="btn btn-secondary btn-onboard-prev" type="button" data-prev-step="2">Back</button>
-                    <button class="btn btn-primary" type="button" id="btn-complete-onboarding">Start using Vela</button>
-                </div>
             </div>
 
-            <div class="step-dots" id="auth-step-indicators" hidden><span data-step="2"></span><span data-step="3"></span></div>
+            <div class="step-dots" id="auth-step-indicators" hidden></div>
         </div>
     </div>
 
@@ -1447,7 +1423,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.28.0"></script>
+    <script src="app.js?v=4.29.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

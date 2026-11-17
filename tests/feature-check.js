@@ -1414,16 +1414,6 @@ export async function run() {
         return ok || `scheduled ${calls.join(',')}`;
     });
 
-    await T('Sample data loads with round budgets', async () => {
-        const saved = JSON.stringify(s());
-        s().transactions = []; s().savings = []; s().recurring = []; s().debts = []; s().config.categoryBudgets = {};
-        g('seedData')();
-        const n = s().transactions.length;
-        const round = Object.values(s().config.categoryBudgets).every((v) => v % 100 === 0);
-        (0, eval)('state = ' + saved);
-        return (n > 5 && round) || `entries ${n}, round ${round}`;
-    });
-
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

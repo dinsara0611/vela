@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.28.0';
+const APP_VERSION = '4.29.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -110,7 +110,6 @@ let activityDay = null;
 let activityMonth = { y: new Date().getFullYear(), m: new Date().getMonth() };
 let dashboardRange = '30';
 let analyticsRange = '30';
-let onboardingPreference = 'fresh';
 let deferredInstallPrompt = null;
 let handledUserId = null;
 let confirmHandler = null;
@@ -153,10 +152,17 @@ const plural = (n, word, many = word + 's') => `${n} ${n === 1 ? word : many}`;
 const pad2 = (n) => String(n).padStart(2, '0');
 const toISODate = (d = new Date()) => `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 const isISODate = (s) => typeof s === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(s);
+const parsedDates = new Map();
 const parseDate = (s) => {
-    if (!isISODate(s)) return new Date(NaN);
-    const [y, m, d] = s.split('-').map(Number);
-    return new Date(y, m - 1, d);
+    let t = parsedDates.get(s);
+    if (t === undefined) {
+        if (!isISODate(s)) return new Date(NaN);
+        const [y, m, d] = s.split('-').map(Number);
+        t = new Date(y, m - 1, d).getTime();
+        if (parsedDates.size > 20000) parsedDates.clear();
+        parsedDates.set(s, t);
+    }
+    return new Date(t);
 };
 const startOfDay = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate());
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
@@ -283,28 +289,84 @@ const fitMoney = (v, cur, max = 11) => {
     const whole = formatWhole(v, cur);
     return whole.length <= max + 3 ? whole : formatCompact(v, cur);
 };
-// Fits an amount into its box: the full amount with commas, then without cents, and only if it
-// still doesn't fit the short form ("Rs. 1.2M"). Boxes that aren't visible yet keep the full amount.
-const fitAmount = (el) => {
-    if (!el || !el.isConnected || el.dataset.v === undefined) return;
+// Fits amounts into their boxes: the full amount with commas, then slightly smaller, then without cents, and only
+// if it still doesn't fit the short form ("Rs. 1.2M"). Boxes that aren't visible yet keep the full amount.
+// Speed: the text is measured with a canvas (no page layout per try), and all amounts on a screen are fitted in
+// one batch: write the full text, read every box once, then write the results. Trying sizes one by one and asking
+// the page to re-measure after each was the biggest cause of lag on big histories.
+const fitCanvas = (() => { try { return document.createElement('canvas').getContext('2d'); } catch (e) { return null; } })();
+const fitTries = (el) => {
     const v = Number(el.dataset.v);
     const cur = el.dataset.cur;
     const signed = el.dataset.signed === 'true';
     const full = signed ? formatSigned(v, cur) : formatCurrency(v, cur);
     const whole = formatWhole(v, cur, signed);
-    // [text, font scale]: shrink the text a little before dropping cents, and only then shorten.
-    const tries = [[full, 1], [full, 0.86], [whole, 1], [whole, 0.86], [whole, 0.74], [`${signed && v > 0 ? '+' : ''}${formatCompact(v, cur)}`, 1], [`${signed && v > 0 ? '+' : ''}${formatCompact(v, cur)}`, 0.8], [`${signed && v > 0 ? '+' : ''}${formatCompact(v, cur)}`, 0.66]];
+    const short = `${signed && v > 0 ? '+' : ''}${formatCompact(v, cur)}`;
+    return { full, tries: [[full, 1], [full, 0.86], [whole, 1], [whole, 0.86], [whole, 0.74], [short, 1], [short, 0.8], [short, 0.66]] };
+};
+const fitAmountsSlow = (el, tries) => {
     const box = el.clientWidth ? el : el.parentElement;
-    el.style.fontSize = '';
-    if (!box || !box.clientWidth) { el.textContent = full; return; }
     for (const [text, scale] of tries) {
         el.textContent = text;
         el.style.fontSize = scale === 1 ? '' : `${scale}em`;
-        const fits = el.clientWidth ? el.scrollWidth <= el.clientWidth + 1 : el.getBoundingClientRect().width <= box.clientWidth + 1;
-        if (fits) return;
+        if (el.clientWidth ? el.scrollWidth <= el.clientWidth + 1 : el.getBoundingClientRect().width <= box.clientWidth + 1) return;
     }
 };
-const refitAmounts = (root = document) => { root.querySelectorAll('[data-v]').forEach(fitAmount); root.querySelectorAll('.hero-amount').forEach((el) => shrinkToFit(el)); };
+const fitAmounts = (els) => {
+    const items = [];
+    // 1. write: every amount back to its full text and normal size
+    els.forEach((el) => {
+        if (!el || !el.isConnected || el.dataset.v === undefined || el.classList.contains('hero-amount')) return;
+        const t = fitTries(el);
+        el.style.fontSize = '';
+        if (el.textContent !== t.full) el.textContent = t.full;
+        items.push({ el, ...t });
+    });
+    if (!items.length) return;
+    // 2. read: box widths and fonts, all at once (one layout)
+    items.forEach((it) => {
+        const el = it.el;
+        const own = el.clientWidth > 0;
+        const box = own ? el : el.parentElement;
+        if (!box || !box.clientWidth) { it.avail = 0; return; }
+        const bs = getComputedStyle(box);
+        it.avail = box.clientWidth - (parseFloat(bs.paddingLeft) || 0) - (parseFloat(bs.paddingRight) || 0);
+        const cs = getComputedStyle(el);
+        it.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+        it.ls = parseFloat(cs.letterSpacing) || 0;
+        it.tabular = /tabular/.test(cs.fontVariantNumeric || '');
+    });
+    // 3. work out and write the result for each
+    items.forEach((it) => {
+        if (!(it.avail > 0)) return;
+        if (!fitCanvas) { fitAmountsSlow(it.el, it.tries); return; }
+        fitCanvas.font = it.font;
+        const width = (text) => {
+            // Tabular figures are all as wide as a 0; the canvas draws proportional ones.
+            const t = it.tabular ? text.replace(/[0-9]/g, '0') : text;
+            return fitCanvas.measureText(t).width + it.ls * t.length;
+        };
+        const pick = it.tries.find(([text, scale]) => width(text) * scale <= it.avail - 1) || it.tries[it.tries.length - 1];
+        if (it.el.textContent !== pick[0]) it.el.textContent = pick[0];
+        it.el.style.fontSize = pick[1] === 1 ? '' : `${pick[1]}em`;
+    });
+};
+const fitAmount = (el) => fitAmounts([el]);
+// Amounts set while a screen is being drawn are fitted together right after (one batch, not one each).
+const fitQueue = new Set();
+let fitQueued = false;
+const queueFit = (el) => {
+    fitQueue.add(el);
+    if (fitQueued) return;
+    fitQueued = true;
+    queueMicrotask(() => { fitQueued = false; const els = [...fitQueue]; fitQueue.clear(); fitAmounts(els); });
+};
+const refitAmounts = (root = document) => {
+    const els = [...root.querySelectorAll('[data-v]')];
+    els.forEach((el) => fitQueue.delete(el));
+    fitAmounts(els);
+    root.querySelectorAll('.hero-amount').forEach((el) => shrinkToFit(el));
+};
 const moneyAttrs = (v, cur, signed = false) => `data-v="${Number(v)}" data-cur="${escapeHtml(cur)}"${signed ? ' data-signed="true"' : ''}`;
 const setMoney = (el, v, cur, max = 11, signed = false) => {
     if (!el) return;
@@ -312,7 +374,8 @@ const setMoney = (el, v, cur, max = 11, signed = false) => {
     el.dataset.cur = cur;
     el.dataset.signed = String(!!signed);
     el.title = signed ? formatSigned(v, cur) : formatCurrency(v, cur);
-    fitAmount(el);
+    el.textContent = el.title;
+    queueFit(el);
 };
 
 /* ---- Amount boxes: commas appear while typing (1000 -> 1,000) ---- */
@@ -402,7 +465,9 @@ function syncAccountLogos() {
         box.classList.toggle('has-logo-pad', !!a);
     });
 }
+let balanceMemo = null; // only while a screen is being drawn (see renderActive)
 const accountBalance = (acc) => {
+    if (balanceMemo && balanceMemo.has(acc)) return balanceMemo.get(acc);
     let bal = acc.opening;
     state.transactions.forEach((t) => {
         if (isUpcoming(t)) return;
@@ -413,6 +478,7 @@ const accountBalance = (acc) => {
             bal += (t.type === 'income' ? 1 : -1) * convertAmount(t.amount, t.currency, acc.currency);
         }
     });
+    if (balanceMemo) balanceMemo.set(acc, bal);
     return bal;
 };
 const netWorth = () => state.accounts.reduce((s, a) => s + toDisplay(accountBalance(a), a.currency), 0);
@@ -1032,7 +1098,13 @@ const initSheetDrag = () => {
 /* =========================================================================
    8. Theme
    ========================================================================= */
-const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+const cssVarCache = new Map();
+const cssVar = (name) => {
+    const key = `${document.documentElement.getAttribute('data-theme')}|${name}`;
+    let v = cssVarCache.get(key);
+    if (v === undefined) { v = getComputedStyle(document.documentElement).getPropertyValue(name).trim(); cssVarCache.set(key, v); }
+    return v;
+};
 
 const updateThemeChrome = () => {
     const bg = cssVar('--bg') || '#07070b';
@@ -1210,6 +1282,10 @@ const renderViewBar = () => {
     view.prepend(bar);
 };
 const renderActive = () => {
+    balanceMemo = new Map();
+    try { renderActiveNow(); } finally { balanceMemo = null; }
+};
+const renderActiveNow = () => {
     renderViewBar();
     if (currentTab === 'dashboard') renderDashboard();
     else if (currentTab === 'activity') renderActivity();
@@ -1665,22 +1741,6 @@ const enableReminders = async (on) => {
     renderSettings();
 };
 
-const sendTestNotification = async () => {
-    const ln = nativePlugin('LocalNotifications');
-    if (!ln) { showToast('Notifications work in the Android app.', 'info'); return; }
-    if (!(await ensureNotifPermission(ln, true))) {
-        showToast('Notifications are blocked. Open Android Settings > Apps > Vela > Notifications and allow them.', 'warning');
-        renderSettings();
-        return;
-    }
-    await ensureChannel(ln);
-    try {
-        await ln.schedule({ notifications: [{ ...notifStyle, id: 900002, title: 'Vela notifications work', body: 'You’ll get bill reminders like this one.', schedule: { at: new Date(Date.now() + 3000), allowWhileIdle: true } }] });
-        showToast('Test notification coming in 3 seconds', 'success');
-    } catch (err) {
-        showToast(`Couldn't send it: ${err.message || err}`, 'error');
-    }
-};
 
 /* =========================================================================
    14. Rendering — shared pieces
@@ -3272,11 +3332,10 @@ const reduceMotion = () => window.matchMedia && window.matchMedia('(prefers-redu
 const shrinkToFit = (el) => {
     if (!el || !el.clientWidth) return;
     el.style.fontSize = '';
-    let size = parseFloat(getComputedStyle(el).fontSize);
-    while (el.scrollWidth > el.clientWidth + 1 && size > 18) {
-        size -= 2;
-        el.style.fontSize = `${size}px`;
-    }
+    const over = el.scrollWidth / (el.clientWidth || 1);
+    if (over <= 1.005) return;
+    const size = parseFloat(getComputedStyle(el).fontSize);
+    el.style.fontSize = `${Math.max(18, Math.floor((size / over) * 0.98))}px`;
 };
 const countUp = (el, to, cur) => {
     if (!el) return;
@@ -3775,7 +3834,6 @@ const renderSettings = () => {
         : state.config.reminders && notifPermission === 'denied'
             ? 'Blocked by Android. Allow notifications for Vela in Android settings, then turn this on.'
             : 'The day before each bill, and every evening at 8 pm.';
-    $('btn-test-notif').hidden = !native;
     renderBankConnections();
     refreshBankStatus();
     $('report-month-desc').textContent = `Income, spending and categories for ${monthName(activityMonth.y, activityMonth.m)}`;
@@ -3870,17 +3928,33 @@ const bucketize = (list, start, end, byMonth) => {
 };
 
 const cashFlowChart = (canvasId, emptyId, data, key) => {
-    destroyChart(key);
-    if (!chartsReady()) { showChartMessage(emptyId, 'Charts load when you are online.'); return; }
+    if (!chartsReady()) { destroyChart(key); showChartMessage(emptyId, 'Charts load when you are online.'); return; }
     const t = chartTheme();
     const has = data.income.some((v) => v > 0) || data.spent.some((v) => v > 0);
     showChartMessage(emptyId, has ? '' : 'Nothing logged in this period');
+    // Same numbers and colours as the chart already on screen: keep it (no rebuild, no grow-in again).
+    const sig = JSON.stringify([data.labels, data.income, data.spent, t]);
+    const live = charts[key] && charts[key].canvas === $(canvasId) ? charts[key] : null;
+    if (live && live.$velaSig === sig) return;
+    // Only the numbers changed (another account, a new entry): move the bars instead of rebuilding the chart.
+    const colours = JSON.stringify(t);
+    if (live && live.$velaColours === colours && live.data.labels.length === data.labels.length) {
+        live.data.labels = data.labels;
+        live.data.datasets[0].data = data.income;
+        live.data.datasets[1].data = data.spent;
+        live.$velaSig = sig;
+        live.update(chartsInstant || reducedMotion() ? 'none' : undefined);
+        return;
+    }
+    destroyChart(key);
     const ds = (label, values, color) => ({ label, data: values, backgroundColor: hexToRgba(color, 0.85), hoverBackgroundColor: color, borderRadius: 4, borderSkipped: false, maxBarThickness: 16, categoryPercentage: 0.8, barPercentage: 0.9 });
     charts[key] = new Chart($(canvasId), {
         type: 'bar',
         data: { labels: data.labels, datasets: [ds('Income', data.income, t.income), ds('Spent', data.spent, t.expense)] },
         options: baseOptions(t)
     });
+    charts[key].$velaSig = sig;
+    charts[key].$velaColours = colours;
 };
 
 const renderTrendChart = () => {
@@ -6000,79 +6074,9 @@ const setAuthMode = (mode) => {
     $('form-signup').hidden = signin;
 };
 
-const seedData = () => {
-    const today = new Date();
-    const ago = (n) => toISODate(addDays(today, -n));
-    const ahead = (n) => toISODate(addDays(today, n));
-    const now = Date.now();
-    const tx = (type, desc, amount, currency, category, daysAgo, note = '') => ({ id: generateId(), type, desc, amount, currency, category, date: ago(daysAgo), note, createdAt: now - daysAgo * 1000, recurringId: null });
-    const firstOf = (monthsBack) => toISODate(new Date(today.getFullYear(), today.getMonth() - monthsBack, 1));
-    state.transactions = [
-        tx('expense', 'Groceries at Keells', 45.5, 'USD', 'Food', 1, 'Weekly shop'),
-        tx('expense', 'Electricity bill', 15000, 'LKR', 'Utilities', 4, 'CEB monthly bill'),
-        tx('expense', 'Apartment rent', 400, 'USD', 'Rent', 9),
-        tx('expense', 'Netflix', 15.49, 'USD', 'Entertainment', 12),
-        tx('expense', 'PickMe ride', 2400, 'LKR', 'Travel', 14, 'To the office'),
-        tx('expense', 'Pharmacy', 35, 'USD', 'Health', 20, 'Prescriptions'),
-        tx('expense', 'Lunch with team', 4200, 'LKR', 'Food', 3),
-        tx('expense', 'Office chair', 120, 'USD', 'Shopping', 38),
-        tx('expense', 'Fuel', 8500, 'LKR', 'Travel', 47, 'Full tank'),
-        tx('expense', 'Fibre internet', 4800, 'LKR', 'Utilities', 64),
-        tx('expense', 'Birthday dinner', 95, 'USD', 'Food', 101),
-        tx('expense', 'Online course', 200, 'USD', 'Entertainment', 190),
-        tx('income', 'Freelance website', 250, 'USD', 'Freelance', 6, 'Client: Lanka Tea Co.'),
-        tx('income', 'Birthday gift', 10000, 'LKR', 'Gift', 101)
-    ];
-    [0, 1, 2].forEach((mb) => {
-        state.transactions.push({ id: generateId(), type: 'income', desc: 'Salary', amount: 350000, currency: 'LKR', category: 'Salary', date: firstOf(mb), note: '', createdAt: now - mb * 1e6, recurringId: null });
-    });
-    state.savings = [
-        { id: generateId(), name: 'Emergency fund', target: 5000, currency: 'USD', saved: 2400, deadline: toISODate(new Date(today.getFullYear() + 1, 5, 30)), createdAt: now },
-        { id: generateId(), name: 'New laptop', target: 2500, currency: 'USD', saved: 750, deadline: null, createdAt: now },
-        { id: generateId(), name: 'Trip to Ella', target: 150000, currency: 'LKR', saved: 45000, deadline: toISODate(new Date(today.getFullYear(), today.getMonth() + 4, 15)), createdAt: now }
-    ];
-    const bill = (type, name, amount, currency, category, frequency, nextDate, autoLog) => ({ id: generateId(), type, name, amount, currency, category, frequency, nextDate, anchorDay: parseDate(nextDate).getDate(), autoLog, createdAt: now });
-    state.recurring = [
-        bill('expense', 'Apartment rent', 400, 'USD', 'Rent', 'monthly', ahead(2), false),
-        bill('expense', 'Netflix', 15.49, 'USD', 'Entertainment', 'monthly', ahead(5), true),
-        bill('expense', 'Electricity', 15000, 'LKR', 'Utilities', 'monthly', ahead(12), false),
-        bill('expense', 'Gym membership', 60000, 'LKR', 'Health', 'yearly', ahead(40), false),
-        bill('income', 'Salary', 350000, 'LKR', 'Salary', 'monthly', firstOf(-1), true)
-    ];
-    state.debts = [
-        { id: generateId(), direction: 'lent', person: 'Kasun', amount: 20000, currency: 'LKR', repaid: 5000, dueDate: ahead(20), note: 'Phone repair', createdAt: now },
-        { id: generateId(), direction: 'borrowed', person: 'Amaya', amount: 50, currency: 'USD', repaid: 0, dueDate: ahead(10), note: 'Concert tickets', createdAt: now }
-    ];
-    state.config.categoryBudgets = { Food: 150, Entertainment: 50, Travel: 80 };
-    state.accounts = [
-        { id: 'acc-cash', name: 'Cash', kind: 'cash', currency: 'LKR', opening: 18000, createdAt: now },
-        { id: generateId(), name: 'Commercial Bank', kind: 'bank', currency: 'LKR', opening: 420000, createdAt: now },
-        { id: generateId(), name: 'Visa card', kind: 'card', currency: 'USD', opening: 0, createdAt: now }
-    ];
-    const [cash, bank, card] = state.accounts;
-    state.transactions.forEach((t) => {
-        t.accountId = t.type === 'income' ? bank.id : t.currency === 'USD' ? card.id : cash.id;
-        t.receipt = null;
-    });
-    state.recurring.forEach((b) => { b.accountId = b.type === 'income' ? bank.id : b.currency === 'USD' ? card.id : bank.id; });
-    state.transactions.push({ id: generateId(), type: 'transfer', desc: 'ATM withdrawal', amount: 20000, currency: 'LKR', accountId: bank.id, toAccountId: cash.id, toAmount: 20000, toCurrency: 'LKR', category: 'Transfer', date: ago(5), note: '', createdAt: now, recurringId: null, receipt: null });
-    state.config.budget = 1500;
-    state.config.budgetCurrency = 'USD';
-    // Sample budgets are written in dollars; show them as round numbers in the main currency.
-    const to = dcur();
-    if (to !== 'USD') {
-        state.config.budget = tidyBudget(convertAmount(state.config.budget, 'USD', to));
-        Object.keys(state.config.categoryBudgets).forEach((k) => { state.config.categoryBudgets[k] = tidyBudget(convertAmount(state.config.categoryBudgets[k], 'USD', to)); });
-        state.config.budgetCurrency = to;
-    }
-};
 
 const completeOnboarding = async () => {
     await withBusy($('btn-complete-onboarding'), async () => {
-        if (onboardingPreference === 'demo' && !state.transactions.length && !state.savings.length) {
-            seedData();
-            if (canSync()) queueAllForUpload();
-        }
         state.auth.completedOnboarding = true;
         saveState();
         hideAuth();
@@ -6080,7 +6084,7 @@ const completeOnboarding = async () => {
         switchTab('dashboard', { fromHistory: true });
         flushSync();
         scheduleReminders();
-        showToast(onboardingPreference === 'demo' ? 'Sample data added. Explore away!' : "You're all set. Tap + to add your first entry.", 'success');
+        showToast("You're all set. Tap + to add your first entry.", 'success');
     });
 };
 
@@ -7053,7 +7057,6 @@ const initEvents = () => {
     $('btn-change-pin').addEventListener('click', () => openPinFlow('change'));
     $('switch-biometric').addEventListener('click', toggleBiometric);
     $('switch-reminders').addEventListener('click', (e) => enableReminders(!isOn(e.currentTarget)));
-    $('btn-test-notif').addEventListener('click', sendTestNotification);
     $('switch-sms').addEventListener('click', (e) => enableSmsTracking(!isOn(e.currentTarget)));
     $('switch-sms-auto').addEventListener('click', (e) => {
         const on = !isOn(e.currentTarget);
@@ -7127,11 +7130,6 @@ const initEvents = () => {
     $('btn-skip-auth').addEventListener('click', handleGuest);
     document.querySelectorAll('.btn-onboard-next').forEach((b) => b.addEventListener('click', () => goToStep(Number(b.dataset.nextStep))));
     document.querySelectorAll('.btn-onboard-prev').forEach((b) => b.addEventListener('click', () => goToStep(Number(b.dataset.prevStep))));
-    ['opt-fresh-start', 'opt-demo-data'].forEach((id) => $(id).addEventListener('click', () => {
-        onboardingPreference = id === 'opt-demo-data' ? 'demo' : 'fresh';
-        $('opt-fresh-start').setAttribute('aria-pressed', String(onboardingPreference === 'fresh'));
-        $('opt-demo-data').setAttribute('aria-pressed', String(onboardingPreference === 'demo'));
-    }));
     $('btn-complete-onboarding').addEventListener('click', completeOnboarding);
 
     window.addEventListener('online', () => { flushSync().then(updateUserProfileUI); fetchLiveExchangeRate(); });

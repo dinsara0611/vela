@@ -4452,3 +4452,18 @@ button.view-bar:active { background: var(--surface-pressed); }
 .sms-acc-select { display: block; min-width: 0; }
 .sms-acc-select .input { min-height: 40px; padding-top: 6px; padding-bottom: 6px; font-size: var(--fs-sm); }
 .sms-acc-select.is-undecided .input { border-color: var(--warning); color: var(--warning); }
+
+/* ---------- Smooth scrolling on phones ----------
+   A live blur behind the top and bottom bars is recomputed on every scroll frame, which makes Android's WebView
+   stutter. On touch screens and in the app the bars are solid instead (they look the same: almost opaque already),
+   and the "live rate" dot pulses a few times instead of forever, so nothing repaints while you just read. */
+@media (hover: none), (pointer: coarse) {
+    .appbar, .tabbar { -webkit-backdrop-filter: none; backdrop-filter: none; }
+    :root { --bar-bg: rgb(9, 9, 14); }
+    :root[data-theme="light"] { --bar-bg: rgb(244, 245, 248); }
+}
+html.native .appbar, html.native .tabbar { -webkit-backdrop-filter: none; backdrop-filter: none; }
+html.native { --bar-bg: rgb(9, 9, 14); }
+html.native[data-theme="light"] { --bar-bg: rgb(244, 245, 248); }
+.status-dot[data-status="live"] { animation-iteration-count: 6; }
+.status-dot[data-status="syncing"] { will-change: opacity, transform; }
