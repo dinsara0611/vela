@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.20.0';
+const APP_VERSION = '4.20.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1035,10 +1035,9 @@ const setTheme = (theme, originEvent) => {
     if (theme === state.config.theme) return;
     const reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
     if (!document.startViewTransition || reduce) { applyTheme(theme); return; }
-    // Phones and the Android app: a short cross-fade, which the graphics chip animates on its own, so it stays
-    // smooth at any screen size. The circular reveal repaints the whole screen every frame, so it is kept for
-    // desktop pointers only.
-    const circle = !isNative() && window.matchMedia('(hover: hover) and (pointer: fine)').matches;
+    // The new theme spreads out in a circle from the button you tapped. Only two snapshots of the screen are
+    // animated (per-element colour transitions are off during the switch), so it stays smooth on phones too.
+    const circle = true;
     const root = document.documentElement;
     // The animation needs the browser to draw a frame. If it can't (busy or background tab),
     // switch the theme anyway so the button never appears to do nothing.
@@ -1062,7 +1061,7 @@ const setTheme = (theme, originEvent) => {
         try {
             root.animate(
                 { clipPath: [`circle(0px at ${x}px ${y}px)`, `circle(${endRadius}px at ${x}px ${y}px)`] },
-                { duration: 480, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', pseudoElement: '::view-transition-new(root)' }
+                { duration: 520, easing: 'cubic-bezier(0.22, 0.8, 0.24, 1)', pseudoElement: '::view-transition-new(root)' }
             );
         } catch (e) { /* the plain cross-fade is used instead */ }
     });
@@ -1937,7 +1936,7 @@ const logoSlug = (slug) => { const k = LOGO_SLUGS.has(slug) ? slug : LOGO_ALIAS[
 const logoImg = (slug, alt = '') => `<img src="logos/${slug}.png" alt="${escapeHtml(alt)}" decoding="async" draggable="false" onerror="this.parentNode.classList.remove('has-logo');this.remove()">`;
 const brandBadge = (b, extra = '') => {
     const slug = logoSlug(b.slug);
-    const mark = b.mark ? `<span class="brand-mark${b.mark.length > 2 ? ' is-long' : ''}">${escapeHtml(b.mark)}</span>` : icon('c-Shopping');
+    const mark = b.mark ? `<span class="brand-letters${b.mark.length > 2 ? ' is-long' : ''}">${escapeHtml(b.mark)}</span>` : icon('c-Shopping');
     return `<span class="cat-badge brand-badge${slug ? ' has-logo' : ''}${extra}" style="--brand-bg:${b.bg};--brand-fg:${b.fg}" title="${escapeHtml(b.name)}">${slug ? logoImg(slug) : ''}${mark}</span>`;
 };
 // The badge for an entry: the shop's real logo when bundled, else its brand colours, else its category icon.

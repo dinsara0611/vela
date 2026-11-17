@@ -4021,28 +4021,28 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 /* Shop and bank badges: the brand's real logo when it is bundled with the app (logos/), else its colours. */
 .cat-badge.brand-badge { background: var(--brand-bg); color: var(--brand-fg); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10), 0 4px 14px rgba(0, 0, 0, 0.35); }
 .cat-badge.brand-badge::before, .cat-badge.brand-badge::after { display: none; }
-.brand-mark { font-family: var(--font-display, inherit); font-weight: 800; font-size: 19px; line-height: 1; letter-spacing: -0.02em; }
+.brand-letters { font-family: var(--font-display, inherit); font-weight: 800; font-size: 19px; line-height: 1; letter-spacing: -0.02em; }
 /* Real logo: the brand's own app icon, edge to edge in the rounded tile like an app icon on a phone. A hairline on
    top keeps white icons visible on light cards and dark icons visible on dark ones. If the file can't load, the
    badge in the brand's colours shows instead (see logoImg in app.js). */
 .cat-badge.brand-badge.has-logo { background: #ffffff; overflow: hidden; padding: 0; box-shadow: 0 3px 10px var(--logo-shadow); }
 .cat-badge.brand-badge.has-logo img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; border-radius: inherit; -webkit-user-drag: none; user-select: none; }
 .cat-badge.brand-badge.has-logo::after { content: ''; display: block; position: absolute; inset: 0; border: 0; border-radius: inherit; opacity: 1; box-shadow: inset 0 0 0 1px var(--logo-edge); pointer-events: none; }
-.cat-badge.brand-badge.has-logo .brand-mark, .cat-badge.brand-badge.has-logo > .ic { display: none; }
+.cat-badge.brand-badge.has-logo .brand-letters, .cat-badge.brand-badge.has-logo > .ic { display: none; }
 .bank-logo.has-logo { background: #ffffff; padding: 0; overflow: hidden; }
 .bank-logo.has-logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .bank-logo .ic { width: 22px; height: 22px; }
 /* Small logo beside a name (bank chips, the bank line of a detected transaction). */
 .cat-badge.brand-badge.is-mini { width: 22px; height: 22px; border-radius: 7px; box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.10); }
 .cat-badge.brand-badge.is-mini.has-logo { box-shadow: none; }
-.cat-badge.brand-badge.is-mini .brand-mark { font-size: 10px; }
-.cat-badge.brand-badge.is-mini .brand-mark.is-long { font-size: 7px; }
+.cat-badge.brand-badge.is-mini .brand-letters { font-size: 10px; }
+.cat-badge.brand-badge.is-mini .brand-letters.is-long { font-size: 7px; }
 .sms-bank { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .bank-banks { display: grid; gap: var(--sp-2); min-width: 0; }
 .bank-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .bank-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 3px; border-radius: var(--r-full); background: var(--surface-2); border: 1px solid var(--border); font-size: var(--fs-xs); font-weight: 600; color: var(--text-2); white-space: nowrap; }
 .bank-chip.is-more { padding: 5px 10px; color: var(--text-3); font-weight: 500; }
-.brand-mark.is-long { font-size: 12px; letter-spacing: 0; }
+.brand-letters.is-long { font-size: 12px; letter-spacing: 0; }
 .fx-row.fx-expected .amount { color: var(--text-3); white-space: nowrap; }
 .fx-row .amount { font-size: var(--fs-md); white-space: nowrap; }
 .fx-row.fx-total { padding-top: 8px; border-top: 1px dashed var(--border-strong); color: var(--text); font-weight: 600; }
