@@ -4467,3 +4467,8 @@ html.native { --bar-bg: rgb(9, 9, 14); }
 html.native[data-theme="light"] { --bar-bg: rgb(244, 245, 248); }
 .status-dot[data-status="live"] { animation-iteration-count: 6; }
 .status-dot[data-status="syncing"] { will-change: opacity, transform; }
+
+/* Insights: this account or all accounts together. */
+.insights-scope { margin-bottom: var(--sp-3); }
+.insights-scope[hidden] { display: none; }
+.insights-scope button { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

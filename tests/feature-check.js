@@ -610,6 +610,29 @@ export async function run() {
             || JSON.stringify({ copied, sepGoals, sepOwed, homeBudget, homeGoals, homeOwed, sepBudget });
     });
 
+    await T('Insights can show all accounts together, the rest of the app stays on one account', async () => {
+        const before = { accounts: s().accounts.slice(), tx: s().transactions.slice() };
+        const home = g('viewId')();
+        s().accounts = before.accounts.concat([{ id: 'acc-ins', name: 'BOC', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 0 }]);
+        s().transactions.push({ id: 'ins-1', type: 'expense', desc: 'Keells', amount: 4321, currency: 'LKR', category: 'Food', date: today, note: '', createdAt: Date.now(), accountId: 'acc-ins', recurringId: null, receipt: null, fixed: false, pending: false });
+        const spentShown = () => Number($('metric-total').dataset.v || NaN);
+        g('switchTab')('analytics'); await wait(300);
+        const shown = !$('insights-scope').hidden;
+        const one = spentShown();
+        document.querySelector('[data-insights-scope="all"]').click(); await wait(300);
+        const all = spentShown();
+        // Every account's spending in the last 30 days, waiting ones left out (same rule as the screen).
+        const from = g('toISODate')(g('addDays')(new Date(), -29));
+        const expectAll = s().transactions.filter((t) => t.type === 'expense' && t.date >= from && t.date <= today && !g('isUpcoming')(t)).reduce((sum, t) => sum + g('toDisplay')(t.amount, t.currency), 0);
+        const barHidden = !document.querySelector('#tab-analytics .view-bar');
+        const homeStill = g('viewId')() === home;
+        document.querySelector('[data-insights-scope="account"]').click(); await wait(300);
+        const back = spentShown();
+        const barBack = !!document.querySelector('#tab-analytics .view-bar');
+        s().accounts = before.accounts; s().transactions = before.tx; localStorage.removeItem('VELA_INSIGHTS_ALL'); g('renderActive')();
+        return (shown && Math.abs(all - expectAll) < 0.01 && all > one && back === one && barHidden && barBack && homeStill) || JSON.stringify({ shown, one, all, expectAll, back, barHidden, barBack, homeStill });
+    });
+
     await T('Your own shop logo: pick a photo once, shown for that shop everywhere, kept in backups, removable', async () => {
         // A small test picture, as if picked from the gallery.
         const c = document.createElement('canvas'); c.width = 300; c.height = 200;

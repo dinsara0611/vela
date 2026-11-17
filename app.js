@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.29.0';
+const APP_VERSION = '4.30.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1272,6 +1272,7 @@ const renderViewBar = () => {
     const a = viewAccountObj();
     const view = $(`tab-${currentTab}`);
     if (!a || !view || !['dashboard', 'activity', 'plan', 'analytics'].includes(currentTab)) return;
+    if (currentTab === 'analytics' && insightsAll()) return; // Insights is showing every account together
     const bal = accountBalance(a);
     const bar = document.createElement('button');
     bar.type = 'button';
@@ -1332,11 +1333,16 @@ const viewId = () => {
     return first;
 };
 const viewAccountObj = () => state.accounts.find((a) => a.id === viewId()) || null;
-const viewTx = () => { const v = viewId(); return v === 'all' ? state.transactions : state.transactions.filter((t) => inAccount(t, v)); };
+// Insights can show all accounts together ("All accounts" there); everything else follows the switched account.
+let scopeAll = false;
+const scopeId = () => (scopeAll ? 'all' : viewId());
+const INSIGHTS_ALL_KEY = 'VELA_INSIGHTS_ALL';
+const insightsAll = () => { try { return state.accounts.length > 1 && localStorage.getItem(INSIGHTS_ALL_KEY) === '1'; } catch (e) { return false; } };
+const viewTx = () => { const v = scopeId(); return v === 'all' ? state.transactions : state.transactions.filter((t) => inAccount(t, v)); };
 const ownedBy = (x, v) => (x.accountId || (state.accounts[0] && state.accounts[0].id)) === v;
-const viewGoals = () => { const v = viewId(); return v === 'all' ? state.savings : state.savings.filter((g) => ownedBy(g, v)); };
-const viewDebts = () => { const v = viewId(); return v === 'all' ? state.debts : state.debts.filter((d) => ownedBy(d, v)); };
-const viewBills = () => { const v = viewId(); return v === 'all' ? state.recurring : state.recurring.filter((b) => (b.accountId || (state.accounts[0] && state.accounts[0].id)) === v); };
+const viewGoals = () => { const v = scopeId(); return v === 'all' ? state.savings : state.savings.filter((g) => ownedBy(g, v)); };
+const viewDebts = () => { const v = scopeId(); return v === 'all' ? state.debts : state.debts.filter((d) => ownedBy(d, v)); };
+const viewBills = () => { const v = scopeId(); return v === 'all' ? state.recurring : state.recurring.filter((b) => (b.accountId || (state.accounts[0] && state.accounts[0].id)) === v); };
 // Each account has its own budget (amount, category limits, from-income mode). The usual budget settings always
 // hold the current account's; switching keeps them aside and brings in the other account's. A new account starts
 // with a copy of the one you were in.
@@ -1396,6 +1402,20 @@ const inMonth = (t, y, m) => { const d = parseDate(t.date); return d.getFullYear
 
 /* ---- Budgets keep the currency you typed them in ---- */
 const budgetCur = () => state.config.budgetCurrency || 'USD';
+// All accounts together: every account's own monthly budget (from income: that account's income), added up.
+function allAccountsBudget(y, m) {
+    const cur = dcur();
+    const v = viewId();
+    return state.accounts.reduce((sum, a) => {
+        const b = a.id === v ? budgetSnapshot() : (state.config.accountBudgets || {})[a.id];
+        if (!b) return sum;
+        if (b.budgetMode === 'income') {
+            const inc = sumDisplay(state.transactions.filter((t) => t.type === 'income' && t.accountId === a.id && inMonth(t, y, m)));
+            return sum + inc * (1 - (b.budgetSavePct || 0) / 100);
+        }
+        return sum + convertAmount(b.budget, b.budgetCurrency || 'USD', cur);
+    }, 0);
+}
 const budgetIn = (value, cur) => convertAmount(value, budgetCur(), cur);
 // Old versions stored budgets in US dollars. Move them to the display currency once,
 // rounding away the exchange-rate drift (Rs. 30,012.37 -> Rs. 30,000).
@@ -1436,7 +1456,7 @@ const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => 
     // (rent on the 17th), because you plan the month's spending with it.
     const plannedIncome = sumDisplay(viewTx().filter((t) => t.type === 'income' && inMonth(t, y, m)));
     const fromIncome = state.config.budgetMode === 'income';
-    const budget = fromIncome ? plannedIncome * (1 - state.config.budgetSavePct / 100) : budgetIn(state.config.budget, dcur());
+    const budget = scopeAll ? allAccountsBudget(y, m) : fromIncome ? plannedIncome * (1 - state.config.budgetSavePct / 100) : budgetIn(state.config.budget, dcur());
     const byCat = {};
     spentList.forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + toDisplay(e.amount, e.currency); });
     return { list, spentList, incomeList, spent, income, net: income - spent, prevSpent, budget, budgetPct: budget > 0 ? (spent / budget) * 100 : (spent > 0 && fromIncome ? 100 : 0), byCat, fromIncome, plannedIncome };
@@ -3750,6 +3770,18 @@ const planDebtsHtml = () => {
    18. Rendering — Insights
    ========================================================================= */
 const renderAnalytics = () => {
+    const all = insightsAll();
+    const sw = $('insights-scope');
+    if (sw) {
+        sw.hidden = state.accounts.length < 2;
+        const a = viewAccountObj();
+        $('insights-scope-this').textContent = a ? a.name : 'This account';
+        setPressed('[data-insights-scope]', (b) => (b.dataset.insightsScope === 'all') === all);
+    }
+    scopeAll = all;
+    try { renderAnalyticsNow(); } finally { scopeAll = false; }
+};
+const renderAnalyticsNow = () => {
     const cur = dcur();
     setPressed('.range-btn', (b) => b.dataset.analyticsRange === analyticsRange);
     $('analytics-range-label').textContent = RANGE_LABELS[analyticsRange];
@@ -6842,6 +6874,13 @@ const initEvents = () => {
         if (d.removeCurrency) { removeCurrency(d.removeCurrency); return; }
         if (d.editAccount) { openAccountEditor(d.editAccount); return; }
         if (d.smsPickAcc) { pickSmsAccount(d.smsPickAcc); return; }
+        if (d.insightsScope) {
+            try { localStorage.setItem(INSIGHTS_ALL_KEY, d.insightsScope === 'all' ? '1' : '0'); } catch (e) { /* storage blocked */ }
+            renderViewBar();
+            renderAnalytics();
+            haptic();
+            return;
+        }
         if (d.viewAccount) { setViewAccount(d.viewAccount); if (isSheetOpen('modal-accounts')) closeSheet('modal-accounts'); return; }
         if (d.action === 'switch-account') { if (state.accounts.length > 1) openAccountManager(); return; }
         if (d.themeChoice) { setTheme(d.themeChoice, e); return; }
