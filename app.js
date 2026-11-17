@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.33.1';
+const APP_VERSION = '4.33.2';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2765,10 +2765,17 @@ const smsCardHtml = (i) => {
         ${refundNote}${actions}
     </li>`;
 };
+// Clear enough to add with one tap: read with confidence, not a reversal or card payment, and its account is known.
+const smsAddAllReady = (i) => i.confidence === 'high' && i.type !== 'reversal' && i.type !== 'cardpay' && !!(smsMatchFor(i) || smsAccountFor(i));
 const renderSmsSheet = () => {
     const list = $('sms-list');
     if (!smsQueue.length) { list.innerHTML = ''; return; }
     $('sms-count').textContent = `${plural(smsQueue.length, 'transaction', 'transactions')} to review`;
+    // "Add all confident" says how many it will add; when none can be added without a check, it says so.
+    const confident = smsQueue.filter(smsAddAllReady).length;
+    const allBtn = $('btn-sms-all');
+    allBtn.disabled = confident === 0;
+    allBtn.textContent = confident ? `Add all confident (${confident})` : 'Check each one below';
     list.innerHTML = smsQueue.map(smsCardHtml).join('');
 };
 const showSmsSheet = () => {
@@ -7221,7 +7228,7 @@ const initEvents = () => {
             onConfirm: () => smsHandled(smsQueue.map((i) => i.id))
         });
     });
-    $('btn-sms-all').addEventListener('click', () => { [...smsQueue].filter((i) => i.confidence === 'high' && i.type !== 'reversal' && i.type !== 'cardpay' && (smsMatchFor(i) || smsAccountFor(i))).forEach((i) => (smsMatchFor(i) ? smsConfirmMatch(i.id) : smsAdd(i.id))); });
+    $('btn-sms-all').addEventListener('click', () => { [...smsQueue].filter(smsAddAllReady).forEach((i) => (smsMatchFor(i) ? smsConfirmMatch(i.id) : smsAdd(i.id))); });
     $('btn-forgot-pin').addEventListener('click', forgotPin);
 
     $('btn-report-pdf').addEventListener('click', (e) => withBusy(e.currentTarget, exportPdf));
