@@ -1528,6 +1528,48 @@ export async function run() {
         return ok || `scheduled ${calls.join(',')}`;
     });
 
+    await T('Calendar: an unpaid bill is not counted as spending; its day gets a ring', async () => {
+        const now = new Date();
+        const d = g('toISODate')(now);
+        const list = [
+            { type: 'expense', amount: 3450, currency: 'LKR', date: d, pending: true },
+            { type: 'expense', amount: 500, currency: 'LKR', date: d }
+        ];
+        g('renderCalendar')(list, now.getFullYear(), now.getMonth());
+        const cell = document.querySelector(`[data-cal-day="${d}"]`);
+        const amt = cell && cell.querySelector('.cal-amt');
+        const ring = cell && cell.querySelector('.cal-due');
+        const legend = $('activity-calendar').textContent;
+        g('renderCalendar')(null);
+        return (amt && /500/.test(amt.textContent) && !/3[,.]?4/.test(amt.textContent) && ring && !/green/i.test(legend)) || `amount "${amt && amt.textContent}", ring ${!!ring}, legend "${legend}"`;
+    });
+
+    await T('Lock again after: Now / 1 / 5 / 15 minutes, kept on this phone', async () => {
+        localStorage.removeItem('VELA_LOCK_AFTER');
+        const byDefault = g('lockAfterMs')();
+        if (byDefault !== 60000) return `with nothing chosen it locks after ${byDefault} ms, should be 1 minute`;
+        g('setLockAfter')(0);
+        const now = g('lockAfterMs')();
+        g('setLockAfter')(900);
+        const fifteen = g('lockAfterMs')();
+        const pressed = document.querySelector('[data-lock-after="900"]').getAttribute('aria-pressed');
+        g('setLockAfter')(60);
+        return (now === 0 && fifteen === 900000 && pressed === 'true' && g('lockAfterMs')() === 60000) || `now ${now}, 15 min ${fifteen}, pressed ${pressed}`;
+    });
+
+    await T('Recent notifications: logged once, new dot, list opens and marks read', async () => {
+        (0, eval)('notifLog = []');
+        g('logNotif')({ key: 'test:1', kind: 'due', title: 'Rent is due today', text: 'Rs. 12,000' });
+        g('logNotif')({ key: 'test:1', kind: 'due', title: 'Rent is due today', text: 'Rs. 12,000' });
+        const count = g('notifLog').length;
+        const dot = $('btn-notifs').classList.contains('has-unread');
+        g('openNotifs')(); await wait(350);
+        const shown = $('notif-list').textContent.includes('Rent is due today');
+        const dotAfter = $('btn-notifs').classList.contains('has-unread');
+        $('btn-notifs-clear').click(); await wait(350);
+        return (count === 1 && dot && shown && !dotAfter && g('notifLog').length === 0) || `count ${count}, dot ${dot}, shown ${shown}, dot after ${dotAfter}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };
@@ -1600,6 +1642,48 @@ export async function run() {
         const set = await client.from('vela_settings').select().maybeSingle();
         g('setTheme')('dark'); await wait(1200);
         return (set.data && set.data.data && set.data.data.theme === 'light') || `cloud theme ${set.data && set.data.data && set.data.data.theme}`;
+    });
+
+    await T('Two-step verification: sign-in waits for the authenticator code', async () => {
+        const client = window.__fakeClient;
+        let verified = 0;
+        client.auth.mfa = {
+            getAuthenticatorAssuranceLevel: async () => ({ data: { currentLevel: verified ? 'aal2' : 'aal1', nextLevel: 'aal2' } }),
+            listFactors: async () => ({ data: { totp: [{ id: 'f1', status: 'verified' }] } }),
+            challengeAndVerify: async ({ code }) => (code === '123456' ? (verified++, { error: null }) : { error: { message: 'Invalid code' } })
+        };
+        (0, eval)('handledUserId = null');
+        let done = false;
+        g('handleSession')({ user: { id: 'u1', email: 't@example.com', user_metadata: {} } }).then(() => { done = true; });
+        await wait(500);
+        const asked = g('openSheets').includes('modal-mfa');
+        const waitedFirst = !done && g('handledUserId') === null;
+        $('mfa-code').value = '000000'; g('submitMfa')(); await wait(300);
+        const wrongKept = g('openSheets').includes('modal-mfa');
+        $('mfa-code').value = '123456'; g('submitMfa')(); await wait(900);
+        const ok = asked && waitedFirst && wrongKept && !g('openSheets').includes('modal-mfa') && g('handledUserId') === 'u1';
+        delete client.auth.mfa;
+        return ok || `asked ${asked}, waited ${waitedFirst}, wrong code kept sheet ${wrongKept}, user ${g('handledUserId')}`;
+    });
+
+    await T('Two-step verification: turning it on shows the QR code and checks a code', async () => {
+        const client = window.__fakeClient;
+        let factors = [];
+        client.auth.mfa = {
+            getAuthenticatorAssuranceLevel: async () => ({ data: { currentLevel: 'aal1', nextLevel: 'aal1' } }),
+            listFactors: async () => ({ data: { totp: factors } }),
+            enroll: async () => ({ data: { id: 'f2', totp: { qr_code: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"/>', secret: 'JBSWY3DPEHPK3PXP' } } }),
+            challengeAndVerify: async ({ code }) => { if (code !== '654321') return { error: { message: 'bad' } }; factors = [{ id: 'f2', status: 'verified' }]; return { error: null }; },
+            unenroll: async () => { factors = []; return { error: null }; }
+        };
+        await g('toggleMfa')(); await wait(400);
+        const qr = $('mfa-qr').getAttribute('src') || '';
+        const secret = $('mfa-secret').textContent;
+        $('mfa-code').value = '654321'; g('submitMfa')(); await wait(500);
+        await g('updateMfaRow')();
+        const state = $('mfa-state').textContent;
+        delete client.auth.mfa;
+        return (qr.startsWith('data:image') && secret === 'JBSWY3DPEHPK3PXP' && state === 'On' && !g('openSheets').includes('modal-mfa')) || `qr ${qr.slice(0, 20)}, secret ${secret}, state ${state}`;
     });
 
     await T('Sign out clears this phone', async () => {

@@ -4489,3 +4489,30 @@ html.native[data-theme="light"] { --bar-bg: rgb(244, 245, 248); }
 .notif-warn { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: var(--warning-soft, rgba(245, 158, 11, 0.12)); color: var(--text); font-size: var(--fs-sm); }
 .notif-warn[hidden] { display: none; }
 .notif-warn .ic { color: var(--warning); }
+
+/* Calendar: income dot and a ring for days with something still to pay or receive */
+.cal-marks { display: flex; gap: 3px; justify-content: center; min-height: 6px; }
+.cal-marks .cal-dot { position: static; }
+.cal-due { display: inline-block; width: 6px; height: 6px; border-radius: 50%; border: 1.5px solid var(--warning); box-sizing: border-box; }
+.cal-legend { flex-wrap: wrap; row-gap: 6px; }
+.cal-legend .cal-due { width: 8px; height: 8px; margin-right: 6px; vertical-align: middle; }
+.lock-after { margin-top: var(--sp-2); }
+
+/* Notifications: bell with a dot for new ones, and the list */
+.notif-btn { position: relative; }
+.notif-btn.has-unread::after { content: ''; position: absolute; top: 9px; right: 10px; width: 8px; height: 8px; border-radius: 50%; background: var(--expense, #ff4d6d); box-shadow: 0 0 0 2px var(--bg); }
+.notif-list .notif-row.is-new .row-label > span:first-child { font-weight: 700; }
+.notif-list .row-icon[data-kind="late"] { color: var(--danger); }
+.notif-list .row-icon[data-kind="added"] { color: var(--income); }
+.notif-time { flex: none; font-size: var(--fs-xs); color: var(--text-3); white-space: nowrap; align-self: flex-start; padding-top: 4px; }
+@media (max-width: 360px) { .appbar .notif-btn { width: 36px; } .appbar .bot-btn { width: 36px; } }
+
+/* Two-step verification */
+.mfa-overlay { z-index: 200; }
+.mfa-setup { display: grid; justify-items: center; gap: 8px; margin: var(--sp-3) 0; }
+.mfa-qr { width: 200px; height: 200px; border-radius: 16px; background: #ffffff; padding: 8px; }
+.mfa-secret { font-size: var(--fs-sm); letter-spacing: 0.08em; word-break: break-all; text-align: center; padding: 6px 10px; border-radius: 10px; background: var(--surface-2); user-select: all; }
+.mfa-code { font-size: 1.6rem; letter-spacing: 0.4em; text-align: center; }
+.mfa-row { margin: var(--sp-2) 0; }
+.mfa-state { flex: none; font-size: var(--fs-sm); font-weight: 700; color: var(--text-3); }
+.mfa-state[data-on="true"] { color: var(--income); }

@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.34.1';
+const APP_VERSION = '4.35.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1427,6 +1427,56 @@ const showHidden = (el, cur) => {
     el.style.fontSize = '';
     el.textContent = maskedMoney(cur);
     el.title = 'Hidden';
+};
+// Recent notifications: what Vela told you about (bank transactions found or added, payments due), newest first.
+const NOTIF_KEY = 'VELA_NOTIF_LOG';
+let notifLog = (() => { try { const a = JSON.parse(localStorage.getItem(NOTIF_KEY) || '[]'); return Array.isArray(a) ? a : []; } catch (e) { return []; } })();
+const saveNotifLog = () => { try { localStorage.setItem(NOTIF_KEY, JSON.stringify(notifLog.slice(0, 60))); } catch (e) { /* storage blocked */ } };
+const logNotif = (n) => {
+    if (n.key && notifLog.some((x) => x.key === n.key)) return; // the same event once
+    notifLog.unshift({ id: generateId(), at: Date.now(), read: false, ...n });
+    notifLog = notifLog.slice(0, 60);
+    saveNotifLog();
+    updateNotifBell();
+};
+const updateNotifBell = () => {
+    const b = $('btn-notifs');
+    if (!b) return;
+    const unread = notifLog.filter((x) => !x.read).length;
+    b.classList.toggle('has-unread', unread > 0);
+    b.setAttribute('aria-label', unread ? `Notifications, ${unread} new` : 'Notifications');
+};
+const relTime = (ms) => {
+    const m = Math.round((Date.now() - ms) / 60000);
+    if (m < 1) return 'Just now';
+    if (m < 60) return `${m} min ago`;
+    const hrs = Math.round(m / 60);
+    if (hrs < 24) return `${hrs} h ago`;
+    return shortDate(toISODate(new Date(ms)));
+};
+const NOTIF_ICON = { bank: 'i-bank', added: 'i-check', due: 'i-calendar', late: 'i-alert' };
+const openNotifs = () => {
+    const list = $('notif-list');
+    list.innerHTML = notifLog.length ? notifLog.map((x) => `<li class="notif-row${x.read ? '' : ' is-new'}"><button type="button" class="row-btn" data-notif-open="${escapeHtml(x.id)}">
+            <span class="row-icon tint" data-kind="${escapeHtml(x.kind || '')}">${icon(NOTIF_ICON[x.kind] || 'i-bell')}</span>
+            <span class="row-label"><span>${escapeHtml(x.title)}</span><span>${escapeHtml(x.text || '')}</span></span>
+            <span class="notif-time">${escapeHtml(relTime(x.at))}</span>
+        </button></li>`).join('') : `<li>${emptyState({ iconId: 'i-bell', title: 'No notifications yet', text: 'Bank transactions Vela finds and payments that are due show up here.' })}</li>`;
+    $('btn-notifs-clear').hidden = !notifLog.length;
+    openOrSwap('modal-notifs');
+    notifLog.forEach((x) => { x.read = true; });
+    saveNotifLog();
+    updateNotifBell();
+};
+const openNotif = (id) => {
+    const x = notifLog.find((n) => n.id === id);
+    closeSheet('modal-notifs');
+    if (!x) return;
+    setTimeout(() => {
+        if (x.kind === 'bank' && smsQueue.length) showSmsSheet();
+        else if (x.kind === 'due' || x.kind === 'late') { activityType = 'all'; goToActivity('all', true); }
+        else switchTab('activity');
+    }, 260);
 };
 const viewTx = () => { const v = scopeId(); return v === 'all' ? state.transactions : state.transactions.filter((t) => inAccount(t, v)); };
 const ownedBy = (x, v) => (x.accountId || (state.accounts[0] && state.accounts[0].id)) === v;
@@ -3063,9 +3113,12 @@ const smsTake = (messages) => {
             if (plugin) plugin.clearHandled({ ids }).catch(() => {});
         }
         smsQueue = smsQueue.concat(fresh.filter((i) => !auto.includes(i)));
+        auto.forEach((i) => logNotif({ key: `added:${i.id}`, kind: 'added', title: `Added from ${i.bank}`, text: `${i.type === 'income' ? '+' : '−'}${formatCurrency(i.amount, i.currency)} · ${i.desc}` }));
+        fresh.filter((i) => !auto.includes(i)).forEach((i) => logNotif({ key: `bank:${i.id}`, kind: 'bank', title: 'Bank transaction detected', text: `${formatCurrency(i.amount, i.currency)} · ${i.bank} · ${i.desc}` }));
         return fresh.length;
     }
     smsQueue = smsQueue.concat(fresh);
+    fresh.forEach((i) => logNotif({ key: `bank:${i.id}`, kind: 'bank', title: 'Bank transaction detected', text: `${formatCurrency(i.amount, i.currency)} · ${i.bank} · ${i.desc}` }));
     return fresh.length;
 };
 // On start and whenever Vela comes back: messages that came while it was closed, plus the inbox since last time.
@@ -3375,6 +3428,12 @@ const paymentSummary = (items) => {
 };
 const renderPaymentsHome = () => {
     const items = paymentItems({ view: true });
+    const day = todayISO();
+    paymentItems().filter((i) => i.status === 'due' || i.status === 'overdue').forEach((i) => logNotif({
+        key: `pay:${i.key}:${day}`, kind: i.status === 'overdue' ? 'late' : 'due',
+        title: i.status === 'overdue' ? (i.type === 'income' ? `${i.name} is late` : `${i.name} is overdue`) : (i.type === 'income' ? `${i.name} expected today` : `${i.name} is due today`),
+        text: `${formatDisplay(i.amount, i.currency)} · ${i.status === 'overdue' ? 'was due' : 'due'} ${shortDate(i.due)}`
+    }));
     const autoSoon = viewBills().filter((b) => b.autoLog && b.type === 'expense' && b.nextDate <= toISODate(addDays(new Date(), 7))).sort((a, b) => (a.nextDate > b.nextDate ? 1 : -1));
     $('due-section').hidden = !items.length && !autoSoon.length;
     const worst = items.some((i) => i.status === 'overdue') ? 'overdue' : items.some((i) => i.status === 'due') ? 'due' : 'upcoming';
@@ -3700,7 +3759,10 @@ const renderCalendar = (list, y, m) => {
     el.hidden = false;
     const spent = {};
     const earned = {};
+    // Only money that really moved is coloured; unpaid or expected entries get a ring on their day instead.
+    const waiting = {};
     list.forEach((t) => {
+        if (isUpcoming(t)) { if (t.type !== 'transfer') waiting[t.date] = true; return; }
         if (t.type === 'expense') spent[t.date] = (spent[t.date] || 0) + toDisplay(t.amount, t.currency);
         if (t.type === 'income') earned[t.date] = (earned[t.date] || 0) + toDisplay(t.amount, t.currency);
     });
@@ -3716,16 +3778,16 @@ const renderCalendar = (list, y, m) => {
         const out = spent[iso] || 0;
         const inc = earned[iso] || 0;
         const heat = max > 0 && out > 0 ? Math.max(0.12, out / max) : 0;
-        const label = `${shortDate(iso)}${out ? `, spent ${formatCurrency(out, cur)}` : ''}${inc ? `, earned ${formatCurrency(inc, cur)}` : ''}`;
+        const label = `${shortDate(iso)}${out ? `, spent ${formatCurrency(out, cur)}` : ''}${inc ? `, earned ${formatCurrency(inc, cur)}` : ''}${waiting[iso] ? ', something still to pay or receive' : ''}`;
         cells.push(`<button type="button" class="cal-day" data-cal-day="${iso}" style="--heat:${heat.toFixed(2)}" ${heat > 0.55 ? 'data-hot="true"' : ''} aria-pressed="${activityDay === iso}" ${iso === today ? 'aria-current="date"' : ''} aria-label="${escapeHtml(label)}">
             <span class="cal-num">${d}</span>
             ${out ? `<span class="cal-amt">${escapeHtml(formatCompact(out, cur).replace(/^[^\d-]+/, ''))}</span>` : ''}
-            ${inc ? '<span class="cal-dot" aria-hidden="true"></span>' : ''}
+            <span class="cal-marks" aria-hidden="true">${inc ? '<span class="cal-dot"></span>' : ''}${waiting[iso] ? '<span class="cal-due"></span>' : ''}</span>
         </button>`);
     }
     const names = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     el.innerHTML = `<div class="cal-grid">${names.map((n) => `<span class="cal-head" aria-hidden="true">${n.slice(0, 2)}</span>`).join('')}${cells.join('')}</div>
-        <div class="cal-legend"><span><i class="cal-swatch"></i>More spending is a deeper green</span><span><i class="cal-dot"></i>Income</span></div>`;
+        <div class="cal-legend"><span><i class="cal-swatch"></i>Spent (deeper = more)</span><span><i class="cal-dot"></i>Income</span><span><i class="cal-due"></i>To pay or receive</span></div>`;
 };
 
 /* =========================================================================
@@ -3992,6 +4054,9 @@ const renderSettings = () => {
     setSwitch($('switch-lock'), lock.enabled);
     $('btn-change-pin').hidden = !lock.enabled;
     $('biometric-row').hidden = !(lock.enabled && biometricAvailable);
+    $('lock-after-row').hidden = !lock.enabled;
+    updateMfaRow();
+    setPressed('[data-lock-after]', (b) => Number(b.dataset.lockAfter) * 1000 === lockAfterMs());
     setSwitch($('switch-biometric'), lock.biometric);
     const native = !!nativePlugin('LocalNotifications');
     setSwitch($('switch-reminders'), native && state.config.reminders && notifPermission !== 'denied');
@@ -5990,10 +6055,28 @@ const authServerReachable = async () => {
     }
 };
 
+// Two-step verification: an account with an authenticator app set up must give its 6-digit code after signing in.
+let mfaGate = null;
+const mfaFactor = async () => {
+    try { const { data } = await supabaseClient.auth.mfa.listFactors(); return ((data && data.totp) || []).find((f) => f.status === 'verified') || null; } catch (e) { return null; }
+};
+const passMfa = async () => {
+    if (!supabaseClient || !supabaseClient.auth.mfa) return true;
+    let level;
+    try { level = (await supabaseClient.auth.mfa.getAuthenticatorAssuranceLevel()).data; } catch (e) { return true; }
+    if (!level || level.nextLevel !== 'aal2' || level.currentLevel === 'aal2') return true;
+    const factor = await mfaFactor();
+    if (!factor) return true;
+    return new Promise((resolve) => {
+        mfaGate = { mode: 'login', factorId: factor.id, resolve };
+        showMfaSheet();
+    });
+};
 const handleSession = async (session) => {
     if (!session || !session.user) return;
     const user = session.user;
     if (handledUserId === user.id) return;
+    if (!(await passMfa())) return;
     handledUserId = user.id;
 
     const hasLocal = state.transactions.length || state.savings.length || state.recurring.length || state.debts.length;
@@ -6909,9 +6992,13 @@ const setDisplayCurrency = (cur) => {
 };
 
 const onAppHidden = () => { hiddenAt = Date.now(); };
+// How long Vela can be away before it asks for the PIN or fingerprint again (this phone): 0, 60, 300 or 900 seconds.
+const LOCK_AFTER_KEY = 'VELA_LOCK_AFTER';
+const lockAfterMs = () => { let v = 60; try { const raw = localStorage.getItem(LOCK_AFTER_KEY); const n = Number(raw); if (raw !== null && raw !== '' && [0, 60, 300, 900].includes(n)) v = n; } catch (e) { /* storage blocked */ } return v * 1000; };
+const setLockAfter = (sec) => { try { localStorage.setItem(LOCK_AFTER_KEY, String(sec)); } catch (e) { /* storage blocked */ } renderSettings(); showToast(sec === 0 ? 'Vela locks as soon as you leave it' : `Vela locks ${sec / 60} min after you leave it`, 'success'); };
 const onAppVisible = () => {
     applyNativeInsets();
-    if (state.config.lock.enabled && hiddenAt && Date.now() - hiddenAt > LOCK_AFTER_MS && !isLocked()) showLock();
+    if (state.config.lock.enabled && hiddenAt && Date.now() - hiddenAt >= lockAfterMs() && !isLocked()) showLock();
     hiddenAt = 0;
     processRecurring();
     if (pendingCount()) flushSync();
@@ -7035,6 +7122,13 @@ const initEvents = () => {
             if (holdFired) { holdFired = false; return; } // the press was a hold: its menu is open
             setViewAccount(d.viewAccount); if (isSheetOpen('modal-accounts')) closeSheet('modal-accounts'); return;
         }
+        if (d.lockAfter !== undefined) { setLockAfter(Number(d.lockAfter)); return; }
+        if (d.notifOpen) { openNotif(d.notifOpen); return; }
+        if (d.action === 'open-notifs') { openNotifs(); return; }
+        if (d.action === 'clear-notifs') { notifLog = []; saveNotifLog(); updateNotifBell(); closeSheet('modal-notifs'); return; }
+        if (d.action === 'toggle-mfa') { toggleMfa(); return; }
+        if (d.action === 'mfa-ok') { submitMfa(); return; }
+        if (d.action === 'mfa-cancel') { cancelMfa(); return; }
         if (d.action === 'open-notif-settings') { const pl = smsPlugin(); if (pl) (pl.openNotificationSettings ? pl.openNotificationSettings() : pl.openAppSettings()).catch(() => {}); return; }
         if (d.action === 'switch-account') { if (state.accounts.length > 1) openAccountManager(); return; }
         if (d.themeChoice) { setTheme(d.themeChoice, e); return; }
@@ -7211,6 +7305,8 @@ const initEvents = () => {
     $('tx-desc').addEventListener('input', (e) => { if (e.isTrusted) $('tx-desc').dataset.typing = '1'; onTxDescInput(); });
     $('account-name').addEventListener('input', updateAccountNameLogo);
     initAccountHold();
+    updateNotifBell();
+    $('mfa-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitMfa(); } });
     $('tx-logo-add').addEventListener('click', pickShopLogo);
     $('tx-logo-remove').addEventListener('click', removeShopLogo);
     $('shop-logo-input').addEventListener('change', onShopLogoPicked);
@@ -7446,6 +7542,76 @@ const initAccountHold = () => {
     strip.addEventListener('pointerleave', cancel);
     strip.addEventListener('pointermove', (e) => { if (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8) clearTimeout(timer); });
     strip.addEventListener('contextmenu', (e) => { if (e.target.closest('[data-hold-account]')) e.preventDefault(); });
+};
+const showMfaSheet = () => {
+    const g = mfaGate;
+    if (!g) return;
+    const enrol = g.mode === 'enrol';
+    $('mfa-title').textContent = enrol ? 'Turn on two-step verification' : 'Enter your code';
+    $('mfa-intro').textContent = enrol
+        ? 'Scan this with an authenticator app (Google Authenticator, Microsoft Authenticator…), then type the 6-digit code it shows.'
+        : 'Open your authenticator app and type the 6-digit code for Vela.';
+    $('mfa-setup').hidden = !enrol;
+    if (enrol) { $('mfa-qr').src = g.qr; $('mfa-secret').textContent = g.secret; }
+    $('mfa-code').value = '';
+    $('btn-mfa-cancel').textContent = enrol ? 'Cancel' : 'Sign out';
+    openOrSwap('modal-mfa');
+    setTimeout(() => $('mfa-code').focus(), 350);
+};
+const submitMfa = async () => {
+    const g = mfaGate;
+    const code = $('mfa-code').value.replace(/\D/g, '');
+    if (!g) return;
+    if (code.length !== 6) { fieldError($('mfa-code'), 'Type the 6 digits from your authenticator app.'); return; }
+    await withBusy($('btn-mfa-ok'), async () => {
+        const { error } = await supabaseClient.auth.mfa.challengeAndVerify({ factorId: g.factorId, code });
+        if (error) { fieldError($('mfa-code'), 'That code didn’t work. Check the time on your phone and try the newest code.'); return; }
+        mfaGate = null;
+        closeSheet('modal-mfa');
+        if (g.mode === 'enrol') { showToast('Two-step verification is on', 'success'); renderSettings(); }
+        if (g.resolve) g.resolve(true);
+    });
+};
+const cancelMfa = async () => {
+    const g = mfaGate;
+    mfaGate = null;
+    closeSheet('modal-mfa');
+    if (!g) return;
+    if (g.mode === 'enrol') { try { await supabaseClient.auth.mfa.unenroll({ factorId: g.factorId }); } catch (e) { /* not finished: nothing to keep */ } return; }
+    if (g.resolve) g.resolve(false);
+    try { await supabaseClient.auth.signOut(); } catch (e) { /* offline */ }
+    showToast('Signed out: the code is needed to open this account.', 'info');
+};
+const toggleMfa = async () => {
+    if (!canSync()) { showToast('Sign in to Vela first.', 'info'); return; }
+    const factor = await mfaFactor();
+    if (factor) {
+        showConfirm({
+            title: 'Turn off two-step verification?',
+            message: 'Signing in will only need your password or Google again.',
+            confirmLabel: 'Turn off',
+            onConfirm: async () => {
+                const { error } = await supabaseClient.auth.mfa.unenroll({ factorId: factor.id });
+                if (error) { showToast('Couldn’t turn it off. Sign out and in again (with your code), then try.', 'error'); return; }
+                showToast('Two-step verification is off', 'info');
+                renderSettings();
+            }
+        });
+        return;
+    }
+    const { data, error } = await supabaseClient.auth.mfa.enroll({ factorType: 'totp', friendlyName: `Vela ${new Date().toISOString().slice(0, 10)}` });
+    if (error || !data) { showToast(`Couldn’t start it: ${(error && error.message) || 'try again'}`, 'error'); return; }
+    mfaGate = { mode: 'enrol', factorId: data.id, qr: data.totp.qr_code, secret: data.totp.secret };
+    showMfaSheet();
+};
+const updateMfaRow = async () => {
+    const row = $('btn-mfa');
+    if (!row) return;
+    row.hidden = !canSync() || !supabaseClient || !supabaseClient.auth.mfa;
+    if (row.hidden) return;
+    const on = !!(await mfaFactor());
+    $('mfa-state').textContent = on ? 'On' : 'Off';
+    $('mfa-state').dataset.on = String(on);
 };
 const renderAccountManager = () => {
     const v = viewId();

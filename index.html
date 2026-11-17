@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.34.1">
+    <link rel="stylesheet" href="style.css?v=4.35.0">
 </head>
 <body data-view="dashboard">
 
@@ -205,6 +205,7 @@
                     </div>
                 </div>
                 <div class="appbar-actions">
+                    <button class="icon-btn bordered notif-btn" type="button" id="btn-notifs" data-action="open-notifs" aria-label="Notifications"><svg class="ic"><use href="#i-bell"/></svg></button>
                     <button class="icon-btn bordered bot-btn" type="button" data-action="open-bot" aria-label="Ask Vela AI"><svg class="ic"><use href="#i-bot"/></svg></button>
                     <button class="currency-chip" type="button" id="currency-btn" aria-label="Change the currency amounts are shown in">
                         <span id="currency-code">USD</span>
@@ -425,6 +426,11 @@
                                 <button class="btn btn-secondary" type="button" id="btn-save-profile">Save</button>
                             </div>
                         </div>
+                        <button class="row-btn mfa-row" type="button" id="btn-mfa" data-action="toggle-mfa" hidden>
+                            <span class="row-icon tint"><svg class="ic"><use href="#i-lock"/></svg></span>
+                            <span class="row-label"><span>Two-step verification</span><span>A code from an authenticator app when you sign in</span></span>
+                            <span class="mfa-state" id="mfa-state">Off</span>
+                        </button>
                         <button class="btn btn-danger btn-block" type="button" id="btn-auth-logout">Sign out</button>
                         <button class="link-btn delete-account-link" type="button" id="btn-delete-my-account" hidden>Delete my account and data</button>
                     </article>
@@ -477,6 +483,15 @@
                                 <div class="setting-row">
                                     <div class="setting-text"><span class="setting-title">Unlock with fingerprint</span><span class="setting-desc">Use your fingerprint or face instead of the PIN.</span></div>
                                     <button class="switch" type="button" role="switch" aria-checked="false" id="switch-biometric" aria-label="Unlock with fingerprint"></button>
+                                </div>
+                            </div>
+                            <div class="setting" id="lock-after-row" hidden>
+                                <div class="setting-text"><span class="setting-title">Lock again after</span><span class="setting-desc">How long Vela can be in the background before it asks again.</span></div>
+                                <div class="segmented segmented-full lock-after" role="group" aria-label="Lock again after">
+                                    <button type="button" data-lock-after="0" aria-pressed="false">Now</button>
+                                    <button type="button" data-lock-after="60" aria-pressed="true">1 min</button>
+                                    <button type="button" data-lock-after="300" aria-pressed="false">5 min</button>
+                                    <button type="button" data-lock-after="900" aria-pressed="false">15 min</button>
                                 </div>
                             </div>
                             <button class="row-btn" type="button" id="btn-change-pin" hidden>
@@ -813,6 +828,41 @@
     </div>
 
     <!-- Paste a bank SMS -->
+    <div class="sheet-overlay mfa-overlay" id="modal-mfa" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="mfa-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head"><h2 class="sheet-title" id="mfa-title">Two-step verification</h2></div>
+            <div class="sheet-body">
+                <p class="card-sub" id="mfa-intro"></p>
+                <div class="mfa-setup" id="mfa-setup" hidden>
+                    <img class="mfa-qr" id="mfa-qr" alt="QR code to scan with your authenticator app">
+                    <span class="field-hint">Can't scan? Type this key in the app:</span>
+                    <code class="mfa-secret" id="mfa-secret"></code>
+                </div>
+                <div class="field">
+                    <label class="field-label" for="mfa-code">6-digit code</label>
+                    <input type="text" id="mfa-code" class="input mfa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456">
+                </div>
+            </div>
+            <div class="sheet-foot">
+                <button type="button" class="btn btn-secondary" id="btn-mfa-cancel" data-action="mfa-cancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="btn-mfa-ok" data-action="mfa-ok">Verify</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="sheet-overlay" id="modal-notifs" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="notifs-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <h2 class="sheet-title" id="notifs-title">Notifications</h2>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body"><ul class="cat-manage notif-list" id="notif-list"></ul></div>
+            <div class="sheet-foot"><button type="button" class="btn btn-secondary btn-block" id="btn-notifs-clear" data-action="clear-notifs">Clear all</button></div>
+        </div>
+    </div>
+
     <div class="sheet-overlay" id="modal-acc-actions" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="acc-actions-title">
             <div class="sheet-grabber" aria-hidden="true"></div>
@@ -1452,7 +1502,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.34.1"></script>
+    <script src="app.js?v=4.35.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
