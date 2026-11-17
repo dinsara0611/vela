@@ -37,7 +37,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.34.0">
+    <link rel="stylesheet" href="style.css?v=4.34.1">
 </head>
 <body data-view="dashboard">
 
@@ -517,6 +517,11 @@
                                 </div>
                             </div>
 
+                            <div class="notif-warn" id="bank-notif-warn" hidden>
+                                <svg class="ic"><use href="#i-bell"/></svg>
+                                <span>Notifications for Vela are off, so new bank transactions only show when you open Vela.</span>
+                                <button type="button" class="btn btn-secondary btn-xs" data-action="open-notif-settings">Turn on</button>
+                            </div>
                             <div class="bank-banks" id="bank-banks">
                                 <div class="bank-chips" id="bank-chips" aria-label="Banks Vela reads"></div>
                                 <p class="bank-privacy">A bank Vela hasn’t read on this phone before is checked with you the first 3 times. After that, clear messages from it can be added automatically if you turn that on.</p>
@@ -1446,7 +1451,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.34.0"></script>
+    <script src="app.js?v=4.34.1"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

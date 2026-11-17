@@ -246,6 +246,20 @@ public class SmsReaderPlugin extends Plugin {
         }
     }
 
+    /** Android's notification settings for Vela (to turn on "Bank transaction detected" alerts). */
+    @PluginMethod
+    public void openNotificationSettings(PluginCall call) {
+        Intent i = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS);
+        i.putExtra(Settings.EXTRA_APP_PACKAGE, getContext().getPackageName());
+        i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        try {
+            getContext().startActivity(i);
+            call.resolve();
+        } catch (Exception e) {
+            openAppSettings(call);
+        }
+    }
+
     /** Bank-looking messages in the inbox newer than `since` (ms). */
     @PluginMethod
     public void readInbox(PluginCall call) {

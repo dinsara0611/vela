@@ -754,6 +754,20 @@ export async function run() {
         return (hidden && shownAgain && menu) || JSON.stringify({ hero, chip, bar, shownAgain, menu });
     });
 
+    await T('Changing the display currency changes every amount: account cards, account bar, payments and transfers', async () => {
+        const keep = s().config.currency;
+        s().transactions.push({ id: 'cur-pay', type: 'expense', desc: 'Currency check bill', amount: 3000, currency: 'LKR', category: 'Other', date: g('toISODate')(g('addDays')(new Date(), 1)), note: '', createdAt: Date.now(), accountId: g('viewId')(), recurringId: null, receipt: null, fixed: false, pending: true });
+        g('setDisplayCurrency')('USD'); await wait(300);
+        g('switchTab')('dashboard'); await wait(300);
+        const chips = [...document.querySelectorAll('.account-chip .account-bal')].map((e) => e.textContent);
+        const bar = (document.querySelector('#tab-dashboard .view-bar .amount') || {}).textContent || '';
+        const pay = [...document.querySelectorAll('#due-section .pay-end .amount')].map((e) => e.textContent);
+        const allDollar = chips.length && chips.every((x) => x.includes('$')) && bar.includes('$') && pay.length && pay.every((x) => x.includes('$'));
+        g('setDisplayCurrency')(keep); await wait(200);
+        s().transactions = s().transactions.filter((x) => x.id !== 'cur-pay'); g('renderActive')();
+        return allDollar || JSON.stringify({ chips, bar, pay });
+    });
+
     await T('Review screen: Ignore all asks first, then clears every detection without adding anything', async () => {
         freshEngine();
         const n0 = s().transactions.length;

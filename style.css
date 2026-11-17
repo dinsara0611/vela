@@ -4484,3 +4484,8 @@ html.native[data-theme="light"] { --bar-bg: rgb(244, 245, 248); }
 .acc-actions .row-btn { gap: 14px; font-size: var(--fs-md); font-weight: 600; justify-content: flex-start; min-height: 52px; padding: 0 8px; }
 .acc-actions .row-btn.danger { color: var(--danger); }
 .account-chip { -webkit-touch-callout: none; user-select: none; }
+
+/* Bank SMS card: notifications are off */
+.notif-warn { display: grid; grid-template-columns: auto 1fr auto; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 14px; background: var(--warning-soft, rgba(245, 158, 11, 0.12)); color: var(--text); font-size: var(--fs-sm); }
+.notif-warn[hidden] { display: none; }
+.notif-warn .ic { color: var(--warning); }

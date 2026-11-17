@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.34.0';
+const APP_VERSION = '4.34.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -269,6 +269,8 @@ const formatCompact = (amount, cur) => {
     return `${amount < 0 ? '-' : ''}${sym.trim()}${/\s$/.test(sym) ? ' ' : ''}${moneyCompact.format(Math.abs(amount))}`;
 };
 const formatDisplay = (amount, cur) => formatCurrency(toDisplay(amount, cur), state.config.currency);
+// The amount as entered, shown small beside the converted one when its currency isn't the one you chose.
+const origNote = (amount, cur) => (normCur(cur) !== dcur() ? `<span class="tx-orig-inline">${escapeHtml(formatCurrency(amount, cur))}</span>` : '');
 const dcur = () => state.config.currency;
 const myCurrencies = () => state.config.currencies.filter(isCurrency);
 const fillCurrencySelect = (sel, value) => {
@@ -1339,9 +1341,9 @@ const renderViewBar = () => {
     bar.type = 'button';
     bar.className = 'view-bar';
     bar.dataset.action = 'switch-account';
-    bar.setAttribute('aria-label', `${a.name}, ${balanceHidden(a.id) ? 'balance hidden' : formatCurrency(bal, a.currency)}. Switch account`);
+    bar.setAttribute('aria-label', `${a.name}, ${balanceHidden(a.id) ? 'balance hidden' : formatDisplay(bal, a.currency)}. Switch account`);
     const hid = balanceHidden(a.id);
-    bar.innerHTML = `${accountBadge(a, 'is-acc', 'account-icon')}<span class="view-bar-text"><strong>${escapeHtml(a.name)}</strong><span class="amount ${!hid && bal < 0 ? 'text-expense' : ''}">${escapeHtml(hid ? maskedMoney(a.currency) : formatCurrency(bal, a.currency))}</span></span>${state.accounts.length > 1 ? `<span class="view-bar-switch">Switch${icon('i-chevron-down', 'ic ic-sm')}</span>` : ''}`;
+    bar.innerHTML = `${accountBadge(a, 'is-acc', 'account-icon')}<span class="view-bar-text"><strong>${escapeHtml(a.name)}</strong><span class="amount ${!hid && bal < 0 ? 'text-expense' : ''}">${escapeHtml(hid ? maskedMoney() : formatDisplay(bal, a.currency))}</span></span>${state.accounts.length > 1 ? `<span class="view-bar-switch">Switch${icon('i-chevron-down', 'ic ic-sm')}</span>` : ''}`;
     view.prepend(bar);
 };
 const renderActive = () => {
@@ -1878,7 +1880,7 @@ const txRow = (t, { showDate = true } = {}) => {
         return `<li><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
             <span class="cat-badge" style="--cat:var(--text-2)">${icon('i-swap')}</span>
             <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub"><span>${escapeHtml(transferLine(t))}</span></span></span>
-            <span class="tx-amt"><span class="amount is-transfer">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>${when}</span>
+            <span class="tx-amt"><span class="amount is-transfer">${escapeHtml(formatDisplay(t.amount, t.currency))}</span>${origNote(t.amount, t.currency)}${when}</span>
         </button></li>`;
     }
     const cat = catById(t.category, t.type);
@@ -3253,6 +3255,7 @@ const renderBankConnections = () => {
     $('btn-bank-review').textContent = `Review ${plural(waiting, 'transaction')}`;
     $('sms-auto-row').hidden = shareOnly;
     const warnNotif = s && s.smsEnabled && !s.postNotifications;
+    $('bank-notif-warn').hidden = !warnNotif;
     $('bank-sub').textContent = warnNotif ? 'Vela’s notifications are off: you’ll see new transactions when you open Vela.' : 'All banks: reads debit and credit SMS';
     // Every bank Vela knows by name, with its logo; other named banks and cards are read too, with a review.
     $('bank-chips').innerHTML = SMS_BANKS.map((b) => {
@@ -3344,7 +3347,7 @@ const askMarkPaid = (key) => {
     const income = i.type === 'income';
     showConfirm({
         title: income ? 'Has this money arrived?' : 'Have you completed this payment?',
-        message: `${i.name} · ${formatCurrency(i.amount, i.currency)} · ${i.status === 'overdue' ? 'was due' : 'due'} ${shortDate(i.due)}. It will be recorded as ${income ? 'received' : 'paid'} today and counted in your balance.`,
+        message: `${i.name} · ${formatDisplay(i.amount, i.currency)} · ${i.status === 'overdue' ? 'was due' : 'due'} ${shortDate(i.due)}. It will be recorded as ${income ? 'received' : 'paid'} today and counted in your balance.`,
         confirmLabel: income ? 'Yes, mark as received' : 'Yes, mark as paid',
         cancelLabel: 'Not yet',
         danger: false,
@@ -3362,7 +3365,7 @@ const paymentRowHtml = (i) => {
     return `<li class="pay-row" data-status="${i.status}">
         ${entryBadge(i.name, i.category, i.type)}
         <div class="pay-main"><span class="pay-name">${escapeHtml(i.name)}</span><span class="pay-meta"><span class="pay-pill" data-status="${i.status}">${payStatusLabel(i.status, i.type)}</span>${escapeHtml(when)}</span></div>
-        <div class="pay-end"><span class="amount ${income ? 'text-income' : ''}">${escapeHtml(formatCurrency(i.amount, i.currency))}</span>
+        <div class="pay-end"><span class="amount ${income ? 'text-income' : ''}">${escapeHtml(formatDisplay(i.amount, i.currency))}</span>${origNote(i.amount, i.currency)}
         <button type="button" class="btn btn-xs ${income ? 'btn-income' : 'btn-primary'}" data-pay="${escapeHtml(i.key)}">${income ? 'Mark received' : 'Mark as paid'}</button></div>
     </li>`;
 };
@@ -3574,7 +3577,7 @@ const renderDashboard = () => {
         const bal = accountBalance(a);
         return `<button type="button" class="account-chip${viewId() === a.id ? ' is-current' : ''}" data-view-account="${escapeHtml(a.id)}" data-hold-account="${escapeHtml(a.id)}" aria-pressed="${viewId() === a.id}" aria-label="${escapeHtml(a.name)}: ${escapeHtml(formatCurrency(bal, a.currency))}. ${viewId() === a.id ? 'You are in this account' : 'Switch to this account'}">
             <span class="account-chip-top">${accountBadge(a, 'is-acc', 'account-icon')}<span class="account-name">${escapeHtml(a.name)}</span></span>
-            ${balanceHidden(a.id) ? `<span class="account-bal amount is-hidden" title="Hidden">${escapeHtml(maskedMoney(a.currency))}</span>` : `<span class="account-bal amount ${bal < 0 ? 'text-expense' : ''}" title="${escapeHtml(formatCurrency(bal, a.currency))}" ${moneyAttrs(bal, a.currency)}>${escapeHtml(formatCurrency(bal, a.currency))}</span>`}
+            ${balanceHidden(a.id) ? `<span class="account-bal amount is-hidden" title="Hidden">${escapeHtml(maskedMoney())}</span>` : `<span class="account-bal amount ${bal < 0 ? 'text-expense' : ''}" title="${escapeHtml(formatCurrency(bal, a.currency))}" ${moneyAttrs(toDisplay(bal, a.currency), dcur())}>${escapeHtml(formatDisplay(bal, a.currency))}</span>${origNote(bal, a.currency)}`}
         </button>`;
     }).join('') + `<button type="button" class="account-chip account-add" data-action="add-account">${icon('i-plus')}<span>Add account</span></button>`;
     if (state.accounts.length) $('account-strip').setAttribute('title', 'Tap to switch, hold to edit');
@@ -7032,6 +7035,7 @@ const initEvents = () => {
             if (holdFired) { holdFired = false; return; } // the press was a hold: its menu is open
             setViewAccount(d.viewAccount); if (isSheetOpen('modal-accounts')) closeSheet('modal-accounts'); return;
         }
+        if (d.action === 'open-notif-settings') { const pl = smsPlugin(); if (pl) (pl.openNotificationSettings ? pl.openNotificationSettings() : pl.openAppSettings()).catch(() => {}); return; }
         if (d.action === 'switch-account') { if (state.accounts.length > 1) openAccountManager(); return; }
         if (d.themeChoice) { setTheme(d.themeChoice, e); return; }
         if (d.currency) { setDisplayCurrency(d.currency); return; }
@@ -7451,7 +7455,7 @@ const renderAccountManager = () => {
         return `<li class="acc-row${v === a.id ? ' is-current' : ''}"><button type="button" class="row-btn" data-view-account="${escapeHtml(a.id)}">
             ${accountBadge(a, 'is-row', 'row-icon tint')}
             <span class="row-label"><span>${escapeHtml(a.name)}</span><span>${escapeHtml(ACCOUNT_KINDS[a.kind].label)}, ${a.currency}</span></span>
-            <span class="amount ${!balanceHidden(a.id) && bal < 0 ? 'text-expense' : ''}">${escapeHtml(balanceHidden(a.id) ? maskedMoney(a.currency) : formatCurrency(bal, a.currency))}</span>${tick(v === a.id)}
+            <span class="amount ${!balanceHidden(a.id) && bal < 0 ? 'text-expense' : ''}">${escapeHtml(balanceHidden(a.id) ? maskedMoney() : formatDisplay(bal, a.currency))}</span>${tick(v === a.id)}
         </button><button type="button" class="icon-btn acc-edit" data-hide-balance="${escapeHtml(a.id)}" aria-pressed="${balanceHidden(a.id)}" aria-label="${balanceHidden(a.id) ? 'Show' : 'Hide'} ${escapeHtml(a.name)} balance">${icon(balanceHidden(a.id) ? 'i-eye-off' : 'i-eye')}</button><button type="button" class="icon-btn acc-edit" data-edit-account="${escapeHtml(a.id)}" aria-label="Edit ${escapeHtml(a.name)}">${icon('i-edit')}</button></li>`;
     }).join('')}</ul>`;
 };
