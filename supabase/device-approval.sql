@@ -171,6 +171,24 @@ begin
     end if;
 end $$;
 
+-- A waiting phone gets in with a code from the authenticator app instead of the other phone.
+-- Supabase marks a sign-in "aal2" only after a correct authenticator code, so this can't be faked by the app.
+create or replace function public.vela_approve_with_code(p_device text, p_secret text) returns text
+language plpgsql security definer set search_path = public, extensions
+as $$
+declare
+    uid uuid := auth.uid();
+begin
+    if uid is null then raise exception 'not signed in'; end if;
+    if coalesce(auth.jwt() ->> 'aal', '') <> 'aal2' then raise exception 'authenticator code needed'; end if;
+    update public.vela_devices set approved = true, last_seen = now()
+        where user_id = uid and device_id = p_device and secret_hash = public.vela_hash(p_secret);
+    if not found then raise exception 'unknown device'; end if;
+    update public.vela_login_requests set status = 'approved', decided_at = now()
+        where user_id = uid and device_id = p_device and status = 'pending';
+    return 'approved';
+end $$;
+
 revoke all on function public.vela_device_check(text, text, text) from public, anon;
 revoke all on function public.vela_request_login(text, text) from public, anon;
 revoke all on function public.vela_decide_login(uuid, text, text, boolean) from public, anon;
@@ -183,3 +201,5 @@ grant execute on function public.vela_decide_login(uuid, text, text, boolean) to
 grant execute on function public.vela_remove_device(text, text, text) to authenticated;
 grant execute on function public.vela_set_approval(boolean, text, text) to authenticated;
 grant execute on function public.vela_is_trusted(text, text) to authenticated;
+revoke all on function public.vela_approve_with_code(text, text) from public, anon;
+grant execute on function public.vela_approve_with_code(text, text) to authenticated;

@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.36.0';
+const APP_VERSION = '4.37.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -4057,6 +4057,7 @@ const renderSettings = () => {
     $('biometric-row').hidden = !(lock.enabled && biometricAvailable);
     $('lock-after-row').hidden = !lock.enabled;
     renderDevices();
+    updateMfaRow();
     setPressed('[data-lock-after]', (b) => Number(b.dataset.lockAfter) * 1000 === lockAfterMs());
     setSwitch($('switch-biometric'), lock.biometric);
     const native = !!nativePlugin('LocalNotifications');
@@ -6107,15 +6108,17 @@ const showApproveWait = () => {
     $('approve-wait-note').textContent = 'Open Vela on a phone you already use and tap this number.';
     $('approve-wait').hidden = false;
     document.body.classList.add('approve-waiting');
+    $('btn-approve-code').hidden = true;
+    mfaFactor().then((f) => { if (approvalGate === g) $('btn-approve-code').hidden = !f; });
 };
-const endApproveWait = (ok, message) => {
+const endApproveWait = (ok, message, via = 'phone') => {
     const g = approvalGate;
     if (!g) return;
     clearInterval(g.timer);
     approvalGate = null;
     $('approve-wait').hidden = true;
     document.body.classList.remove('approve-waiting');
-    if (ok) { showToast('Approved. Welcome back!', 'success'); g.resolve(true); return; }
+    if (ok) { showToast('Approved. Welcome back!', 'success'); g.resolve(via === 'phone' ? 'phone' : true); return; }
     g.resolve(false);
     Promise.resolve(supabaseClient.auth.signOut()).catch(() => {}).finally(() => { resetToSignedOut(); if (message) showToast(message, 'warning'); });
 };
@@ -6216,7 +6219,12 @@ const handleSession = async (session) => {
     if (handledUserId === user.id || gatingUser === user.id) return;
     gatingUser = user.id;
     let allowed;
-    try { allowed = await passDeviceApproval(); } finally { gatingUser = null; }
+    try {
+        const phone = await passDeviceApproval();
+        if (phone === false) allowed = false;
+        else if (phone === 'phone') allowed = true; // approved on your other phone: that is the second step
+        else allowed = (await needsMfaCode()) ? await askMfaCode() : true;
+    } finally { gatingUser = null; }
     if (!allowed) return;
     handledUserId = user.id;
 
@@ -7273,6 +7281,10 @@ const initEvents = () => {
         if (d.action === 'approve-deny') { decideSignIn(false); return; }
         if (d.action === 'approve-cancel') { endApproveWait(false, 'Signed out.'); return; }
         if (d.action === 'approve-resend') { resendApproval(); return; }
+        if (d.action === 'approve-use-code') { useCodeInstead(); return; }
+        if (d.action === 'toggle-mfa') { toggleMfa(); return; }
+        if (d.action === 'mfa-ok') { submitMfa(); return; }
+        if (d.action === 'mfa-cancel') { cancelMfa(); return; }
         if (d.deviceRemove) { removeDevice(d.deviceRemove, d.deviceName || 'this phone'); return; }
         if (d.action === 'open-notif-settings') { const pl = smsPlugin(); if (pl) (pl.openNotificationSettings ? pl.openNotificationSettings() : pl.openAppSettings()).catch(() => {}); return; }
         if (d.action === 'switch-account') { if (state.accounts.length > 1) openAccountManager(); return; }
@@ -7452,6 +7464,7 @@ const initEvents = () => {
     initAccountHold();
     updateNotifBell();
     $('switch-approval').addEventListener('click', toggleApproval);
+    $('mfa-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitMfa(); } });
     setInterval(pollSignInRequests, 8000);
     $('tx-logo-add').addEventListener('click', pickShopLogo);
     $('tx-logo-remove').addEventListener('click', removeShopLogo);
@@ -7688,6 +7701,113 @@ const initAccountHold = () => {
     strip.addEventListener('pointerleave', cancel);
     strip.addEventListener('pointermove', (e) => { if (Math.abs(e.clientX - startX) > 8 || Math.abs(e.clientY - startY) > 8) clearTimeout(timer); });
     strip.addEventListener('contextmenu', (e) => { if (e.target.closest('[data-hold-account]')) e.preventDefault(); });
+};
+// Two-step verification with a code from an authenticator app (Supabase MFA, TOTP).
+let mfaGate = null;
+const mfaReady = () => !!(supabaseClient && supabaseClient.auth && supabaseClient.auth.mfa);
+const mfaFactor = async () => {
+    if (!mfaReady()) return null;
+    try { const { data } = await supabaseClient.auth.mfa.listFactors(); return ((data && data.totp) || []).find((f) => f.status === 'verified') || null; } catch (e) { return null; }
+};
+const needsMfaCode = async () => {
+    if (!mfaReady()) return false;
+    let level;
+    try { level = (await supabaseClient.auth.mfa.getAuthenticatorAssuranceLevel()).data; } catch (e) { return false; }
+    return !!level && level.nextLevel === 'aal2' && level.currentLevel !== 'aal2';
+};
+const askMfaCode = async () => {
+    const factor = await mfaFactor();
+    if (!factor) return true;
+    return new Promise((resolve) => {
+        mfaGate = { mode: 'login', factorId: factor.id, resolve };
+        showMfaSheet();
+    });
+};
+const showMfaSheet = () => {
+    const g = mfaGate;
+    if (!g) return;
+    const enrol = g.mode === 'enrol';
+    $('mfa-title').textContent = enrol ? 'Turn on two-step verification' : 'Enter your code';
+    $('mfa-intro').textContent = enrol
+        ? 'Scan this with an authenticator app (Google Authenticator, Microsoft Authenticator…), then type the 6-digit code it shows.'
+        : 'Open your authenticator app and type the 6-digit code for Vela.';
+    $('mfa-setup').hidden = !enrol;
+    if (enrol) { $('mfa-qr').src = g.qr; $('mfa-secret').textContent = g.secret; }
+    $('mfa-code').value = '';
+    $('btn-mfa-cancel').textContent = g.mode === 'login' ? 'Sign out' : 'Cancel';
+    openOrSwap('modal-mfa');
+    setTimeout(() => $('mfa-code').focus(), 350);
+};
+const submitMfa = async () => {
+    const g = mfaGate;
+    const code = $('mfa-code').value.replace(/\D/g, '');
+    if (!g) return;
+    if (code.length !== 6) { fieldError($('mfa-code'), 'Type the 6 digits from your authenticator app.'); return; }
+    await withBusy($('btn-mfa-ok'), async () => {
+        const { error } = await supabaseClient.auth.mfa.challengeAndVerify({ factorId: g.factorId, code });
+        if (error) { fieldError($('mfa-code'), 'That code didn’t work. Check the time on your phone and try the newest code.'); return; }
+        if (g.mode === 'approve') {
+            // The code proves it's you, so the server lets this phone in without the other phone.
+            const k = deviceKey();
+            try { await deviceRpc('vela_approve_with_code', { p_device: k.id, p_secret: k.secret }); } catch (e) {
+                fieldError($('mfa-code'), 'The code is right, but the Vela server needs its setup updated (run device-approval.sql again).');
+                return;
+            }
+        }
+        mfaGate = null;
+        closeSheet('modal-mfa');
+        if (g.mode === 'enrol') { showToast('Two-step verification is on', 'success'); renderSettings(); }
+        if (g.mode === 'approve') endApproveWait(true, null, 'code');
+        if (g.resolve) g.resolve(true);
+    });
+};
+const cancelMfa = async () => {
+    const g = mfaGate;
+    mfaGate = null;
+    closeSheet('modal-mfa');
+    if (!g || g.mode === 'approve') return; // back to waiting for the other phone
+    if (g.mode === 'enrol') { try { await supabaseClient.auth.mfa.unenroll({ factorId: g.factorId }); } catch (e) { /* not finished: nothing to keep */ } return; }
+    if (g.resolve) g.resolve(false);
+    try { await supabaseClient.auth.signOut(); } catch (e) { /* offline */ }
+    resetToSignedOut();
+    showToast('Signed out: the code is needed to open this account.', 'info');
+};
+const useCodeInstead = async () => {
+    const factor = await mfaFactor();
+    if (!factor) { showToast('Turn on two-step verification in Settings first.', 'info'); return; }
+    mfaGate = { mode: 'approve', factorId: factor.id };
+    showMfaSheet();
+};
+const toggleMfa = async () => {
+    if (!canSync()) { showToast('Sign in to Vela first.', 'info'); return; }
+    const factor = await mfaFactor();
+    if (factor) {
+        showConfirm({
+            title: 'Turn off two-step verification?',
+            message: 'Signing in will no longer ask for a code from your authenticator app.',
+            confirmLabel: 'Turn off',
+            onConfirm: async () => {
+                const { error } = await supabaseClient.auth.mfa.unenroll({ factorId: factor.id });
+                if (error) { showToast('Couldn’t turn it off. Sign out and in again (with your code), then try.', 'error'); return; }
+                showToast('Two-step verification is off', 'info');
+                renderSettings();
+            }
+        });
+        return;
+    }
+    const { data, error } = await supabaseClient.auth.mfa.enroll({ factorType: 'totp', friendlyName: `Vela ${new Date().toISOString().slice(0, 10)}` });
+    if (error || !data) { showToast(`Couldn’t start it: ${(error && error.message) || 'try again'}`, 'error'); return; }
+    mfaGate = { mode: 'enrol', factorId: data.id, qr: data.totp.qr_code, secret: data.totp.secret };
+    showMfaSheet();
+};
+const updateMfaRow = async () => {
+    const row = $('btn-mfa');
+    if (!row) return;
+    row.hidden = !canSync() || !mfaReady();
+    if (row.hidden) return;
+    const on = !!(await mfaFactor());
+    $('mfa-state').textContent = on ? 'On' : 'Off';
+    $('mfa-state').dataset.on = String(on);
 };
 // Settings: approve-new-sign-ins switch and the list of your phones.
 let devicesAt = 0;

@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.36.0">
+    <link rel="stylesheet" href="style.css?v=4.37.0">
 </head>
 <body data-view="dashboard">
 
@@ -426,6 +426,11 @@
                                 <button class="btn btn-secondary" type="button" id="btn-save-profile">Save</button>
                             </div>
                         </div>
+                        <button class="row-btn mfa-row" type="button" id="btn-mfa" data-action="toggle-mfa" hidden>
+                            <span class="row-icon tint"><svg class="ic"><use href="#i-lock"/></svg></span>
+                            <span class="row-label"><span>Two-step verification</span><span>A code from an authenticator app when you sign in</span></span>
+                            <span class="mfa-state" id="mfa-state">Off</span>
+                        </button>
                         <div class="setting approval-row" id="approval-row" hidden>
                             <div class="setting-row">
                                 <div class="setting-text"><span class="setting-title">Approve new sign-ins</span><span class="setting-desc" id="approval-desc">A new phone signing in to your account needs OK from a phone you already use.</span></div>
@@ -830,6 +835,29 @@
     </div>
 
     <!-- Paste a bank SMS -->
+    <div class="sheet-overlay mfa-overlay" id="modal-mfa" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="mfa-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head"><h2 class="sheet-title" id="mfa-title">Two-step verification</h2></div>
+            <div class="sheet-body">
+                <p class="card-sub" id="mfa-intro"></p>
+                <div class="mfa-setup" id="mfa-setup" hidden>
+                    <img class="mfa-qr" id="mfa-qr" alt="QR code to scan with your authenticator app">
+                    <span class="field-hint">Can't scan? Type this key in the app:</span>
+                    <code class="mfa-secret" id="mfa-secret"></code>
+                </div>
+                <div class="field">
+                    <label class="field-label" for="mfa-code">6-digit code</label>
+                    <input type="text" id="mfa-code" class="input mfa-code" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456">
+                </div>
+            </div>
+            <div class="sheet-foot">
+                <button type="button" class="btn btn-secondary" id="btn-mfa-cancel" data-action="mfa-cancel">Cancel</button>
+                <button type="button" class="btn btn-primary" id="btn-mfa-ok" data-action="mfa-ok">Verify</button>
+            </div>
+        </div>
+    </div>
+
     <div class="sheet-overlay" id="modal-approve-ask" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="approve-ask-title">
             <div class="sheet-grabber" aria-hidden="true"></div>
@@ -851,6 +879,7 @@
             <p id="approve-wait-note">Open Vela on a phone you already use and tap this number.</p>
             <div class="approve-number" id="approve-number" aria-live="polite">··</div>
             <p class="approve-wait-small"><span class="approve-spinner" aria-hidden="true"></span>Waiting for approval…</p>
+            <button type="button" class="btn btn-primary btn-block" id="btn-approve-code" data-action="approve-use-code" hidden>Use a code from my authenticator app</button>
             <button type="button" class="btn btn-secondary btn-block" data-action="approve-resend">Send again</button>
             <button type="button" class="btn btn-ghost btn-block" data-action="approve-cancel">Cancel and sign out</button>
         </div>
@@ -1507,7 +1536,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.36.0"></script>
+    <script src="app.js?v=4.37.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

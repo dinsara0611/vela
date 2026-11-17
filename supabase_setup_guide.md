@@ -239,6 +239,6 @@ Lets a phone you already use approve (or block) anyone who signs in to your Vela
 
 1. Open Supabase › your project › **SQL Editor** › **New query**.
 2. Paste everything from `supabase/device-approval.sql` and press **Run**.
-3. In Vela: Settings › your account › turn on **Approve new sign-ins**.
+3. In Vela: Settings › your account › turn on **Approve new sign-ins**. If you also turn on **Two-step verification** (authenticator app), a waiting phone can use a code instead of the other phone.
 
 Until step 2 is done, the switch says it needs setup and sign-in works as before.

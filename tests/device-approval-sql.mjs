@@ -14,6 +14,7 @@ await db.exec(`
     create schema auth; create schema extensions;
     create table auth.users (id uuid primary key);
     create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.uid', true), '')::uuid $$;
+    create function auth.jwt() returns jsonb language sql stable as $$ select coalesce(nullif(current_setting('request.jwt', true), ''), '{}')::jsonb $$;
     create role anon; create role authenticated;
     grant usage on schema public, auth, extensions to anon, authenticated;
     insert into auth.users values ('11111111-1111-1111-1111-111111111111'), ('22222222-2222-2222-2222-222222222222');
@@ -106,6 +107,19 @@ ok('An approved phone can switch approval off', !r.error, r.error);
 ok('With approval off, C is let in', (await check(U1, C)) === 'approved');
 r = await as(U1, "select * from public.vela_device_settings");
 ok('Owner can read the setting', r.rows && r.rows.length === 1 && r.rows[0].require_approval === false, r);
+const D = { id: 'device-dddddddddddddddd', secret: key('d') };
+await as(U1, 'select public.vela_set_approval(true, $1, $2)', [A.id, A.secret]);
+ok('New phone D must wait', (await check(U1, D, 'Borrowed phone')) === 'pending');
+r = await as(U1, 'select public.vela_approve_with_code($1, $2) as s', [D.id, D.secret]);
+ok('D cannot let itself in without a code (password only)', !!r.error && /code needed/.test(r.error), r);
+await db.exec(`select set_config('request.jwt', '{"aal":"aal2"}', false)`);
+r = await as(U1, 'select public.vela_approve_with_code($1, $2) as s', [D.id, key('q')]);
+ok('A code does not help with a wrong phone secret', !!r.error, r);
+r = await as(U1, 'select public.vela_approve_with_code($1, $2) as s', [D.id, D.secret]);
+ok('After a correct authenticator code, D gets in', r.rows?.[0]?.s === 'approved', r);
+ok('D is approved now', (await check(U1, D)) === 'approved');
+await db.exec(`select set_config('request.jwt', '', false)`);
+
 await db.exec("select set_config('request.uid', '', false)"); r = await db.query("select public.vela_device_check('x', 'y', 'z')").then(() => 'ran', (e) => e.message);
 ok('Signed out: check refuses', /not signed in/.test(r), r);
 

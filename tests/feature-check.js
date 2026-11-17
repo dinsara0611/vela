@@ -1757,6 +1757,77 @@ export async function run() {
         return (sw === 'true' && /This phone/.test(rows) && /Old phone/.test(rows) && !!removeBtn && pass === true && /setup/.test(note)) || `switch ${sw}, list "${rows}", remove ${!!removeBtn}, pass ${pass}, note "${note}"`;
     });
 
+    await T('Two-step verification: sign-in waits for the authenticator code', async () => {
+        const client = window.__fakeClient;
+        let verified = 0;
+        client.auth.mfa = {
+            getAuthenticatorAssuranceLevel: async () => ({ data: { currentLevel: verified ? 'aal2' : 'aal1', nextLevel: 'aal2' } }),
+            listFactors: async () => ({ data: { totp: [{ id: 'f1', status: 'verified' }] } }),
+            challengeAndVerify: async ({ code }) => (code === '123456' ? (verified++, { error: null }) : { error: { message: 'Invalid code' } })
+        };
+        (0, eval)('handledUserId = null');
+        let done = false;
+        g('handleSession')({ user: { id: 'u1', email: 't@example.com', user_metadata: {} } }).then(() => { done = true; });
+        await wait(500);
+        const asked = g('openSheets').includes('modal-mfa');
+        const waitedFirst = !done && g('handledUserId') === null;
+        $('mfa-code').value = '000000'; g('submitMfa')(); await wait(300);
+        const wrongKept = g('openSheets').includes('modal-mfa');
+        $('mfa-code').value = '123456'; g('submitMfa')(); await wait(900);
+        const ok = asked && waitedFirst && wrongKept && !g('openSheets').includes('modal-mfa') && g('handledUserId') === 'u1';
+        delete client.auth.mfa;
+        return ok || `asked ${asked}, waited ${waitedFirst}, wrong code kept sheet ${wrongKept}, user ${g('handledUserId')}`;
+    });
+
+    await T('Two-step verification: turning it on shows the QR code and checks a code', async () => {
+        const client = window.__fakeClient;
+        let factors = [];
+        client.auth.mfa = {
+            getAuthenticatorAssuranceLevel: async () => ({ data: { currentLevel: 'aal1', nextLevel: 'aal1' } }),
+            listFactors: async () => ({ data: { totp: factors } }),
+            enroll: async () => ({ data: { id: 'f2', totp: { qr_code: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg"/>', secret: 'JBSWY3DPEHPK3PXP' } } }),
+            challengeAndVerify: async ({ code }) => { if (code !== '654321') return { error: { message: 'bad' } }; factors = [{ id: 'f2', status: 'verified' }]; return { error: null }; },
+            unenroll: async () => { factors = []; return { error: null }; }
+        };
+        await g('toggleMfa')(); await wait(400);
+        const qr = $('mfa-qr').getAttribute('src') || '';
+        const secret = $('mfa-secret').textContent;
+        $('mfa-code').value = '654321'; g('submitMfa')(); await wait(500);
+        await g('updateMfaRow')();
+        const state = $('mfa-state').textContent;
+        delete client.auth.mfa;
+        return (qr.startsWith('data:image') && secret === 'JBSWY3DPEHPK3PXP' && state === 'On' && !g('openSheets').includes('modal-mfa')) || `qr ${qr.slice(0, 20)}, secret ${secret}, state ${state}`;
+    });
+
+    await T('Waiting for the other phone: "use a code instead" lets you in with the authenticator code', async () => {
+        const client = window.__fakeClient;
+        const { srv, undo } = fakeApproval(client);
+        let aal2 = false;
+        client.auth.mfa = {
+            getAuthenticatorAssuranceLevel: async () => ({ data: { currentLevel: aal2 ? 'aal2' : 'aal1', nextLevel: 'aal2' } }),
+            listFactors: async () => ({ data: { totp: [{ id: 'f1', status: 'verified' }] } }),
+            challengeAndVerify: async ({ code }) => (code === '112233' ? (aal2 = true, { error: null }) : { error: { message: 'Invalid code' } })
+        };
+        const realRpc = client.rpc;
+        let approvedByCode = false;
+        client.rpc = async (fn, a) => {
+            if (fn === 'vela_approve_with_code') { if (!aal2) return { data: null, error: { message: 'code needed' } }; srv.devices[a.p_device].approved = true; approvedByCode = true; return { data: 'approved', error: null }; }
+            return realRpc(fn, a);
+        };
+        localStorage.removeItem('VELA_DEVICE');
+        srv.devices['dev-other-phone-0001'] = { secret: 'x'.repeat(64), name: 'Old phone', approved: true };
+        (0, eval)('handledUserId = null');
+        g('handleSession')({ user: { id: 'u1', email: 't@example.com', user_metadata: {} } });
+        await wait(600);
+        const offered = !$('approve-wait').hidden && !$('btn-approve-code').hidden;
+        $('btn-approve-code').click(); await wait(400);
+        const sheet = g('openSheets').includes('modal-mfa');
+        $('mfa-code').value = '112233'; g('submitMfa')(); await wait(900);
+        const ok = offered && sheet && approvedByCode && $('approve-wait').hidden && !g('openSheets').includes('modal-mfa') && g('handledUserId') === 'u1';
+        undo(); delete client.auth.mfa;
+        return ok || `offered ${offered}, code sheet ${sheet}, approved by code ${approvedByCode}, waiting hidden ${$('approve-wait').hidden}, user ${g('handledUserId')}`;
+    });
+
     await T('Sign out clears this phone', async () => {
         g('resetToSignedOut')(); await wait(300);
         const empty = s().transactions.length === 0 && !s().settingsUser;
