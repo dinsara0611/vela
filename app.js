@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.31.0';
+const APP_VERSION = '4.32.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -478,10 +478,30 @@ const accountBalance = (acc) => {
             bal += (t.type === 'income' ? 1 : -1) * convertAmount(t.amount, t.currency, acc.currency);
         }
     });
+    state.debts.forEach((d) => {
+        if (!d.moved || d.accountId !== acc.id) return;
+        const open = convertAmount(Math.max(0, d.amount - d.repaid), d.currency, acc.currency);
+        bal += d.direction === 'lent' ? -open : open;
+    });
     if (balanceMemo) balanceMemo.set(acc, bal);
     return bal;
 };
 const netWorth = () => state.accounts.reduce((s, a) => s + toDisplay(accountBalance(a), a.currency), 0);
+// How much the account you're in changed this month (income, spending and transfers in or out; waiting ones not
+// yet). With all accounts together, transfers between them cancel out.
+const monthChange = (y = new Date().getFullYear(), m = new Date().getMonth()) => {
+    const v = scopeId();
+    return viewTx().reduce((sum, t) => {
+        if (!inMonth(t, y, m) || isUpcoming(t)) return sum;
+        if (t.type === 'income') return sum + toDisplay(t.amount, t.currency);
+        if (t.type === 'expense') return sum - toDisplay(t.amount, t.currency);
+        if (t.type === 'transfer' && v !== 'all') {
+            if (t.accountId === v) sum -= toDisplay(t.amount, t.currency);
+            if (t.toAccountId === v) sum += toDisplay(t.toAmount, t.toCurrency || t.currency);
+        }
+        return sum;
+    }, 0);
+};
 // The money you have right now in the account you're in: its starting balance plus every income, minus every
 // expense and transfer out (waiting ones not yet). In the display currency.
 const viewBalance = () => {
@@ -604,6 +624,8 @@ const normalizeDebt = (d) => {
         dueDate: cleanDate(d.dueDate),
         note: d.note ? String(d.note).slice(0, 500) : '',
         accountId: d.accountId ? String(d.accountId) : null,
+        // Lent or borrowed through the account (made in Vela 4.32 or later): the money left or came into it.
+        moved: d.moved === true,
         createdAt: stamp(d.createdAt)
     };
 };
@@ -1418,7 +1440,7 @@ function allAccountsBudget(y, m) {
         if (!b) return sum;
         if (b.budgetMode === 'income') {
             const inc = sumDisplay(state.transactions.filter((t) => t.type === 'income' && t.accountId === a.id && inMonth(t, y, m)));
-            return sum + inc * (1 - (b.budgetSavePct || 0) / 100);
+            if (inc > 0) return sum + inc * (1 - (b.budgetSavePct || 0) / 100);
         }
         return sum + convertAmount(b.budget, b.budgetCurrency || 'USD', cur);
     }, 0);
@@ -1463,10 +1485,14 @@ const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => 
     // (rent on the 17th), because you plan the month's spending with it.
     const plannedIncome = sumDisplay(viewTx().filter((t) => t.type === 'income' && inMonth(t, y, m)));
     const fromIncome = state.config.budgetMode === 'income';
-    const budget = scopeAll ? allAccountsBudget(y, m) : fromIncome ? plannedIncome * (1 - state.config.budgetSavePct / 100) : budgetIn(state.config.budget, dcur());
+    // From income, but no income in this account this month (yet): the amount set for it is used, not nothing.
+    const incomeFallback = !scopeAll && fromIncome && plannedIncome <= 0;
+    const budget = scopeAll ? allAccountsBudget(y, m)
+        : fromIncome && !incomeFallback ? plannedIncome * (1 - state.config.budgetSavePct / 100) : budgetIn(state.config.budget, dcur());
+    const receivedIncome = income;
     const byCat = {};
     spentList.forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + toDisplay(e.amount, e.currency); });
-    return { list, spentList, incomeList, spent, income, net: income - spent, prevSpent, budget, budgetPct: budget > 0 ? (spent / budget) * 100 : (spent > 0 && fromIncome ? 100 : 0), byCat, fromIncome, plannedIncome };
+    return { list, spentList, incomeList, spent, income, net: income - spent, prevSpent, budget, budgetPct: budget > 0 ? (spent / budget) * 100 : (spent > 0 && fromIncome ? 100 : 0), byCat, fromIncome, plannedIncome, incomeFallback, expectedIncome: Math.max(0, plannedIncome - receivedIncome) };
 };
 
 const rangeBounds = (range) => {
@@ -1545,7 +1571,9 @@ const fixedForMonth = (y = new Date().getFullYear(), m = new Date().getMonth()) 
     const paid = items.filter((i) => i.paid).reduce((s, i) => s + i.amount, 0);
     // Paid ones have already left the account (they're entries), so only what's still due comes off what you have.
     const balance = viewBalance();
-    return { items, total, paid, due: total - paid, income, expected, balance, left: balance - (total - paid) };
+    // Saved toward goals in this account: still in it, but set aside, so it isn't "left for everything else".
+    const goals = viewGoals().reduce((sum, g) => sum + toDisplay(g.saved, g.currency), 0);
+    return { items, total, paid, due: total - paid, income, expected, balance, goals, left: balance - (total - paid) - goals };
 };
 
 const fixedSummaryHtml = ({ list = false, link = false } = {}) => {
@@ -1559,6 +1587,7 @@ const fixedSummaryHtml = ({ list = false, link = false } = {}) => {
             <div class="fx-row"><span>In this account now</span><strong class="amount ${f.balance < 0 ? 'text-expense' : 'text-income'}">${escapeHtml(formatCurrency(f.balance, cur))}</strong></div>
             ${f.expected > 0 ? `<div class="fx-row fx-expected"><span>Still expected (not counted yet)</span><span class="amount">+${escapeHtml(formatCurrency(f.expected, cur))}</span></div>` : ''}
             <div class="fx-row"><span>Fixed expenses still due${f.items.length ? ` (${f.items.filter((i) => !i.paid).length} of ${f.items.length})` : ''}</span><strong class="amount text-expense">${f.due > 0 ? '−' : ''}${escapeHtml(formatCurrency(f.due, cur))}</strong></div>
+            ${f.goals > 0 ? `<div class="fx-row"><span>Set aside for goals</span><strong class="amount">−${escapeHtml(formatCurrency(f.goals, cur))}</strong></div>` : ''}
             <div class="fx-row fx-total"><span>${f.left >= 0 ? 'Left for everything else' : 'Short this month'}</span><strong class="amount ${f.left < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(Math.abs(f.left), cur))}</strong></div>
         </div>
         ${meterHtml(pct, pct >= 100 ? 'over' : pct >= 80 ? 'warn' : null, 'Share of your money still needed for fixed expenses')}
@@ -3406,8 +3435,9 @@ const renderDashboard = () => {
         .sort((a, b) => (a.date > b.date ? 1 : -1));
     const comingNote = coming.length ? ` · ${formatCompact(sumDisplay(coming), cur)} coming ${shortDate(coming[0].date)}` : '';
     const monthName0 = now.toLocaleDateString('en-US', { month: 'long' });
-    $('dash-balance-sub').textContent = (s.income > 0 || s.spent > 0
-        ? `${s.net >= 0 ? '+' : '−'}${formatCompact(Math.abs(s.net), cur)} in ${monthName0}${s.income > 0 ? ` · ${Math.max(0, Math.round((s.net / s.income) * 100))}% of income left` : ''}`
+    const change = monthChange();
+    $('dash-balance-sub').textContent = (Math.abs(change) >= 0.005 || s.income > 0 || s.spent > 0
+        ? `${change >= 0 ? '+' : '−'}${formatCompact(Math.abs(change), cur)} in ${monthName0}${s.income > 0 ? ` · ${Math.max(0, Math.round((s.net / s.income) * 100))}% of income left` : ''}`
         : `Nothing in or out yet in ${monthName0}`) + comingNote;
     setMoney($('dash-income'), s.income, cur, 12);
     setMoney($('dash-spent'), s.spent, cur, 12);
@@ -3428,7 +3458,7 @@ const renderDashboard = () => {
 
     setMeter($('dash-budget-fill'), s.budgetPct, budgetState(s.budgetPct));
     $('dash-budget-meter').setAttribute('aria-valuenow', String(Math.round(Math.min(100, s.budgetPct))));
-    $('dash-budget-desc').textContent = s.fromIncome && s.plannedIncome <= 0 ? 'Add income to set your budget' : `${Math.round(s.budgetPct)}% of ${fitMoney(s.budget, cur, 11)} budget${s.fromIncome ? ' (from income)' : ''}`;
+    $('dash-budget-desc').textContent = `${Math.round(s.budgetPct)}% of ${fitMoney(s.budget, cur, 11)} budget${s.fromIncome && !s.incomeFallback ? ' (from income)' : ''}`;
     const left = s.budget - s.spent;
     $('dash-budget-left').innerHTML = left >= 0
         ? `<strong>${escapeHtml(fitMoney(left, cur, 12))}</strong> left`
@@ -3645,10 +3675,8 @@ const planBudgetsHtml = () => {
     <article class="card glow" style="--glow:var(--pal-violet)">
         <div class="card-head"><h2 class="card-title">Monthly budget</h2><button type="button" class="btn btn-secondary btn-xs" data-edit-budget="__overall">${icon('i-edit', 'ic ic-sm')} Edit</button></div>
         <div class="big-number ${left < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(Math.abs(left), cur))}</div>
-        <div class="card-sub" style="margin-bottom:var(--sp-3)">${s.fromIncome && s.plannedIncome <= 0
-            ? 'Your budget follows your income. Add this month\u2019s salary or rent and it fills in by itself.'
-            : left >= 0 ? `left of ${escapeHtml(formatCurrency(s.budget, cur))}. That's about ${escapeHtml(formatCurrency(perDay, cur))} a day for the next ${plural(daysLeft, 'day')}.` : `over your ${escapeHtml(formatCurrency(s.budget, cur))} budget`}</div>
-        ${s.fromIncome ? `<div class="budget-source">${icon('i-arrow-down', 'ic ic-sm')}<span>From your income: ${escapeHtml(formatCurrency(s.plannedIncome, cur))} this month${state.config.budgetSavePct ? `, keeping ${state.config.budgetSavePct}% (${escapeHtml(formatCurrency(s.plannedIncome - s.budget, cur))}) for saving` : ''}</span></div>`
+        <div class="card-sub" style="margin-bottom:var(--sp-3)">${left >= 0 ? `left of ${escapeHtml(formatCurrency(s.budget, cur))}. That's about ${escapeHtml(formatCurrency(perDay, cur))} a day for the next ${plural(daysLeft, 'day')}.` : `over your ${escapeHtml(formatCurrency(s.budget, cur))} budget`}</div>
+        ${s.fromIncome ? `<div class="budget-source">${icon('i-arrow-down', 'ic ic-sm')}<span>${s.incomeFallback ? `No income here this month yet, so the amount you set is used until it comes in.` : `From your income: ${escapeHtml(formatCurrency(s.plannedIncome, cur))} this month${s.expectedIncome > 0 ? ` (${escapeHtml(formatCurrency(s.expectedIncome, cur))} of it not received yet)` : ''}`}${state.config.budgetSavePct ? `, keeping ${state.config.budgetSavePct}% (${escapeHtml(formatCurrency(s.plannedIncome - s.budget, cur))}) for saving` : ''}</span></div>`
             : (s.plannedIncome > 0 ? `<button type="button" class="link-btn budget-switch" data-action="budget-from-income">${icon('i-arrow-down', 'ic ic-sm')} Use my income (${escapeHtml(formatCurrency(s.plannedIncome, cur))}) as the budget</button>` : '')}
         ${meterHtml(s.budgetPct, budgetState(s.budgetPct), 'Monthly budget used')}
         <div class="meter-row" style="margin-top:var(--sp-2)"><span>${Math.round(s.budgetPct)}% used</span><span>Spent <strong>${escapeHtml(formatCurrency(s.spent, cur))}</strong></span></div>
@@ -3681,7 +3709,7 @@ const planBillsHtml = () => {
     const bills = sorted.filter((b) => b.type === 'expense');
     const inc = sorted.filter((b) => b.type === 'income');
     const billIds = new Set(viewBills().map((b) => b.id));
-    const oneOffFixed = state.transactions.filter((t) => t.type === 'expense' && t.fixed && (!t.recurringId || !billIds.has(t.recurringId)) && inMonth(t, new Date().getFullYear(), new Date().getMonth()));
+    const oneOffFixed = viewTx().filter((t) => t.type === 'expense' && t.fixed && (!t.recurringId || !billIds.has(t.recurringId)) && inMonth(t, new Date().getFullYear(), new Date().getMonth()));
     if (!sorted.length && !oneOffFixed.length) {
         return `${fixedSummaryHtml()}<div class="card">${emptyState({ iconId: 'i-repeat', title: 'No fixed expenses yet', text: 'Add rent, internet, subscriptions and other regular payments once. Vela takes them off your income each month, logs them on time and reminds you before they are due.', actionLabel: 'Add a fixed expense', action: 'add-bill' })}</div>`;
     }
@@ -5287,13 +5315,14 @@ const submitDebt = () => {
         record = { ...state.debts[idx], ...data };
         state.debts[idx] = record;
     } else {
-        record = { id: generateId(), ...data, accountId: viewId() !== 'all' ? viewId() : null, createdAt: Date.now() };
+        record = { id: generateId(), ...data, accountId: viewId() !== 'all' ? viewId() : null, moved: true, createdAt: Date.now() };
         state.debts.push(record);
     }
     saveState();
     queueSync('debt', record.id, 'upsert');
     closeSheet('modal-debt');
-    showToast(id ? 'Saved' : `${debtDir === 'lent' ? `${person} owes you` : `You owe ${person}`} ${formatCurrency(amount, currency)}`, 'success');
+    const accName = (state.accounts.find((a) => a.id === record.accountId) || {}).name;
+    showToast(id ? 'Saved' : `${debtDir === 'lent' ? `${person} owes you` : `You owe ${person}`} ${formatCurrency(amount, currency)}${accName ? `. ${accName} balance updated` : ''}`, 'success');
     renderActive();
     return true;
 };
