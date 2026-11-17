@@ -104,11 +104,14 @@ final class BankSms {
         + "|debit (for|of)|credit (for|of)|cefts?|slips|pos)\\b");
     // For senders Vela doesn't know: the text must be about an account or card being debited or credited.
     private static final Pattern ACCOUNT_WORDING = lc("\\b(a/c|acc?|account|acct|card|crd|savings|current)\\b[\\s\\S]{0,80}\\b(debited|credited)\\b|\\b(debited|credited)\\b[\\s\\S]{0,60}\\b(a/c|acc?|account|acct|card|crd)\\b"
-        + "|\\b(credit|debit)\\s+(for|of)\\b[\\s\\S]{0,40}\\b(to|from)\\s+(a/c\\s*)?[x*\\d]{6,}");
+        + "|\\b(credit|debit)\\s+(for|of)\\b[\\s\\S]{0,40}\\b(to|from)\\s+(a/c\\s*)?[x*\\d]{6,}"
+        + "|\\b(purchase|payment|withdrawal|transaction|txn)\\b[\\s\\S]{0,160}\\b(authori[sz]ed|approved|successful)\\b[\\s\\S]{0,80}\\b(dc-card|cc-card|card|a/c|account)\\b"
+        + "|\\b(purchase|payment|withdrawal|transaction|txn)\\b[\\s\\S]{0,160}\\byour\\s+(dc-card|cc-card|card|a/c|account)\\b");
 
     // ---- Amounts (app.js smsAmounts): "LKR 1,500.00", "Rs.1,500", "USD 12.99" and (HNB) "670.59 LKR" ----
     private static final String CODES = "USD|LKR|EUR|GBP|INR|AED|SAR|QAR|KWD|OMR|AUD|CAD|SGD|MYR|JPY|CNY|MVR";
-    private static final String NUM = "([0-9]{1,3}(?:,[0-9]{3})+(?:\\.[0-9]{1,2})?|[0-9]+(?:\\.[0-9]{1,2})?)";
+    // Lakh grouping (30,00,000.00 is three million) is tried before the usual 3-digit grouping.
+    private static final String NUM = "([0-9]{1,3}(?:,[0-9]{2})+,[0-9]{3}(?:\\.[0-9]{1,2})?|[0-9]{1,3}(?:,[0-9]{3})+(?:\\.[0-9]{1,2})?|[0-9]+(?:\\.[0-9]{1,2})?)";
     private static final Pattern AMOUNT_A = ci("(" + CODES + "|SLR|Rs\\.?|US\\$)\\s*[:.]?\\s*" + NUM);
     private static final Pattern AMOUNT_B = ci(NUM + "\\s*(" + CODES + "|SLR)\\b");
     // A number is a balance or a limit (not what moved) when one of these labels sits right before it. Whole words only.

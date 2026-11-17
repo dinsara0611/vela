@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.32.2';
+const APP_VERSION = '4.32.3';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1900,11 +1900,12 @@ const SMS_CONDITIONAL = /\b(will be (credited|debited|given|added)|when you|if y
 const SMS_STRONG = /\b(debited|credited|purchase (at|of)|withdrawal (at|of|from)|cash withdrawal|transaction (approved|of|alert)|txn (of|at)|auth(orised|orized)? pmt|has been authori[sz]ed|paid to|transferred|transfer (to|from|of)|payment of|deposit(ed)? (to|of|in|at)|used (for|at)|spent|reversal|reversed|refund(ed)?|sms alert|debit (for|of)|credit (for|of)|cefts?|slips|pos)\b/i;
 // For senders Vela doesn't know: the text must be about an account or card being debited or credited.
 // "Credit for Rs. 3,000.00 to 8024585190" (an account number) counts too.
-const SMS_ACCOUNT_WORDING = /\b(a\/c|acc?|account|acct|card|crd|savings|current)\b[\s\S]{0,80}\b(debited|credited)\b|\b(debited|credited)\b[\s\S]{0,60}\b(a\/c|acc?|account|acct|card|crd)\b|\b(credit|debit)\s+(for|of)\b[\s\S]{0,40}\b(to|from)\s+(a\/c\s*)?[x*\d]{6,}/i;
+const SMS_ACCOUNT_WORDING = /\b(a\/c|acc?|account|acct|card|crd|savings|current)\b[\s\S]{0,80}\b(debited|credited)\b|\b(debited|credited)\b[\s\S]{0,60}\b(a\/c|acc?|account|acct|card|crd)\b|\b(credit|debit)\s+(for|of)\b[\s\S]{0,40}\b(to|from)\s+(a\/c\s*)?[x*\d]{6,}|\b(purchase|payment|withdrawal|transaction|txn)\b[\s\S]{0,160}\b(authori[sz]ed|approved|successful)\b[\s\S]{0,80}\b(dc-card|cc-card|card|a\/c|account)\b|\b(purchase|payment|withdrawal|transaction|txn)\b[\s\S]{0,160}\byour\s+(dc-card|cc-card|card|a\/c|account)\b/i;
 
 // Amounts: "LKR 1,500.00", "Rs.1,500", "USD 12.99" and (HNB) "670.59 LKR".
 const SMS_CODES = Object.keys(CURRENCIES).join('|');
-const SMS_NUM = '([0-9]{1,3}(?:,[0-9]{3})+(?:\\.[0-9]{1,2})?|[0-9]+(?:\\.[0-9]{1,2})?)';
+// Lakh grouping (30,00,000.00 is three million) is tried before the usual 3-digit grouping.
+const SMS_NUM = '([0-9]{1,3}(?:,[0-9]{2})+,[0-9]{3}(?:\\.[0-9]{1,2})?|[0-9]{1,3}(?:,[0-9]{3})+(?:\\.[0-9]{1,2})?|[0-9]+(?:\\.[0-9]{1,2})?)';
 const SMS_AMOUNT_A = new RegExp(`(${SMS_CODES}|SLR|Rs\\.?|US\\$)\\s*[:.]?\\s*${SMS_NUM}`, 'gi');
 const SMS_AMOUNT_B = new RegExp(`${SMS_NUM}\\s*(${SMS_CODES}|SLR)\\b`, 'gi');
 const smsCurrency = (c) => { const u = String(c).toUpperCase().replace(/\./g, ''); return u === 'RS' || u === 'SLR' ? 'LKR' : u === 'US$' ? 'USD' : u; };
