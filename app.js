@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.37.0';
+const APP_VERSION = '4.38.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2194,7 +2194,7 @@ const BRANDS = [
     ['canva', 'canva', 'Canva', 'Other', '#00C4CC', '#ffffff', 'C'],
     ['microsoft', 'microsoft|msft\\b', 'Microsoft', 'Other', '#ffffff', '#737373', 'M'],
     ['github', 'github', 'GitHub', 'Other', '#181717', '#ffffff', 'GH'],
-    ['meta', 'meta ?(?:ads|platforms)', 'Meta', 'Other', '#0866FF', '#ffffff', 'M'],
+    ['meta', 'meta ?(?:ads|platforms)|^meta$', 'Meta', 'Other', '#0866FF', '#ffffff', 'M'],
     ['paypal', 'paypal', 'PayPal', 'Other', '#003087', '#ffffff', 'PP'],
     ['apple', 'apple\\.com|itunes|apple(?: (?:music|tv|store|one|pay|services|icloud))?$', 'Apple', 'Entertainment', '#1D1D1F', '#ffffff', ''],
     ['amazon', 'amazon|amzn', 'Amazon', 'Shopping', '#232F3E', '#FF9900', 'a'],
@@ -2211,7 +2211,7 @@ const BRANDS = [
     ['sinopec', 'sinopec', 'Sinopec', 'Travel', '#E60012', '#ffffff', 'S'],
     // Phone, internet and utilities
     ['dialog', 'dialog\\b', 'Dialog', 'Utilities', '#E4002B', '#ffffff', 'D'],
-    ['mobitel', 'mobitel', 'SLT-Mobitel', 'Utilities', '#0054A6', '#ffffff', 'M'],
+    ['mobitel', 'slt[- ]?mobitel|mobitel', 'SLT-Mobitel', 'Utilities', '#0054A6', '#ffffff', 'M'],
     ['slt', 'slt\\b|sri lanka telecom', 'SLT', 'Utilities', '#0054A6', '#ffffff', 'SLT'],
     ['hutch', 'hutch\\b', 'Hutch', 'Utilities', '#F58220', '#ffffff', 'H'],
     ['airtel', 'airtel', 'Airtel', 'Utilities', '#E40000', '#ffffff', 'A'],
@@ -2250,7 +2250,7 @@ const BRANDS = [
     ['tinder', 'tinder', 'Tinder', 'Entertainment', '#FE3C72', '#ffffff', 'T'],
     ['gemini', 'gemini|google one ai', 'Gemini', 'Other', '#1A73E8', '#ffffff', 'G'],
     ['perplexity', 'perplexity', 'Perplexity', 'Other', '#20808D', '#ffffff', 'P'],
-    ['zoom', 'zoom\\.us|zoom video|zoom com', 'Zoom', 'Other', '#0B5CFF', '#ffffff', 'Z'],
+    ['zoom', 'zoom\\.us|zoom video|zoom com|^zoom$', 'Zoom', 'Other', '#0B5CFF', '#ffffff', 'Z'],
     ['dropbox', 'dropbox', 'Dropbox', 'Other', '#0061FF', '#ffffff', 'D'],
     ['notion', 'notion', 'Notion', 'Other', '#ffffff', '#111111', 'N'],
     ['grammarly', 'grammarly', 'Grammarly', 'Other', '#15C39A', '#ffffff', 'G'],
@@ -2316,11 +2316,299 @@ const BRANDS = [
     ['frimi', 'frimi', 'FriMi', null, '#E91E63', '#ffffff', 'F'],
     ['ezcash', 'ez ?cash', 'eZ Cash', null, '#FF6F00', '#ffffff', 'eZ'],
     ['mcash', 'mcash', 'mCash', null, '#0054A6', '#ffffff', 'm'],
-    ['mcb', 'mcb\b', 'MCB', null, '#006A4E', '#ffffff', 'MCB'],
-    ['sdb', 'sdb\b|sanasa', 'SDB', null, '#00843D', '#ffffff', 'SDB'],
-    ['rdb', 'rdb\b|pradeshiya', 'RDB', null, '#0A7A8C', '#ffffff', 'RDB'],
+    ['mcb', 'mcb\\b', 'MCB', null, '#006A4E', '#ffffff', 'MCB'],
+    ['sdb', 'sdb\\b|sanasa', 'SDB', null, '#00843D', '#ffffff', 'SDB'],
+    ['rdb', 'rdb\\b|pradeshiya', 'RDB', null, '#0A7A8C', '#ffffff', 'RDB'],
     ['hdfc', 'hdfc', 'HDFC', null, '#004C8F', '#ffffff', 'HDFC'],
-    ['lolc', 'lolc', 'LOLC', null, '#C8102E', '#ffffff', 'LOLC']
+    ['lolc', 'lolc', 'LOLC', null, '#C8102E', '#ffffff', 'LOLC'],
+    // More brands (scripts/brands-extra.txt); logos from each brand's own site (scripts/fetch-logos-extra.mjs)
+    ['elephanthouse', 'elephant house', 'Elephant House', 'Food', '#5B5B66', '#ffffff', 'EH'],
+    ['munchee', 'munchee', 'Munchee', 'Food', '#5B5B66', '#ffffff', 'M'],
+    ['maliban', 'maliban', 'Maliban', 'Food', '#080808', '#ffffff', 'M'],
+    ['dilmah', 'dilmah', 'Dilmah', 'Food', '#087878', '#ffffff', 'D'],
+    ['highland', 'highland (?:milk|yoghurt|yogurt|ice)|milco|^highland$', 'Highland', 'Food', '#5B5B66', '#ffffff', 'H'],
+    ['pelwatte', 'pelwatte', 'Pelwatte', 'Food', '#1848A8', '#ffffff', 'P'],
+    ['harischandra', 'harischandra', 'Harischandra', 'Food', '#5B5B66', '#ffffff', 'H'],
+    ['prima', 'prima (?:ceylon|flour|bread|kottumee|noodles)|^prima$', 'Prima', 'Food', '#080808', '#ffffff', 'P'],
+    ['caravanfresh', 'caravan fresh', 'Caravan Fresh', 'Food', '#087818', '#ffffff', 'CF'],
+    ['paanpaan', 'paan ?paan', 'Paan Paan', 'Food', '#5B5B66', '#ffffff', 'PP'],
+    ['creperunner', 'crepe ?runner', 'Crepe Runner', 'Food', '#080808', '#ffffff', 'CR'],
+    ['chinesedragon', 'chinese dragon', 'Chinese Dragon Cafe', 'Food', '#5B5B66', '#ffffff', 'CD'],
+    ['ministryofcrab', 'ministry of crab', 'Ministry of Crab', 'Food', '#F8B818', '#111111', 'MO'],
+    ['upalis', 'upali\'?s', 'Upali\'s', 'Food', '#5B5B66', '#ffffff', 'US'],
+    ['fabbakery', 'the fab\\b|fab bakery', 'The FAB', 'Food', '#5B5B66', '#ffffff', 'TF'],
+    ['thilakawardhana', 'thilakawardhana', 'Thilakawardhana', 'Shopping', '#5B5B66', '#ffffff', 'T'],
+    ['mondy', 'mondy', 'Mondy', 'Shopping', '#5B5B66', '#ffffff', 'M'],
+    ['avirate', 'avirate', 'Avirate', 'Shopping', '#5B5B66', '#ffffff', 'A'],
+    ['springsummer', 'spring (?:and|&) summer', 'Spring & Summer', 'Shopping', '#5B5B66', '#ffffff', 'SS'],
+    ['glitz', 'glitz', 'Glitz', 'Shopping', '#5B5B66', '#ffffff', 'G'],
+    ['dsi', 'dsi\\b|d\\.s\\.i', 'DSI', 'Shopping', '#F8F8F8', '#111111', 'D'],
+    ['bata', 'bata\\b', 'Bata', 'Shopping', '#080808', '#ffffff', 'B'],
+    ['wishque', 'wishque', 'Wishque', 'Shopping', '#5B5B66', '#ffffff', 'W'],
+    ['lankabell', 'lanka ?bell', 'Lanka Bell', 'Utilities', '#5B5B66', '#ffffff', 'LB'],
+    ['payhere', 'payhere', 'PayHere', 'Other', '#1848D8', '#ffffff', 'P'],
+    ['upay', 'upay\\b', 'Upay', 'Other', '#080808', '#ffffff', 'U'],
+    ['kangaroocabs', 'kangaroo cabs?', 'Kangaroo Cabs', 'Travel', '#080808', '#ffffff', 'KC'],
+    ['fitsair', 'fits ?air', 'FitsAir', 'Travel', '#F80808', '#ffffff', 'F'],
+    ['jetwing', 'jetwing', 'Jetwing', 'Travel', '#5B5B66', '#ffffff', 'J'],
+    ['gallefacehotel', 'galle face hotel', 'Galle Face Hotel', 'Travel', '#F8F8F8', '#111111', 'GF'],
+    ['heritance', 'heritance', 'Heritance Hotels', 'Travel', '#5B5B66', '#ffffff', 'HH'],
+    ['ninewells', 'ninewells', 'Ninewells Hospital', 'Health', '#5B5B66', '#ffffff', 'NH'],
+    ['kingshospital', 'kings hospital', 'Kings Hospital', 'Health', '#F8F8F8', '#111111', 'KH'],
+    ['slinsurance', 'sri lanka insurance|slic\\b', 'Sri Lanka Insurance', 'Other', '#5B5B66', '#ffffff', 'SL'],
+    ['hnbassurance', 'hnb assurance', 'HNB Assurance', 'Other', '#F8F8F8', '#111111', 'HA'],
+    ['janashakthi', 'janashakthi', 'Janashakthi', 'Other', '#5B5B66', '#ffffff', 'J'],
+    ['fairfirst', 'fairfirst', 'Fairfirst Insurance', 'Other', '#5B5B66', '#ffffff', 'FI'],
+    ['icbt', 'icbt', 'ICBT Campus', 'Other', '#F8F8F8', '#111111', 'IC'],
+    ['nsbm', 'nsbm', 'NSBM', 'Other', '#F8F8F8', '#111111', 'N'],
+    ['sliit', 'sliit', 'SLIIT', 'Other', '#080808', '#ffffff', 'S'],
+    ['iit', 'iit campus|informatics institute|^iit$', 'IIT', 'Other', '#5B5B66', '#ffffff', 'I'],
+    ['apiit', 'apiit', 'APIIT', 'Other', '#5B5B66', '#ffffff', 'A'],
+    ['esoft', 'esoft', 'ESOFT', 'Other', '#5B5B66', '#ffffff', 'E'],
+    ['britishcouncil', 'british council', 'British Council', 'Other', '#F8F8F8', '#111111', 'BC'],
+    ['cima', 'cima\\b', 'CIMA', 'Other', '#080808', '#ffffff', 'C'],
+    ['acca', 'acca\\b', 'ACCA', 'Other', '#C80808', '#ffffff', 'A'],
+    ['ielts', 'ielts', 'IELTS', 'Other', '#080808', '#ffffff', 'I'],
+    ['lbfinance', 'lb finance', 'LB Finance', null, '#080808', '#ffffff', 'LF'],
+    ['centralfinance', 'central finance', 'Central Finance', null, '#F89828', '#111111', 'CF'],
+    ['peoplesleasing', 'people\'?s leasing', 'People\'s Leasing', null, '#080808', '#ffffff', 'PS'],
+    ['cdb', 'cdb\\b|citizens development', 'CDB', null, '#F8F8F8', '#111111', 'C'],
+    ['singerfinance', 'singer finance', 'Singer Finance', null, '#E81828', '#ffffff', 'SF'],
+    ['icici', 'icici', 'ICICI Bank', null, '#080808', '#ffffff', 'IB'],
+    ['sbi', 'state bank of india|sbi\\b', 'State Bank of India', null, '#5B5B66', '#ffffff', 'SB'],
+    ['citibank', 'citi ?bank|citi\\b', 'Citibank', null, '#080808', '#ffffff', 'C'],
+    ['cocacola', 'coca[- ]?cola|coke\\b', 'Coca-Cola', 'Food', '#5B5B66', '#ffffff', 'CC'],
+    ['pepsi', 'pepsi', 'Pepsi', 'Food', '#080808', '#ffffff', 'P'],
+    ['redbull', 'red ?bull', 'Red Bull', 'Food', '#F8F8F8', '#111111', 'RB'],
+    ['nestle', 'nestl[eé]', 'Nestlé', 'Food', '#F8F8F8', '#111111', 'N'],
+    ['cadbury', 'cadbury', 'Cadbury', 'Food', '#480888', '#ffffff', 'C'],
+    ['anchor', 'anchor (?:milk|newdale|butter|full cream)|^anchor$', 'Anchor', 'Food', '#5B5B66', '#ffffff', 'A'],
+    ['texaschicken', 'texas chicken', 'Texas Chicken', 'Food', '#080808', '#ffffff', 'TC'],
+    ['hardees', 'hardee\'?s', 'Hardee\'s', 'Food', '#080808', '#ffffff', 'HS'],
+    ['carlsjr', 'carl\'?s jr', 'Carl\'s Jr.', 'Food', '#080808', '#ffffff', 'CS'],
+    ['nandos', 'nando\'?s', 'Nando\'s', 'Food', '#E8E8E8', '#111111', 'NS'],
+    ['baskinrobbins', 'baskin ?robbins', 'Baskin Robbins', 'Food', '#080808', '#ffffff', 'BR'],
+    ['dunkin', 'dunkin', 'Dunkin\'', 'Food', '#F8F8F8', '#111111', 'D'],
+    ['gloriajeans', 'gloria jean\'?s', 'Gloria Jean\'s', 'Food', '#5B5B66', '#ffffff', 'GJ'],
+    ['timhortons', 'tim hortons', 'Tim Hortons', 'Food', '#5B5B66', '#ffffff', 'TH'],
+    ['costa', 'costa coffee|costa\\b', 'Costa Coffee', 'Food', '#681838', '#ffffff', 'CC'],
+    ['krispykreme', 'krispy ?kreme', 'Krispy Kreme', 'Food', '#5B5B66', '#ffffff', 'KK'],
+    ['wendys', 'wendy\'?s', 'Wendy\'s', 'Food', '#F8F8F8', '#111111', 'WS'],
+    ['fiveguys', 'five guys', 'Five Guys', 'Food', '#D80838', '#ffffff', 'FG'],
+    ['shakeshack', 'shake ?shack', 'Shake Shack', 'Food', '#080808', '#ffffff', 'SS'],
+    ['chipotle', 'chipotle', 'Chipotle', 'Food', '#A82818', '#ffffff', 'C'],
+    ['pandaexpress', 'panda express', 'Panda Express', 'Food', '#080808', '#ffffff', 'PE'],
+    ['papajohns', 'papa john\'?s', 'Papa John\'s', 'Food', '#D82818', '#ffffff', 'PJ'],
+    ['littlecaesars', 'little caesars', 'Little Caesars', 'Food', '#F86808', '#ffffff', 'LC'],
+    ['dairyqueen', 'dairy queen', 'Dairy Queen', 'Food', '#F8F8F8', '#111111', 'DQ'],
+    ['chickfila', 'chick-?fil-?a', 'Chick-fil-A', 'Food', '#D80828', '#ffffff', 'CF'],
+    ['jollibee', 'jollibee', 'Jollibee', 'Food', '#F8F8F8', '#111111', 'J'],
+    ['pret', 'pret a manger|pret\\b', 'Pret A Manger', 'Food', '#080808', '#ffffff', 'PA'],
+    ['parisbaguette', 'paris baguette', 'Paris Baguette', 'Food', '#081848', '#ffffff', 'PB'],
+    ['doordash', 'doordash', 'DoorDash', 'Food', '#F8F8F8', '#111111', 'D'],
+    ['samsung', 'samsung', 'Samsung', 'Shopping', '#5B5B66', '#ffffff', 'S'],
+    ['xiaomi', 'xiaomi|redmi\\b|\\bmi store', 'Xiaomi', 'Shopping', '#F8F8F8', '#111111', 'X'],
+    ['huawei', 'huawei', 'Huawei', 'Shopping', '#080808', '#ffffff', 'H'],
+    ['oppo', 'oppo\\b', 'OPPO', 'Shopping', '#5B5B66', '#ffffff', 'O'],
+    ['vivo', 'vivo\\b', 'vivo', 'Shopping', '#5B5B66', '#ffffff', 'V'],
+    ['realme', 'realme', 'realme', 'Shopping', '#F8C818', '#111111', 'R'],
+    ['oneplus', 'one ?plus', 'OnePlus', 'Shopping', '#5B5B66', '#ffffff', 'O'],
+    ['nokia', 'nokia', 'Nokia', 'Shopping', '#0858F8', '#ffffff', 'N'],
+    ['sony', 'sony', 'Sony', 'Shopping', '#5B5B66', '#ffffff', 'S'],
+    ['lg', 'lg\\b|lg electronics', 'LG', 'Shopping', '#A80838', '#ffffff', 'L'],
+    ['lenovo', 'lenovo', 'Lenovo', 'Shopping', '#5B5B66', '#ffffff', 'L'],
+    ['hp', 'hp\\b|hewlett', 'HP', 'Shopping', '#0848D8', '#ffffff', 'H'],
+    ['dell', 'dell\\b', 'Dell', 'Shopping', '#0878C8', '#ffffff', 'D'],
+    ['asus', 'asus\\b', 'ASUS', 'Shopping', '#080808', '#ffffff', 'A'],
+    ['acer', 'acer\\b', 'Acer', 'Shopping', '#080808', '#ffffff', 'A'],
+    ['canon', 'canon\\b', 'Canon', 'Shopping', '#F8F8F8', '#111111', 'C'],
+    ['jbl', 'jbl\\b', 'JBL', 'Shopping', '#F84818', '#ffffff', 'J'],
+    ['philips', 'philips', 'Philips', 'Shopping', '#F8F8F8', '#111111', 'P'],
+    ['panasonic', 'panasonic', 'Panasonic', 'Shopping', '#5B5B66', '#ffffff', 'P'],
+    ['haier', 'haier', 'Haier', 'Shopping', '#5B5B66', '#ffffff', 'H'],
+    ['casio', 'casio', 'Casio', 'Shopping', '#083888', '#ffffff', 'C'],
+    ['razer', 'razer\\b', 'Razer', 'Shopping', '#080808', '#ffffff', 'R'],
+    ['anker', 'anker\\b', 'Anker', 'Shopping', '#080808', '#ffffff', 'A'],
+    ['zara', 'zara\\b', 'Zara', 'Shopping', '#F8F8F8', '#111111', 'Z'],
+    ['uniqlo', 'uniqlo', 'Uniqlo', 'Shopping', '#F80808', '#ffffff', 'U'],
+    ['puma', 'puma\\b', 'Puma', 'Shopping', '#F8F8F8', '#111111', 'P'],
+    ['reebok', 'reebok', 'Reebok', 'Shopping', '#5B5B66', '#ffffff', 'R'],
+    ['underarmour', 'under armour', 'Under Armour', 'Shopping', '#5B5B66', '#ffffff', 'UA'],
+    ['newbalance', 'new balance', 'New Balance', 'Shopping', '#F8F8F8', '#111111', 'NB'],
+    ['converse', 'converse\\b', 'Converse', 'Shopping', '#5B5B66', '#ffffff', 'C'],
+    ['levis', 'levi\'?s', 'Levi\'s', 'Shopping', '#080808', '#ffffff', 'LS'],
+    ['gap', 'gap (?:store|kids|inc)|gap\\.com|^gap$', 'Gap', 'Shopping', '#5B5B66', '#ffffff', 'G'],
+    ['marksspencer', 'marks (?:and|&) spencer|m&s\\b', 'Marks & Spencer', 'Shopping', '#5B5B66', '#ffffff', 'MS'],
+    ['lacoste', 'lacoste', 'Lacoste', 'Shopping', '#080808', '#ffffff', 'L'],
+    ['tommy', 'tommy hilfiger', 'Tommy Hilfiger', 'Shopping', '#F8F8F8', '#111111', 'TH'],
+    ['calvinklein', 'calvin klein', 'Calvin Klein', 'Shopping', '#F8F8F8', '#111111', 'CK'],
+    ['gucci', 'gucci', 'Gucci', 'Shopping', '#F8F8F8', '#111111', 'G'],
+    ['louisvuitton', 'louis vuitton', 'Louis Vuitton', 'Shopping', '#F8F8F8', '#111111', 'LV'],
+    ['chanel', 'chanel', 'Chanel', 'Shopping', '#080808', '#ffffff', 'C'],
+    ['fossil', 'fossil\\b', 'Fossil', 'Shopping', '#080808', '#ffffff', 'F'],
+    ['sephora', 'sephora', 'Sephora', 'Shopping', '#080808', '#ffffff', 'S'],
+    ['bodyshop', '(?:the )?body shop', 'The Body Shop', 'Shopping', '#5B5B66', '#ffffff', 'TB'],
+    ['bathbodyworks', 'bath (?:and|&) body works', 'Bath & Body Works', 'Shopping', '#5B5B66', '#ffffff', 'BB'],
+    ['victoriassecret', 'victoria\'?s secret', 'Victoria\'s Secret', 'Shopping', '#F8C8C8', '#111111', 'VS'],
+    ['lego', 'lego\\b', 'LEGO', 'Shopping', '#F80808', '#ffffff', 'L'],
+    ['bestbuy', 'best ?buy', 'Best Buy', 'Shopping', '#183878', '#ffffff', 'BB'],
+    ['costco', 'costco', 'Costco', 'Shopping', '#F8F8F8', '#111111', 'C'],
+    ['carrefour', 'carrefour', 'Carrefour', 'Shopping', '#F8F8F8', '#111111', 'C'],
+    ['lulu', 'lulu hypermarket|lulu\\b', 'LuLu Hypermarket', 'Shopping', '#5B5B66', '#ffffff', 'LH'],
+    ['noon', 'noon\\.com|noon (?:shopping|food)|^noon$', 'noon', 'Shopping', '#F8E808', '#111111', 'N'],
+    ['nykaa', 'nykaa', 'Nykaa', 'Shopping', '#F898C8', '#111111', 'N'],
+    ['tesco', 'tesco', 'Tesco', 'Shopping', '#F8F8F8', '#111111', 'T'],
+    ['lidl', 'lidl', 'Lidl', 'Shopping', '#F8F808', '#111111', 'L'],
+    ['decathlon', 'decathlon', 'Decathlon', 'Shopping', '#5B5B66', '#ffffff', 'D'],
+    ['miniso', 'miniso', 'Miniso', 'Shopping', '#D82838', '#ffffff', 'M'],
+    ['muji', 'muji\\b', 'MUJI', 'Shopping', '#780818', '#ffffff', 'M'],
+    ['shopee', 'shopee', 'Shopee', 'Shopping', '#F8F8F8', '#111111', 'S'],
+    ['asos', 'asos\\b', 'ASOS', 'Shopping', '#080808', '#ffffff', 'A'],
+    ['toyota', 'toyota', 'Toyota', 'Travel', '#D81818', '#ffffff', 'T'],
+    ['honda', 'honda', 'Honda', 'Travel', '#F8F8F8', '#111111', 'H'],
+    ['nissan', 'nissan', 'Nissan', 'Travel', '#F8F8F8', '#111111', 'N'],
+    ['suzuki', 'suzuki', 'Suzuki', 'Travel', '#5B5B66', '#ffffff', 'S'],
+    ['hyundai', 'hyundai', 'Hyundai', 'Travel', '#082858', '#ffffff', 'H'],
+    ['kia', 'kia\\b|kia motors', 'Kia', 'Travel', '#F8F8F8', '#111111', 'K'],
+    ['bmw', 'bmw\\b', 'BMW', 'Travel', '#686868', '#ffffff', 'B'],
+    ['mercedes', 'mercedes|benz\\b', 'Mercedes-Benz', 'Travel', '#080808', '#ffffff', 'MB'],
+    ['audi', 'audi\\b', 'Audi', 'Travel', '#080808', '#ffffff', 'A'],
+    ['tesla', 'tesla', 'Tesla', 'Travel', '#080808', '#ffffff', 'T'],
+    ['tatamotors', 'tata motors|tata\\b', 'Tata Motors', 'Travel', '#5B5B66', '#ffffff', 'TM'],
+    ['bajaj', 'bajaj', 'Bajaj', 'Travel', '#5B5B66', '#ffffff', 'B'],
+    ['tvs', 'tvs motor|tvs (?:apache|ntorq|jupiter)|^tvs$', 'TVS', 'Travel', '#080808', '#ffffff', 'T'],
+    ['yamaha', 'yamaha', 'Yamaha', 'Travel', '#080808', '#ffffff', 'Y'],
+    ['ford', 'ford\\b', 'Ford', 'Travel', '#080858', '#ffffff', 'F'],
+    ['volkswagen', 'volkswagen|vw\\b', 'Volkswagen', 'Travel', '#F8F8F8', '#111111', 'V'],
+    ['mazda', 'mazda', 'Mazda', 'Travel', '#080808', '#ffffff', 'M'],
+    ['byd', 'byd\\b', 'BYD', 'Travel', '#5B5B66', '#ffffff', 'B'],
+    ['shell', 'shell (?:fuel|petrol|station|lubricants|gas|select)|^shell$', 'Shell', 'Travel', '#F8C808', '#111111', 'S'],
+    ['lyft', 'lyft', 'Lyft', 'Travel', '#080808', '#ffffff', 'L'],
+    ['ola', 'ola cabs|ola\\b', 'Ola', 'Travel', '#080808', '#ffffff', 'O'],
+    ['indrive', 'in ?drive\\b', 'inDrive', 'Travel', '#C8F818', '#111111', 'I'],
+    ['etihad', 'etihad', 'Etihad Airways', 'Travel', '#080808', '#ffffff', 'EA'],
+    ['flydubai', 'fly ?dubai', 'flydubai', 'Travel', '#1898D8', '#ffffff', 'F'],
+    ['singaporeair', 'singapore airlines', 'Singapore Airlines', 'Travel', '#081848', '#ffffff', 'SA'],
+    ['cathay', 'cathay pacific', 'Cathay Pacific', 'Travel', '#F8F8F8', '#111111', 'CP'],
+    ['turkish', 'turkish airlines', 'Turkish Airlines', 'Travel', '#C80808', '#ffffff', 'TA'],
+    ['airindia', 'air india', 'Air India', 'Travel', '#C80828', '#ffffff', 'AI'],
+    ['saudia', 'saudia\\b', 'Saudia', 'Travel', '#5B5B66', '#ffffff', 'S'],
+    ['omanair', 'oman air', 'Oman Air', 'Travel', '#080808', '#ffffff', 'OA'],
+    ['gulfair', 'gulf air', 'Gulf Air', 'Travel', '#080808', '#ffffff', 'GA'],
+    ['malaysiaairlines', 'malaysia airlines', 'Malaysia Airlines', 'Travel', '#F8F8F8', '#111111', 'MA'],
+    ['thai', 'thai airways', 'Thai Airways', 'Travel', '#5B5B66', '#ffffff', 'TA'],
+    ['britishairways', 'british airways', 'British Airways', 'Travel', '#F8F8F8', '#111111', 'BA'],
+    ['lufthansa', 'lufthansa', 'Lufthansa', 'Travel', '#F8A808', '#111111', 'L'],
+    ['airarabia', 'air arabia', 'Air Arabia', 'Travel', '#5B5B66', '#ffffff', 'AA'],
+    ['jazeera', 'jazeera airways', 'Jazeera Airways', 'Travel', '#5B5B66', '#ffffff', 'JA'],
+    ['hyatt', 'hyatt', 'Hyatt', 'Travel', '#5B5B66', '#ffffff', 'H'],
+    ['accor', 'accor\\b|novotel|ibis\\b|sofitel', 'Accor', 'Travel', '#080808', '#ffffff', 'A'],
+    ['ihg', 'ihg\\b|holiday inn|crowne plaza|intercontinental', 'IHG Hotels', 'Travel', '#184858', '#ffffff', 'IH'],
+    ['taj', 'taj (?:samudra|hotels?|bentota)|tajhotels', 'Taj Hotels', 'Travel', '#A88838', '#ffffff', 'TH'],
+    ['trivago', 'trivago', 'trivago', 'Travel', '#F8F8F8', '#111111', 'T'],
+    ['hotelscom', 'hotels\\.com', 'Hotels.com', 'Travel', '#E81808', '#ffffff', 'HC'],
+    ['klook', 'klook', 'Klook', 'Travel', '#F8F8F8', '#111111', 'K'],
+    ['tripadvisor', 'trip ?advisor', 'Tripadvisor', 'Travel', '#08E858', '#ffffff', 'T'],
+    ['dhl', 'dhl\\b', 'DHL', 'Other', '#F8C808', '#111111', 'D'],
+    ['fedex', 'fedex', 'FedEx', 'Other', '#481888', '#ffffff', 'F'],
+    ['ups', 'ups\\b(?! ?and)|ups store', 'UPS', 'Other', '#F8F8F8', '#111111', 'U'],
+    ['aramex', 'aramex', 'Aramex', 'Other', '#5B5B66', '#ffffff', 'A'],
+    ['visa', 'visa (?:card|inc)|visa\\.com', 'Visa', null, '#5B5B66', '#ffffff', 'V'],
+    ['mastercard', 'master ?card', 'Mastercard', null, '#F8F8F8', '#111111', 'M'],
+    ['amex', 'american express|amex\\b', 'American Express', null, '#0868C8', '#ffffff', 'AE'],
+    ['skrill', 'skrill', 'Skrill', null, '#980888', '#ffffff', 'S'],
+    ['westernunion', 'western union', 'Western Union', null, '#080808', '#ffffff', 'WU'],
+    ['moneygram', 'money ?gram', 'MoneyGram', null, '#F8F8F8', '#111111', 'M'],
+    ['remitly', 'remitly', 'Remitly', null, '#284858', '#ffffff', 'R'],
+    ['stripe', 'stripe\\b', 'Stripe', 'Other', '#5838F8', '#ffffff', 'S'],
+    ['coinbase', 'coinbase', 'Coinbase', 'Other', '#2878B8', '#ffffff', 'C'],
+    ['bybit', 'bybit', 'Bybit', 'Other', '#080808', '#ffffff', 'B'],
+    ['okx', 'okx\\b', 'OKX', 'Other', '#080808', '#ffffff', 'O'],
+    ['cryptocom', 'crypto\\.com', 'Crypto.com', 'Other', '#080808', '#ffffff', 'CC'],
+    ['hulu', 'hulu', 'Hulu', 'Entertainment', '#5B5B66', '#ffffff', 'H'],
+    ['paramount', 'paramount\\+?|paramount plus', 'Paramount+', 'Entertainment', '#0868F8', '#ffffff', 'P'],
+    ['tidal', 'tidal\\b', 'TIDAL', 'Entertainment', '#080808', '#ffffff', 'T'],
+    ['scribd', 'scribd', 'Scribd', 'Entertainment', '#F8F858', '#111111', 'S'],
+    ['viu', 'viu\\b', 'Viu', 'Entertainment', '#F8B808', '#111111', 'V'],
+    ['zee5', 'zee ?5', 'ZEE5', 'Entertainment', '#181828', '#ffffff', 'Z'],
+    ['hotstar', 'hotstar', 'Hotstar', 'Entertainment', '#0898F8', '#ffffff', 'H'],
+    ['sonyliv', 'sony ?liv', 'SonyLIV', 'Entertainment', '#080808', '#ffffff', 'S'],
+    ['anghami', 'anghami', 'Anghami', 'Entertainment', '#080808', '#ffffff', 'A'],
+    ['patreon', 'patreon', 'Patreon', 'Entertainment', '#080808', '#ffffff', 'P'],
+    ['epicgames', 'epic games|fortnite', 'Epic Games', 'Entertainment', '#383838', '#ffffff', 'EG'],
+    ['ea', 'electronic arts|ea (?:app|play|sports)|ea\\.com|^ea$', 'EA', 'Entertainment', '#5B5B66', '#ffffff', 'E'],
+    ['riot', 'riot games|valorant|league of legends', 'Riot Games', 'Entertainment', '#080808', '#ffffff', 'RG'],
+    ['minecraft', 'minecraft', 'Minecraft', 'Entertainment', '#58A838', '#ffffff', 'M'],
+    ['mobilelegends', 'mobile legends|mlbb', 'Mobile Legends', 'Entertainment', '#080808', '#ffffff', 'ML'],
+    ['supercell', 'supercell|clash of clans|clash royale|brawl stars', 'Supercell', 'Entertainment', '#581878', '#ffffff', 'S'],
+    ['callofduty', 'call of duty|cod mobile', 'Call of Duty', 'Entertainment', '#5B5B66', '#ffffff', 'CO'],
+    ['hoyoverse', 'hoyoverse|genshin|honkai', 'HoYoverse', 'Entertainment', '#080808', '#ffffff', 'H'],
+    ['king', 'candy crush|king\\.com', 'Candy Crush', 'Entertainment', '#080808', '#ffffff', 'CC'],
+    ['ubisoft', 'ubisoft', 'Ubisoft', 'Entertainment', '#5B5B66', '#ffffff', 'U'],
+    ['blizzard', 'blizzard|battle\\.net', 'Blizzard', 'Entertainment', '#181818', '#ffffff', 'B'],
+    ['codashop', 'coda ?shop', 'Codashop', 'Entertainment', '#6848F8', '#ffffff', 'C'],
+    ['bookmyshow', 'book ?my ?show', 'BookMyShow', 'Entertainment', '#F8F8F8', '#111111', 'B'],
+    ['ticketmaster', 'ticketmaster', 'Ticketmaster', 'Entertainment', '#5B5B66', '#ffffff', 'T'],
+    ['vox', 'vox cinemas?', 'VOX Cinemas', 'Entertainment', '#080808', '#ffffff', 'VC'],
+    ['whatsapp', 'whatsapp', 'WhatsApp', 'Other', '#080808', '#ffffff', 'W'],
+    ['viber', 'viber', 'Viber', 'Other', '#080808', '#ffffff', 'V'],
+    ['imo', 'imo\\b', 'imo', 'Other', '#F8F8F8', '#111111', 'I'],
+    ['skype', 'skype', 'Skype', 'Other', '#5B5B66', '#ffffff', 'S'],
+    ['truecaller', 'truecaller', 'Truecaller', 'Other', '#0828F8', '#ffffff', 'T'],
+    ['slack', 'slack\\b', 'Slack', 'Other', '#080808', '#ffffff', 'S'],
+    ['trello', 'trello', 'Trello', 'Other', '#1858B8', '#ffffff', 'T'],
+    ['atlassian', 'atlassian|jira\\b|confluence\\b', 'Atlassian', 'Other', '#080808', '#ffffff', 'A'],
+    ['gitlab', 'gitlab', 'GitLab', 'Other', '#E84828', '#ffffff', 'G'],
+    ['vercel', 'vercel', 'Vercel', 'Other', '#080808', '#ffffff', 'V'],
+    ['netlify', 'netlify', 'Netlify', 'Other', '#F8F8F8', '#111111', 'N'],
+    ['heroku', 'heroku', 'Heroku', 'Other', '#9878B8', '#ffffff', 'H'],
+    ['digitalocean', 'digital ?ocean', 'DigitalOcean', 'Other', '#080808', '#ffffff', 'D'],
+    ['hostinger', 'hostinger', 'Hostinger', 'Other', '#6848C8', '#ffffff', 'H'],
+    ['godaddy', 'go ?daddy', 'GoDaddy', 'Other', '#181818', '#ffffff', 'G'],
+    ['namecheap', 'namecheap', 'Namecheap', 'Other', '#E85808', '#ffffff', 'N'],
+    ['wix', 'wix\\b|wix\\.com', 'Wix', 'Other', '#F8F8F8', '#111111', 'W'],
+    ['squarespace', 'squarespace', 'Squarespace', 'Other', '#080808', '#ffffff', 'S'],
+    ['wordpress', 'wordpress', 'WordPress.com', 'Other', '#3858E8', '#ffffff', 'WC'],
+    ['mailchimp', 'mailchimp', 'Mailchimp', 'Other', '#F8D818', '#111111', 'M'],
+    ['zoho', 'zoho', 'Zoho', 'Other', '#F8F8F8', '#111111', 'Z'],
+    ['evernote', 'evernote', 'Evernote', 'Other', '#F8F8F8', '#111111', 'E'],
+    ['onepassword', '1 ?password', '1Password', 'Other', '#283838', '#ffffff', '1'],
+    ['bitwarden', 'bitwarden', 'Bitwarden', 'Other', '#F8F8F8', '#111111', 'B'],
+    ['nordvpn', 'nord ?vpn|nord ?security', 'NordVPN', 'Other', '#080808', '#ffffff', 'N'],
+    ['expressvpn', 'express ?vpn', 'ExpressVPN', 'Other', '#D83838', '#ffffff', 'E'],
+    ['surfshark', 'surfshark', 'Surfshark', 'Other', '#18B8B8', '#ffffff', 'S'],
+    ['proton', 'proton (?:mail|vpn|ag|pass|drive)|proton\\.me|^proton$', 'Proton', 'Other', '#F8F8F8', '#111111', 'P'],
+    ['kaspersky', 'kaspersky', 'Kaspersky', 'Other', '#5B5B66', '#ffffff', 'K'],
+    ['norton', 'norton\\b', 'Norton', 'Other', '#F8F8F8', '#111111', 'N'],
+    ['mcafee', 'mcafee', 'McAfee', 'Other', '#F8F8F8', '#111111', 'M'],
+    ['avast', 'avast', 'Avast', 'Other', '#F87808', '#ffffff', 'A'],
+    ['midjourney', 'midjourney', 'Midjourney', 'Other', '#F8F8F8', '#111111', 'M'],
+    ['deepseek', 'deepseek', 'DeepSeek', 'Other', '#4868F8', '#ffffff', 'D'],
+    ['cursor', 'cursor (?:ai|pro)|cursor\\.com|anysphere|^cursor$', 'Cursor', 'Other', '#F8F8F8', '#111111', 'C'],
+    ['replit', 'replit', 'Replit', 'Other', '#080808', '#ffffff', 'R'],
+    ['jetbrains', 'jetbrains', 'JetBrains', 'Other', '#080808', '#ffffff', 'J'],
+    ['autodesk', 'autodesk|autocad', 'Autodesk', 'Other', '#080808', '#ffffff', 'A'],
+    ['unityengine', 'unity (?:technologies|pro|engine|asset)|^unity$', 'Unity', 'Other', '#5B5B66', '#ffffff', 'U'],
+    ['envato', 'envato', 'Envato', 'Other', '#88E848', '#111111', 'E'],
+    ['freepik', 'freepik', 'Freepik', 'Other', '#080808', '#ffffff', 'F'],
+    ['shutterstock', 'shutterstock', 'Shutterstock', 'Other', '#F86838', '#ffffff', 'S'],
+    ['picsart', 'picsart', 'Picsart', 'Other', '#080808', '#ffffff', 'P'],
+    ['edx', 'edx\\b', 'edX', 'Other', '#080808', '#ffffff', 'E'],
+    ['skillshare', 'skillshare', 'Skillshare', 'Other', '#082838', '#ffffff', 'S'],
+    ['quizlet', 'quizlet', 'Quizlet', 'Other', '#4858F8', '#ffffff', 'Q'],
+    ['chegg', 'chegg', 'Chegg', 'Other', '#E86808', '#ffffff', 'C'],
+    ['strava', 'strava', 'Strava', 'Health', '#F84808', '#ffffff', 'S'],
+    ['headspace', 'headspace', 'Headspace', 'Health', '#F87808', '#ffffff', 'H'],
+    ['calmapp', 'calm (?:app|premium|\\.com)|^calm$', 'Calm', 'Health', '#38A8E8', '#ffffff', 'C'],
+    ['vodafone', 'vodafone', 'Vodafone', 'Utilities', '#5B5B66', '#ffffff', 'V'],
+    ['jio', 'jio\\b', 'Jio', 'Utilities', '#E80818', '#ffffff', 'J'],
+    ['etisalat', 'etisalat|e&', 'etisalat', 'Utilities', '#080808', '#ffffff', 'E'],
+    ['stc', 'stc\\b', 'stc', 'Utilities', '#F8F8F8', '#111111', 'S'],
+    ['ooredoo', 'ooredoo', 'Ooredoo', 'Utilities', '#080808', '#ffffff', 'O'],
+    ['verizon', 'verizon', 'Verizon', 'Utilities', '#F8E8E8', '#111111', 'V'],
+    ['att', 'at&t', 'AT&T', 'Utilities', '#08C8F8', '#ffffff', 'AT'],
+    ['tmobile', 't-?mobile', 'T-Mobile', 'Utilities', '#5B5B66', '#ffffff', 'TM'],
+    ['starlink', 'starlink', 'Starlink', 'Utilities', '#080808', '#ffffff', 'S']
 ].map(([slug, src, name, cat, bg, fg, mark]) => ({
     slug, name, cat, bg, fg, mark,
     // At the start of a name, optionally after "The" or a payment processor's prefix ("GOOGLE *YouTube", "PAYPAL *NETFLIX").
@@ -2329,16 +2617,31 @@ const BRANDS = [
 }));
 // The brand a name belongs to. Names read from bank SMS must start with it ("BARISTA - CARGILLS SQUARE" is Barista,
 // not Cargills). Short hand-written names may mention it anywhere ("Lunch at KFC"); the first one mentioned wins.
+const brandMemo = new Map();
 const brandFor = (text, startOnly = false) => {
     const s = String(text || '').trim();
     if (!s) return null;
-    const first = BRANDS.find((b) => b.start.test(s));
+    const key = (startOnly ? '1' : '0') + s;
+    if (brandMemo.has(key)) return brandMemo.get(key);
+    if (brandMemo.size > 3000) brandMemo.clear();
+    const found = findBrand(s, startOnly);
+    brandMemo.set(key, found);
+    return found;
+};
+// One combined test first: most names typed by hand are no brand at all, and skip the per-brand scan.
+const BRAND_ANY = new RegExp(BRANDS.map((b) => b.any.source).join('|'), 'i');
+function findBrand(s, startOnly) {
+    if (!BRAND_ANY.test(s)) return null;
+    // When several brands start the name, the longest match is the most specific ("HNB Assurance" over "HNB").
+    let first = null;
+    let len = 0;
+    for (const b of BRANDS) { const m = b.start.exec(s); if (m && m[0].length > len) { first = b; len = m[0].length; } }
     if (first || startOnly || s.split(/\s+/).length > 3) return first || null;
     let best = null;
     let at = Infinity;
     BRANDS.forEach((b) => { const m = b.any.exec(s); if (m && m.index < at) { best = b; at = m.index; } });
     return best;
-};
+}
 // Town, country, company and terminal codes that bank SMS add after a shop name:
 // "KOKO COLOMBO 03 LK" -> "Koko", "Google One 650-2530000 US" -> "Google One", "UBER EATS 852 LK" -> "Uber Eats".
 const SL_PLACES = 'colombo|col|kandy|galle|negombo|maharagama|nugegoda|dehiwala|mount lavinia|moratuwa|kotte|battaramulla|kollupitiya|wellawatte|bambalapitiya|rajagiriya|malabe|kadawatha|kiribathgoda|wattala|ja-?ela|gampaha|panadura|kurunegala|matara|jaffna|anuradhapura|kaduwela|homagama|piliyandala|boralesgamuwa|pannipitiya|ratmalana|kelaniya|kalutara|horana|chilaw|badulla|ratnapura|trincomalee|batticaloa';
@@ -2398,10 +2701,10 @@ const tidyBankEntryNames = () => {
 // Real logos bundled with the app in logos/: each brand's official Google Play app icon (or its site icon when it has
 // no app), fetched once by scripts/fetch-logos.mjs and checked by eye, so showing them never contacts anyone.
 // Brands without a verified logo get a badge in their colours.
-const LOGO_SLUGS = new Set(['abans', 'adidas', 'agoda', 'aia', 'airasia', 'airbnb', 'airtel', 'alibaba', 'aliexpress', 'allianz', 'amana', 'amazon', 'apple', 'arpico', 'asiri', 'audible', 'aws', 'barista', 'binance', 'boc', 'bolt', 'booking', 'burgerking', 'busseat', 'canva', 'capcut', 'careem', 'cargills', 'cargillsbank', 'carnage', 'ceb', 'celltronics', 'ceylinco', 'ceypetco', 'cinnamon', 'claude', 'coffeebean', 'combank', 'coursera', 'crunchyroll', 'damro', 'daraz', 'deezer', 'deliveroo', 'dfcc', 'dialog', 'dialogpay', 'discord', 'disney', 'dominos', 'dropbox', 'duolingo', 'ebay', 'emirates', 'etsy', 'expedia', 'facebook', 'fashionbug', 'figma', 'fiverr', 'flipkart', 'foodpanda', 'freefire', 'frimi', 'gemini', 'github', 'glomark', 'google', 'grab', 'grammarly', 'hameedia', 'hbomax', 'hdfc', 'healthguard', 'helakuru', 'hemas', 'hilton', 'hm', 'hnb', 'houseoffashions', 'hsbc', 'hutch', 'ikea', 'ikman', 'indigo', 'instagram', 'javalounge', 'kapruka', 'keells', 'kfc', 'koko', 'lankahospitals', 'lankaioc', 'lassana', 'laugfsgas', 'leco', 'linkedin', 'litro', 'lolc', 'marriott', 'mcash', 'mcb', 'mcdonalds', 'mintpay', 'mobitel', 'myntra', 'nawaloka', 'ndb', 'netflix', 'nike', 'nintendo', 'notion', 'nsb', 'ntb', 'openai', 'pabc', 'payoneer', 'paypal', 'peoples', 'peotv', 'pereraandsons', 'perplexity', 'pickme', 'pinterest', 'pizzahut', 'playstation', 'primevideo', 'pubg', 'qatarairways', 'rdb', 'reddit', 'revolut', 'roblox', 'sampath', 'scope', 'seylan', 'shangrila', 'shopify', 'singer', 'skyscanner', 'slt', 'snapchat', 'softlogic', 'softlogiclife', 'soundcloud', 'spaceylon', 'spar', 'spotify', 'srilankan', 'starbucks', 'steam', 'subway', 'swiggy', 'tacobell', 'takas', 'talabat', 'telegram', 'temu', 'tiktok', 'tinder', 'tripcom', 'twitch', 'twitter', 'uber', 'ubereats', 'udemy', 'unionassurance', 'unionbank', 'upwork', 'walmart', 'wasi', 'waterboard', 'wise', 'xbox', 'youtube', 'zomato', 'zoom']);
+const LOGO_SLUGS = new Set(['abans', 'acca', 'accor', 'acer', 'adidas', 'adobe', 'agoda', 'aia', 'airasia', 'airbnb', 'airindia', 'airtel', 'alibaba', 'aliexpress', 'allianz', 'amana', 'amazon', 'amex', 'anghami', 'anker', 'apple', 'arpico', 'asiri', 'asos', 'asus', 'atlassian', 'att', 'audi', 'audible', 'autodesk', 'avast', 'aws', 'barista', 'baskinrobbins', 'bata', 'bestbuy', 'binance', 'bitwarden', 'blizzard', 'bmw', 'boc', 'bolt', 'booking', 'bookmyshow', 'britishairways', 'britishcouncil', 'burgerking', 'busseat', 'bybit', 'cadbury', 'calmapp', 'calvinklein', 'canon', 'canva', 'capcut', 'caravanfresh', 'careem', 'cargills', 'cargillsbank', 'carlsjr', 'carnage', 'carrefour', 'casio', 'cathay', 'cdb', 'ceb', 'celltronics', 'centralfinance', 'ceylinco', 'ceypetco', 'chanel', 'chegg', 'chickfila', 'chipotle', 'cima', 'cinnamon', 'citibank', 'claude', 'cloudflare', 'codashop', 'coffeebean', 'coinbase', 'combank', 'costa', 'costco', 'coursera', 'creperunner', 'crunchyroll', 'cryptocom', 'cursor', 'dairyqueen', 'damro', 'daraz', 'deepseek', 'deezer', 'deliveroo', 'dell', 'dfcc', 'dhl', 'dialog', 'dialogpay', 'digitalocean', 'dilmah', 'dinemore', 'discord', 'disney', 'dominos', 'doordash', 'dropbox', 'dsi', 'dunkin', 'duolingo', 'durdans', 'ebay', 'edx', 'emirates', 'envato', 'epicgames', 'etihad', 'etisalat', 'etsy', 'evernote', 'expedia', 'expressvpn', 'facebook', 'fashionbug', 'fedex', 'figma', 'fitsair', 'fiveguys', 'fiverr', 'flipkart', 'flydubai', 'foodpanda', 'ford', 'fossil', 'freefire', 'freepik', 'frimi', 'gallefacehotel', 'gemini', 'github', 'gitlab', 'glomark', 'godaddy', 'google', 'grab', 'grammarly', 'gucci', 'gulfair', 'hameedia', 'hardees', 'hbomax', 'hdfc', 'headspace', 'healthguard', 'helakuru', 'hemas', 'heroku', 'hilton', 'hm', 'hnb', 'hnbassurance', 'honda', 'hostinger', 'hotelscom', 'hotstar', 'houseoffashions', 'hoyoverse', 'hp', 'hsbc', 'huawei', 'hutch', 'hyundai', 'icbt', 'icici', 'ielts', 'ihg', 'ikea', 'ikman', 'imo', 'indigo', 'indrive', 'instagram', 'javalounge', 'jbl', 'jetbrains', 'jio', 'jollibee', 'kangaroocabs', 'kapruka', 'keells', 'kfc', 'kia', 'king', 'kingshospital', 'klook', 'koko', 'lacoste', 'lankahospitals', 'lankaioc', 'lassana', 'laugfs', 'laugfsgas', 'lbfinance', 'leco', 'lego', 'levis', 'lg', 'lidl', 'linkedin', 'litro', 'littlecaesars', 'lolc', 'louisvuitton', 'lufthansa', 'lyft', 'mailchimp', 'malaysiaairlines', 'maliban', 'marriott', 'mastercard', 'mazda', 'mcafee', 'mcash', 'mcb', 'mcdonalds', 'mercedes', 'meta', 'microsoft', 'midjourney', 'minecraft', 'miniso', 'ministryofcrab', 'mintpay', 'mobilelegends', 'mobitel', 'moneygram', 'muji', 'myntra', 'namecheap', 'nandos', 'nawaloka', 'ndb', 'nestle', 'netflix', 'netlify', 'newbalance', 'nike', 'nintendo', 'nissan', 'nokia', 'nolimit', 'noon', 'nordvpn', 'norton', 'notion', 'nsb', 'nsbm', 'ntb', 'nykaa', 'okx', 'ola', 'omanair', 'onepassword', 'ooredoo', 'openai', 'pabc', 'pandaexpress', 'papajohns', 'paramount', 'parisbaguette', 'patreon', 'payhere', 'payoneer', 'paypal', 'pelwatte', 'peoples', 'peoplesleasing', 'peotv', 'pepsi', 'pereraandsons', 'perplexity', 'philips', 'pickme', 'picsart', 'pinterest', 'pizzahut', 'playstation', 'pret', 'prima', 'primevideo', 'proton', 'pubg', 'puma', 'qatarairways', 'quizlet', 'razer', 'rdb', 'realme', 'redbull', 'reddit', 'remitly', 'replit', 'revolut', 'riot', 'roblox', 'sampath', 'scope', 'scribd', 'sdb', 'sephora', 'seylan', 'shakeshack', 'shangrila', 'shein', 'shell', 'shopee', 'shopify', 'shutterstock', 'singaporeair', 'singer', 'singerfinance', 'skillshare', 'skrill', 'skyscanner', 'slack', 'sliit', 'slt', 'snapchat', 'softlogic', 'softlogiclife', 'sonyliv', 'soundcloud', 'spaceylon', 'spar', 'spotify', 'squarespace', 'srilankan', 'standardchartered', 'starbucks', 'starlink', 'stc', 'steam', 'strava', 'stripe', 'subway', 'supercell', 'surfshark', 'swiggy', 'tacobell', 'taj', 'takas', 'talabat', 'telegram', 'temu', 'tesco', 'tesla', 'texaschicken', 'tidal', 'tiktok', 'tinder', 'tommy', 'toyota', 'trello', 'tripadvisor', 'tripcom', 'trivago', 'truecaller', 'turkish', 'tvs', 'twitch', 'twitter', 'uber', 'ubereats', 'udemy', 'unionassurance', 'unionbank', 'uniqlo', 'upay', 'ups', 'upwork', 'vercel', 'verizon', 'viber', 'victoriassecret', 'viu', 'volkswagen', 'vox', 'walmart', 'wasi', 'waterboard', 'wendys', 'westernunion', 'whatsapp', 'wise', 'wix', 'wordpress', 'xbox', 'xiaomi', 'yamaha', 'youtube', 'zara', 'zee5', 'zoho', 'zomato', 'zoom']);
 const LOGO_ALIAS = { pickmefood: 'pickme' };
 const logoSlug = (slug) => { const k = LOGO_SLUGS.has(slug) ? slug : LOGO_ALIAS[slug]; return k && LOGO_SLUGS.has(k) ? k : null; };
-const logoImg = (slug, alt = '') => `<img src="logos/${slug}.png" alt="${escapeHtml(alt)}" decoding="async" draggable="false" onerror="this.parentNode.classList.remove('has-logo');this.remove()">`;
+const logoImg = (slug, alt = '') => `<img src="logos/${slug}.webp" alt="${escapeHtml(alt)}" decoding="async" draggable="false" onerror="this.parentNode.classList.remove('has-logo');this.remove()">`;
 const brandBadge = (b, extra = '') => {
     const slug = logoSlug(b.slug);
     const mark = b.mark ? `<span class="brand-letters${b.mark.length > 2 ? ' is-long' : ''}">${escapeHtml(b.mark)}</span>` : icon('c-Shopping');
@@ -4328,6 +4631,7 @@ const openAddTx = (type = 'expense') => {
     if ($('tx-source')) $('tx-source').hidden = true;
     $('tx-form').reset();
     txHistory = historyStats();
+    resetTxSession();
     txCatTouched = false;
     txKind = 'variable';
     txKindTouched = false;
@@ -4351,6 +4655,7 @@ const openEditTx = (id) => {
     if (t.type === 'transfer') { openTransfer(t.id); return; }
     $('tx-form').reset();
     txHistory = historyStats();
+    resetTxSession();
     txCatTouched = true;
     txKind = t.fixed ? 'fixed' : 'variable';
     txKindTouched = true;
@@ -4604,6 +4909,13 @@ const historyStats = () => {
 };
 
 let txHistory = new Map();
+// While the entry form is open, the quick picks and the price list don't change: work them out once, not on every letter.
+let txSession = { picks: new Map(), prices: new Map() };
+const resetTxSession = () => { txSession = { picks: new Map(), prices: new Map() }; };
+const sessionPriceList = (cur) => {
+    if (!txSession.prices.has(cur)) txSession.prices.set(cur, priceList(cur));
+    return txSession.prices.get(cur);
+};
 let txCatTouched = false;
 let txPicks = [];
 
@@ -4695,9 +5007,10 @@ const renderTxSuggest = () => {
     if (!show) return;
     const cur = normCur($('tx-currency').value);
     const q = normDesc($('tx-desc').value);
-    const book = priceList(cur);
-
-    let picks = smartPicks(cur, 999);
+    const book = sessionPriceList(cur);
+    const pickKey = `${cur}|${daySlot()}`;
+    if (!txSession.picks.has(pickKey)) txSession.picks.set(pickKey, smartPicks(cur, 999));
+    let picks = txSession.picks.get(pickKey);
     if (q) {
         const words = q.split(' ');
         const exact = picks.some((p) => normDesc(p.name) === q);
@@ -4733,7 +5046,7 @@ const guessCategory = (desc) => {
     if (key.length < 2) return null;
     const g = txHistory.get(key);
     if (g && expenseCatExists(g.last.category)) return g.last.category;
-    const item = priceList(normCur($('tx-currency').value)).items.find((i) => normDesc(i.name) === key);
+    const item = sessionPriceList(normCur($('tx-currency').value)).items.find((i) => normDesc(i.name) === key);
     if (item) return item.category;
     const brand = brandFor(desc);
     if (brand && brand.cat && expenseCatExists(brand.cat)) return brand.cat;
@@ -4759,7 +5072,7 @@ const updatePriceHint = () => {
         ref = convertAmount(median(own.map((t) => convertAmount(t.amount, t.currency, 'USD'))), 'USD', cur);
         who = 'what you usually pay';
     } else {
-        const item = priceList(cur).items.find((i) => normDesc(i.name) === key);
+        const item = sessionPriceList(cur).items.find((i) => normDesc(i.name) === key);
         if (item) { ref = item.price; who = 'the typical price'; }
     }
     if (!(ref > 0)) return hide();
@@ -4801,8 +5114,15 @@ const fitsSlot = (name, slot) => (TIME_TAGS[name] || '').includes(slot);
 const smartPicks = (cur, limit = 16) => {
     const slot = daySlot();
     const hist = historyStats();
+    // How often each thing was added at this time of day, counted in one pass.
+    const atThisTime = new Map();
+    state.transactions.forEach((t) => {
+        if (t.type !== 'expense' || !t.createdAt || daySlot(new Date(t.createdAt)) !== slot) return;
+        const k = normDesc(t.desc);
+        atThisTime.set(k, (atThisTime.get(k) || 0) + 1);
+    });
     const usual = [...hist.values()].filter((g) => g.count >= 2).map((g) => {
-        const sameTime = state.transactions.filter((t) => t.type === 'expense' && t.createdAt && normDesc(t.desc) === g.key && daySlot(new Date(t.createdAt)) === slot).length;
+        const sameTime = atThisTime.get(g.key) || 0;
         return {
             kind: 'usual',
             name: g.last.desc,

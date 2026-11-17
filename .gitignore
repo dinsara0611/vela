@@ -3,3 +3,6 @@
 .claude/
 
 supabase/.temp/
+
+# Logo download results and contact sheets (scripts/fetch-logos-extra.mjs)
+logos-check/

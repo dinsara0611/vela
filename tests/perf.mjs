@@ -69,6 +69,11 @@ try {
         rows.push(await page.evaluate(time('Switch account (BOC)', "setViewAccount('a-boc');")));
         rows.push(await page.evaluate(time('Switch account (Commercial Bank)', "setViewAccount('a-com');")));
         rows.push(await page.evaluate(time('Open add form', "openAddTx('expense');")));
+        if (process.argv.includes('--typing-parts')) {
+            for (const [label, code] of [['  guessCategory', "guessCategory('Keells x')"], ['  renderTxSuggest', 'renderTxSuggest()'], ['  updatePriceHint', 'updatePriceHint()'], ['  updateDescLogo', 'updateDescLogo()'], ['  descBrands', "descBrands('Kee')"], ['  setTxKind check', "FIXED_HINT.test('Keells x')"], ['  historyStats', 'historyStats()'], ['  smartPicks (uncached)', "smartPicks('LKR', 999)"], ['  picks cached?', "txSession.picks.size"], ['  renderTxSuggest again', 'renderTxSuggest()'], ['  brandFor x all entries (fresh)', "brandMemo.clear(); state.transactions.forEach((t) => brandFor(t.desc))"], ['  brandFor x all entries (remembered)', "state.transactions.forEach((t) => brandFor(t.desc))"], ['  distinct names', "new Set(state.transactions.map((t) => t.desc)).size"]]) {
+                rows.push(await page.evaluate(time(label, code)));
+            }
+        }
         rows.push(await page.evaluate(time('Type a letter in the name', "$('tx-desc').value = 'Keel' + 'abc'[" + r + " % 3]; $('tx-desc').dispatchEvent(new Event('input', { bubbles: true }));")));
         await page.evaluate("closeSheet('modal-tx'); new Promise((r) => setTimeout(r, 400))");
         rows.push(await page.evaluate(time('Theme switch (applyTheme)', "applyTheme(state.config.theme === 'dark' ? 'light' : 'dark');")));

@@ -288,11 +288,11 @@ export async function run() {
         const logo = $('tx-desc-logo').querySelector('img');
         const cat = document.querySelector('#tx-category-picker input:checked');
         input.value = 'Keells super'; input.dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
-        const keells = !!$('tx-desc-logo').querySelector('img[src="logos/keells.png"]');
+        const keells = !!$('tx-desc-logo').querySelector('img[src="logos/keells.webp"]');
         input.value = 'Kottu'; input.dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
         const none = !$('tx-desc-wrap').classList.contains('has-brand');
         await close('modal-tx');
-        return (offered.includes('Dialog') && input.value === 'Kottu' && logo && /dialog\.png/.test(logo.src) && cat && cat.value === 'Utilities' && keells && none)
+        return (offered.includes('Dialog') && input.value === 'Kottu' && logo && /dialog.webp/.test(logo.src) && cat && cat.value === 'Utilities' && keells && none)
             || JSON.stringify({ offered, logo: logo && logo.src, cat: cat && cat.value, keells, none });
     });
 
@@ -462,7 +462,7 @@ export async function run() {
         const koko = P('LKR 2,992.42 POS purchase at KOKO COLOMBO 03 LK on card ending 4321');
         const net = P('Your ComBank Card ending 4321 was used for an online transaction of USD 12.99 at NETFLIX.COM');
         const badge = g('entryBadge')('Koko', 'Shopping', 'expense');
-        const realLogo = /logos\/netflix\.png/.test(g('entryBadge')('Netflix', 'Entertainment', 'expense')) && /logos\/keells\.png/.test(g('entryBadge')('Keells', 'Food', 'expense'))
+        const realLogo = /logos\/netflix\.webp/.test(g('entryBadge')('Netflix', 'Entertainment', 'expense')) && /logos\/keells\.webp/.test(g('entryBadge')('Keells', 'Food', 'expense'))
             && !/<img/.test(g('entryBadge')('ODEL', 'Shopping', 'expense'));
         if (!realLogo) return 'real logos missing (or shown for a brand without a verified logo)';
         const plain = g('entryBadge')('Lunch with Amal', 'Food', 'expense');
@@ -539,16 +539,16 @@ export async function run() {
     await T('Accounts: a bank name shows its logo while typing, on Home and in the account pickers', async () => {
         g('openAccountEditor')(); await wait(300);
         $('account-name').value = 'Boc'; $('account-name').dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
-        const typing = !!$('account-name-logo').querySelector('img[src="logos/boc.png"]');
+        const typing = !!$('account-name-logo').querySelector('img[src="logos/boc.webp"]');
         const kind = $('account-kind').value;
         await close('modal-account');
         const before = s().accounts.slice();
         s().accounts = before.concat([{ id: 'acc-boc-test', name: 'Boc', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 0 }]);
         g('switchTab')('dashboard'); await wait(300);
-        const chip = !!document.querySelector('[data-view-account="acc-boc-test"] img[src="logos/boc.png"]');
+        const chip = !!document.querySelector('[data-view-account="acc-boc-test"] img[src="logos/boc.webp"]');
         g('openAddTx')('expense'); await wait(300);
         $('tx-account').value = 'acc-boc-test'; $('tx-account').dispatchEvent(new Event('change', { bubbles: true })); await wait(50);
-        const pick = !!$('tx-account').parentElement.querySelector('.select-logo img[src="logos/boc.png"]');
+        const pick = !!$('tx-account').parentElement.querySelector('.select-logo img[src="logos/boc.webp"]');
         await close('modal-tx');
         s().accounts = before;
         g('renderActive')();
@@ -774,7 +774,7 @@ export async function run() {
         g('smsTake')([smsMsg('ia-1', 'Dear Cardholder, Purchase at NETFLIX.COM for LKR 1,500.00 on 16/11/26 01:23 PM has been authorised on your debit card ending #5370.', NOW),
             smsMsg('ia-2', 'Dear Cardholder, Purchase at KEELLS SUPER LK for LKR 2,200.00 on 16/11/26 02:23 PM has been authorised on your debit card ending #5370.', NOW + 60000)]);
         g('showSmsSheet')(); await wait(300);
-        const logo = !!document.querySelector('#sms-list .sms-card img[src="logos/netflix.png"]');
+        const logo = !!document.querySelector('#sms-list .sms-card img[src="logos/netflix.webp"]');
         $('btn-sms-ignore-all').click(); await wait(150);
         const asked = g('smsQueue').length === 2;
         await confirmOk();

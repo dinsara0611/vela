@@ -1,0 +1,337 @@
+# More brands for Vela's logo list. One per line:  slug | name pattern (regex) | shown name | category | official site
+# Category "-" means a bank or finance company (counted as a bank account brand). Logos: scripts/fetch-logos-extra.mjs
+# Words that are also everyday words (mango, next, target, vans, TVs, unity, signal, du...) are left out on purpose.
+
+# ---- Sri Lanka: food, drinks, groceries
+elephanthouse | elephant house | Elephant House | Food | elephanthouse.lk
+munchee | munchee | Munchee | Food | munchee.lk
+maliban | maliban | Maliban | Food | malibanbiscuit.com
+dilmah | dilmah | Dilmah | Food | dilmahtea.com
+highland | highland (?:milk|yoghurt|yogurt|ice)|milco|^highland$ | Highland | Food | milco.lk
+pelwatte | pelwatte | Pelwatte | Food | pelwattedairy.com
+harischandra | harischandra | Harischandra | Food | harischandra.lk
+prima | prima (?:ceylon|flour|bread|kottumee|noodles)|^prima$ | Prima | Food | prima.com.lk
+caravanfresh | caravan fresh | Caravan Fresh | Food | caravanfresh.lk
+paanpaan | paan ?paan | Paan Paan | Food | paanpaan.lk
+creperunner | crepe ?runner | Crepe Runner | Food | creperunner.lk
+chinesedragon | chinese dragon | Chinese Dragon Cafe | Food | chinesedragoncafe.com
+ministryofcrab | ministry of crab | Ministry of Crab | Food | ministryofcrab.com
+upalis | upali'?s | Upali's | Food | upalis.com
+fabbakery | the fab\b|fab bakery | The FAB | Food | fab.lk
+
+# ---- Sri Lanka: shops, fashion, electronics
+thilakawardhana | thilakawardhana | Thilakawardhana | Shopping | thilakawardhana.com
+mondy | mondy | Mondy | Shopping | mondy.lk
+avirate | avirate | Avirate | Shopping | avirate.com
+springsummer | spring (?:and|&) summer | Spring & Summer | Shopping | springandsummer.lk
+glitz | glitz | Glitz | Shopping | glitz.lk
+dsi | dsi\b|d\.s\.i | DSI | Shopping | dsi.lk
+bata | bata\b | Bata | Shopping | bata.com
+wishque | wishque | Wishque | Shopping | wishque.com
+lankabell | lanka ?bell | Lanka Bell | Utilities | lankabell.com
+payhere | payhere | PayHere | Other | payhere.lk
+upay | upay\b | Upay | Other | upay.lk
+kangaroocabs | kangaroo cabs? | Kangaroo Cabs | Travel | kangaroocabs.com
+fitsair | fits ?air | FitsAir | Travel | fitsair.com
+jetwing | jetwing | Jetwing | Travel | jetwinghotels.com
+gallefacehotel | galle face hotel | Galle Face Hotel | Travel | gallefacehotel.com
+heritance | heritance | Heritance Hotels | Travel | heritancehotels.com
+ninewells | ninewells | Ninewells Hospital | Health | ninewellshospital.lk
+kingshospital | kings hospital | Kings Hospital | Health | kingshospital.lk
+slinsurance | sri lanka insurance|slic\b | Sri Lanka Insurance | Other | srilankainsurance.com
+hnbassurance | hnb assurance | HNB Assurance | Other | hnbassurance.com
+janashakthi | janashakthi | Janashakthi | Other | janashakthi.com
+fairfirst | fairfirst | Fairfirst Insurance | Other | fairfirst.lk
+icbt | icbt | ICBT Campus | Other | icbt.lk
+nsbm | nsbm | NSBM | Other | nsbm.ac.lk
+sliit | sliit | SLIIT | Other | sliit.lk
+iit | iit campus|informatics institute|^iit$ | IIT | Other | iit.ac.lk
+apiit | apiit | APIIT | Other | apiit.lk
+esoft | esoft | ESOFT | Other | esoft.lk
+britishcouncil | british council | British Council | Other | britishcouncil.lk
+cima | cima\b | CIMA | Other | cimaglobal.com
+acca | acca\b | ACCA | Other | accaglobal.com
+ielts | ielts | IELTS | Other | ielts.org
+
+# ---- Sri Lanka: finance
+lbfinance | lb finance | LB Finance | - | lbfinance.com
+centralfinance | central finance | Central Finance | - | cf.lk
+peoplesleasing | people'?s leasing | People's Leasing | - | plc.lk
+cdb | cdb\b|citizens development | CDB | - | cdb.lk
+singerfinance | singer finance | Singer Finance | - | singerfinance.com
+icici | icici | ICICI Bank | - | icicibank.com
+sbi | state bank of india|sbi\b | State Bank of India | - | sbi.co.in
+citibank | citi ?bank|citi\b | Citibank | - | citi.com
+
+# ---- Food and drink worldwide
+cocacola | coca[- ]?cola|coke\b | Coca-Cola | Food | coca-cola.com
+pepsi | pepsi | Pepsi | Food | pepsi.com
+redbull | red ?bull | Red Bull | Food | redbull.com
+nestle | nestl[eé] | Nestlé | Food | nestle.com
+cadbury | cadbury | Cadbury | Food | cadbury.co.uk
+anchor | anchor (?:milk|newdale|butter|full cream)|^anchor$ | Anchor | Food | anchor.lk
+texaschicken | texas chicken | Texas Chicken | Food | texaschicken.com
+hardees | hardee'?s | Hardee's | Food | hardees.com
+carlsjr | carl'?s jr | Carl's Jr. | Food | carlsjr.com
+nandos | nando'?s | Nando's | Food | nandos.com
+baskinrobbins | baskin ?robbins | Baskin Robbins | Food | baskinrobbins.com
+dunkin | dunkin | Dunkin' | Food | dunkindonuts.com
+gloriajeans | gloria jean'?s | Gloria Jean's | Food | gloriajeanscoffees.com
+timhortons | tim hortons | Tim Hortons | Food | timhortons.com
+costa | costa coffee|costa\b | Costa Coffee | Food | costa.co.uk
+krispykreme | krispy ?kreme | Krispy Kreme | Food | krispykreme.com
+wendys | wendy'?s | Wendy's | Food | wendys.com
+fiveguys | five guys | Five Guys | Food | fiveguys.com
+shakeshack | shake ?shack | Shake Shack | Food | shakeshack.com
+chipotle | chipotle | Chipotle | Food | chipotle.com
+pandaexpress | panda express | Panda Express | Food | pandaexpress.com
+papajohns | papa john'?s | Papa John's | Food | papajohns.com
+littlecaesars | little caesars | Little Caesars | Food | littlecaesars.com
+dairyqueen | dairy queen | Dairy Queen | Food | dairyqueen.com
+chickfila | chick-?fil-?a | Chick-fil-A | Food | chick-fil-a.com
+jollibee | jollibee | Jollibee | Food | jollibee.com
+pret | pret a manger|pret\b | Pret A Manger | Food | pret.com
+parisbaguette | paris baguette | Paris Baguette | Food | parisbaguette.com
+doordash | doordash | DoorDash | Food | doordash.com
+
+# ---- Phones, computers, electronics
+samsung | samsung | Samsung | Shopping | samsung.com
+xiaomi | xiaomi|redmi\b|\bmi store | Xiaomi | Shopping | mi.com
+huawei | huawei | Huawei | Shopping | huawei.com
+oppo | oppo\b | OPPO | Shopping | oppo.com
+vivo | vivo\b | vivo | Shopping | vivo.com
+realme | realme | realme | Shopping | realme.com
+oneplus | one ?plus | OnePlus | Shopping | oneplus.com
+nokia | nokia | Nokia | Shopping | nokia.com
+sony | sony | Sony | Shopping | sony.com
+lg | lg\b|lg electronics | LG | Shopping | lg.com
+lenovo | lenovo | Lenovo | Shopping | lenovo.com
+hp | hp\b|hewlett | HP | Shopping | hp.com
+dell | dell\b | Dell | Shopping | dell.com
+asus | asus\b | ASUS | Shopping | asus.com
+acer | acer\b | Acer | Shopping | acer.com
+canon | canon\b | Canon | Shopping | canon.com
+jbl | jbl\b | JBL | Shopping | jbl.com
+philips | philips | Philips | Shopping | philips.com
+panasonic | panasonic | Panasonic | Shopping | panasonic.com
+haier | haier | Haier | Shopping | haier.com
+casio | casio | Casio | Shopping | casio.com
+razer | razer\b | Razer | Shopping | razer.com
+anker | anker\b | Anker | Shopping | anker.com
+
+# ---- Clothes, beauty, stores worldwide
+zara | zara\b | Zara | Shopping | zara.com
+uniqlo | uniqlo | Uniqlo | Shopping | uniqlo.com
+puma | puma\b | Puma | Shopping | puma.com
+reebok | reebok | Reebok | Shopping | reebok.com
+underarmour | under armour | Under Armour | Shopping | underarmour.com
+newbalance | new balance | New Balance | Shopping | newbalance.com
+converse | converse\b | Converse | Shopping | converse.com
+levis | levi'?s | Levi's | Shopping | levi.com
+gap | gap (?:store|kids|inc)|gap\.com|^gap$ | Gap | Shopping | gap.com
+marksspencer | marks (?:and|&) spencer|m&s\b | Marks & Spencer | Shopping | marksandspencer.com
+lacoste | lacoste | Lacoste | Shopping | lacoste.com
+tommy | tommy hilfiger | Tommy Hilfiger | Shopping | tommy.com
+calvinklein | calvin klein | Calvin Klein | Shopping | calvinklein.com
+gucci | gucci | Gucci | Shopping | gucci.com
+louisvuitton | louis vuitton | Louis Vuitton | Shopping | louisvuitton.com
+chanel | chanel | Chanel | Shopping | chanel.com
+fossil | fossil\b | Fossil | Shopping | fossil.com
+sephora | sephora | Sephora | Shopping | sephora.com
+bodyshop | (?:the )?body shop | The Body Shop | Shopping | thebodyshop.com
+bathbodyworks | bath (?:and|&) body works | Bath & Body Works | Shopping | bathandbodyworks.com
+victoriassecret | victoria'?s secret | Victoria's Secret | Shopping | victoriassecret.com
+lego | lego\b | LEGO | Shopping | lego.com
+bestbuy | best ?buy | Best Buy | Shopping | bestbuy.com
+costco | costco | Costco | Shopping | costco.com
+carrefour | carrefour | Carrefour | Shopping | carrefour.com
+lulu | lulu hypermarket|lulu\b | LuLu Hypermarket | Shopping | luluhypermarket.com
+noon | noon\.com|noon (?:shopping|food)|^noon$ | noon | Shopping | noon.com
+nykaa | nykaa | Nykaa | Shopping | nykaa.com
+tesco | tesco | Tesco | Shopping | tesco.com
+lidl | lidl | Lidl | Shopping | lidl.com
+decathlon | decathlon | Decathlon | Shopping | decathlon.com
+miniso | miniso | Miniso | Shopping | miniso.com
+muji | muji\b | MUJI | Shopping | muji.com
+shopee | shopee | Shopee | Shopping | shopee.com
+asos | asos\b | ASOS | Shopping | asos.com
+
+# ---- Cars and bikes
+toyota | toyota | Toyota | Travel | toyota.com
+honda | honda | Honda | Travel | honda.com
+nissan | nissan | Nissan | Travel | nissan-global.com
+suzuki | suzuki | Suzuki | Travel | globalsuzuki.com
+hyundai | hyundai | Hyundai | Travel | hyundai.com
+kia | kia\b|kia motors | Kia | Travel | kia.com
+bmw | bmw\b | BMW | Travel | bmw.com
+mercedes | mercedes|benz\b | Mercedes-Benz | Travel | mercedes-benz.com
+audi | audi\b | Audi | Travel | audi.com
+tesla | tesla | Tesla | Travel | tesla.com
+tatamotors | tata motors|tata\b | Tata Motors | Travel | tatamotors.com
+bajaj | bajaj | Bajaj | Travel | bajajauto.com
+tvs | tvs motor|tvs (?:apache|ntorq|jupiter)|^tvs$ | TVS | Travel | tvsmotor.com
+yamaha | yamaha | Yamaha | Travel | yamaha-motor.com
+ford | ford\b | Ford | Travel | ford.com
+volkswagen | volkswagen|vw\b | Volkswagen | Travel | vw.com
+mazda | mazda | Mazda | Travel | mazda.com
+byd | byd\b | BYD | Travel | byd.com
+shell | shell (?:fuel|petrol|station|lubricants|gas|select)|^shell$ | Shell | Travel | shell.com
+
+# ---- Taxis, airlines, travel
+lyft | lyft | Lyft | Travel | lyft.com
+ola | ola cabs|ola\b | Ola | Travel | olacabs.com
+indrive | in ?drive\b | inDrive | Travel | indrive.com
+etihad | etihad | Etihad Airways | Travel | etihad.com
+flydubai | fly ?dubai | flydubai | Travel | flydubai.com
+singaporeair | singapore airlines | Singapore Airlines | Travel | singaporeair.com
+cathay | cathay pacific | Cathay Pacific | Travel | cathaypacific.com
+turkish | turkish airlines | Turkish Airlines | Travel | turkishairlines.com
+airindia | air india | Air India | Travel | airindia.com
+saudia | saudia\b | Saudia | Travel | saudia.com
+omanair | oman air | Oman Air | Travel | omanair.com
+gulfair | gulf air | Gulf Air | Travel | gulfair.com
+malaysiaairlines | malaysia airlines | Malaysia Airlines | Travel | malaysiaairlines.com
+thai | thai airways | Thai Airways | Travel | thaiairways.com
+britishairways | british airways | British Airways | Travel | britishairways.com
+lufthansa | lufthansa | Lufthansa | Travel | lufthansa.com
+airarabia | air arabia | Air Arabia | Travel | airarabia.com
+jazeera | jazeera airways | Jazeera Airways | Travel | jazeeraairways.com
+hyatt | hyatt | Hyatt | Travel | hyatt.com
+accor | accor\b|novotel|ibis\b|sofitel | Accor | Travel | all.accor.com
+ihg | ihg\b|holiday inn|crowne plaza|intercontinental | IHG Hotels | Travel | ihg.com
+taj | taj (?:samudra|hotels?|bentota)|tajhotels | Taj Hotels | Travel | tajhotels.com
+trivago | trivago | trivago | Travel | trivago.com
+hotelscom | hotels\.com | Hotels.com | Travel | hotels.com
+klook | klook | Klook | Travel | klook.com
+tripadvisor | trip ?advisor | Tripadvisor | Travel | tripadvisor.com
+
+# ---- Delivery and post
+dhl | dhl\b | DHL | Other | dhl.com
+fedex | fedex | FedEx | Other | fedex.com
+ups | ups\b(?! ?and)|ups store | UPS | Other | ups.com
+aramex | aramex | Aramex | Other | aramex.com
+
+# ---- Payments, money transfer, crypto
+visa | visa (?:card|inc)|visa\.com | Visa | - | visa.com
+mastercard | master ?card | Mastercard | - | mastercard.com
+amex | american express|amex\b | American Express | - | americanexpress.com
+skrill | skrill | Skrill | - | skrill.com
+westernunion | western union | Western Union | - | westernunion.com
+moneygram | money ?gram | MoneyGram | - | moneygram.com
+remitly | remitly | Remitly | - | remitly.com
+stripe | stripe\b | Stripe | Other | stripe.com
+coinbase | coinbase | Coinbase | Investment | coinbase.com
+bybit | bybit | Bybit | Investment | bybit.com
+okx | okx\b | OKX | Investment | okx.com
+cryptocom | crypto\.com | Crypto.com | Investment | crypto.com
+
+# ---- Streaming, music, books, games
+hulu | hulu | Hulu | Entertainment | hulu.com
+paramount | paramount\+?|paramount plus | Paramount+ | Entertainment | paramountplus.com
+tidal | tidal\b | TIDAL | Entertainment | tidal.com
+scribd | scribd | Scribd | Entertainment | scribd.com
+viu | viu\b | Viu | Entertainment | viu.com
+zee5 | zee ?5 | ZEE5 | Entertainment | zee5.com
+hotstar | hotstar | Hotstar | Entertainment | hotstar.com
+sonyliv | sony ?liv | SonyLIV | Entertainment | sonyliv.com
+anghami | anghami | Anghami | Entertainment | anghami.com
+patreon | patreon | Patreon | Entertainment | patreon.com
+epicgames | epic games|fortnite | Epic Games | Entertainment | epicgames.com
+ea | electronic arts|ea (?:app|play|sports)|ea\.com|^ea$ | EA | Entertainment | ea.com
+riot | riot games|valorant|league of legends | Riot Games | Entertainment | riotgames.com
+minecraft | minecraft | Minecraft | Entertainment | minecraft.net
+mobilelegends | mobile legends|mlbb | Mobile Legends | Entertainment | mobilelegends.com
+supercell | supercell|clash of clans|clash royale|brawl stars | Supercell | Entertainment | supercell.com
+callofduty | call of duty|cod mobile | Call of Duty | Entertainment | callofduty.com
+hoyoverse | hoyoverse|genshin|honkai | HoYoverse | Entertainment | hoyoverse.com
+king | candy crush|king\.com | Candy Crush | Entertainment | king.com
+ubisoft | ubisoft | Ubisoft | Entertainment | ubisoft.com
+blizzard | blizzard|battle\.net | Blizzard | Entertainment | blizzard.com
+codashop | coda ?shop | Codashop | Entertainment | codashop.com
+bookmyshow | book ?my ?show | BookMyShow | Entertainment | bookmyshow.com
+ticketmaster | ticketmaster | Ticketmaster | Entertainment | ticketmaster.com
+vox | vox cinemas? | VOX Cinemas | Entertainment | voxcinemas.com
+
+# ---- Apps, software, online services
+whatsapp | whatsapp | WhatsApp | Other | whatsapp.com
+viber | viber | Viber | Other | viber.com
+imo | imo\b | imo | Other | imo.im
+skype | skype | Skype | Other | skype.com
+truecaller | truecaller | Truecaller | Other | truecaller.com
+slack | slack\b | Slack | Other | slack.com
+trello | trello | Trello | Other | trello.com
+atlassian | atlassian|jira\b|confluence\b | Atlassian | Other | atlassian.com
+gitlab | gitlab | GitLab | Other | gitlab.com
+vercel | vercel | Vercel | Other | vercel.com
+netlify | netlify | Netlify | Other | netlify.com
+heroku | heroku | Heroku | Other | heroku.com
+digitalocean | digital ?ocean | DigitalOcean | Other | digitalocean.com
+hostinger | hostinger | Hostinger | Other | hostinger.com
+godaddy | go ?daddy | GoDaddy | Other | godaddy.com
+namecheap | namecheap | Namecheap | Other | namecheap.com
+wix | wix\b|wix\.com | Wix | Other | wix.com
+squarespace | squarespace | Squarespace | Other | squarespace.com
+wordpress | wordpress | WordPress.com | Other | wordpress.com
+mailchimp | mailchimp | Mailchimp | Other | mailchimp.com
+zoho | zoho | Zoho | Other | zoho.com
+evernote | evernote | Evernote | Other | evernote.com
+onepassword | 1 ?password | 1Password | Other | 1password.com
+bitwarden | bitwarden | Bitwarden | Other | bitwarden.com
+nordvpn | nord ?vpn|nord ?security | NordVPN | Other | nordvpn.com
+expressvpn | express ?vpn | ExpressVPN | Other | expressvpn.com
+surfshark | surfshark | Surfshark | Other | surfshark.com
+proton | proton (?:mail|vpn|ag|pass|drive)|proton\.me|^proton$ | Proton | Other | proton.me
+kaspersky | kaspersky | Kaspersky | Other | kaspersky.com
+norton | norton\b | Norton | Other | norton.com
+mcafee | mcafee | McAfee | Other | mcafee.com
+avast | avast | Avast | Other | avast.com
+midjourney | midjourney | Midjourney | Other | midjourney.com
+deepseek | deepseek | DeepSeek | Other | deepseek.com
+cursor | cursor (?:ai|pro)|cursor\.com|anysphere|^cursor$ | Cursor | Other | cursor.com
+replit | replit | Replit | Other | replit.com
+jetbrains | jetbrains | JetBrains | Other | jetbrains.com
+autodesk | autodesk|autocad | Autodesk | Other | autodesk.com
+unityengine | unity (?:technologies|pro|engine|asset)|^unity$ | Unity | Other | unity.com
+envato | envato | Envato | Other | envato.com
+freepik | freepik | Freepik | Other | freepik.com
+shutterstock | shutterstock | Shutterstock | Other | shutterstock.com
+picsart | picsart | Picsart | Other | picsart.com
+edx | edx\b | edX | Other | edx.org
+skillshare | skillshare | Skillshare | Other | skillshare.com
+quizlet | quizlet | Quizlet | Other | quizlet.com
+chegg | chegg | Chegg | Other | chegg.com
+strava | strava | Strava | Health | strava.com
+headspace | headspace | Headspace | Health | headspace.com
+calmapp | calm (?:app|premium|\.com)|^calm$ | Calm | Health | calm.com
+
+# ---- Phone and internet companies worldwide
+vodafone | vodafone | Vodafone | Utilities | vodafone.com
+jio | jio\b | Jio | Utilities | jio.com
+etisalat | etisalat|e& | etisalat | Utilities | etisalat.ae
+stc | stc\b | stc | Utilities | stc.com.sa
+ooredoo | ooredoo | Ooredoo | Utilities | ooredoo.com
+verizon | verizon | Verizon | Utilities | verizon.com
+att | at&t | AT&T | Utilities | att.com
+tmobile | t-?mobile | T-Mobile | Utilities | t-mobile.com
+starlink | starlink | Starlink | Utilities | starlink.com
+
+# ---- Brands Vela already knew but showed only as coloured badges (slug | site)
+@sathosa | lankasathosa.lk
+@laugfs | laugfs.lk
+@popeyes | popeyes.com
+@dinemore | dinemore.lk
+@odel | odel.lk
+@coolplanet | coolplanet.lk
+@nolimit | nolimit.lk
+@shein | shein.com
+@adobe | adobe.com
+@microsoft | microsoft.com
+@meta | meta.com
+@sinopec | sinopec.com
+@durdans | durdans.com
+@osusala | osusala.lk
+@cloudflare | cloudflare.com
+@lazada | lazada.com
+@standardchartered | sc.com
+@ezcash | ezcash.lk
+@sdb | sdb.lk

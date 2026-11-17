@@ -4,7 +4,7 @@
 // brand itself (the developer name must match), and every icon was checked by eye before it was added to the app.
 // Brands with no official app keep the site icon saved earlier, or Vela's badge in the brand's colours.
 // Logos are trademarks of their owners and are shown only to identify where money was spent.
-// Run: node scripts/fetch-logos.mjs
+// Run: node scripts/fetch-logos.mjs, then node scripts/fetch-logos-extra.mjs --only=__none__ --convert-existing (128 px WebP)
 import { mkdirSync, writeFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
