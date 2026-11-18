@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.38.0">
+    <link rel="stylesheet" href="style.css?v=4.39.0">
 </head>
 <body data-view="dashboard">
 
@@ -738,23 +738,29 @@
                         <div class="brand-suggest" id="tx-brand-suggest" role="group" aria-label="Shops matching what you typed" hidden></div>
                         <div class="logo-row" id="tx-logo-row" hidden>
                             <button type="button" class="link-btn" id="tx-logo-add"><svg class="ic ic-sm"><use href="#i-camera"/></svg><span id="tx-logo-add-text">Add a logo for this shop</span></button>
+                            <button type="button" class="link-btn" data-action="pick-brand-logo"><svg class="ic ic-sm"><use href="#i-edit"/></svg><span id="tx-logo-pick-text">Choose a brand logo</span></button>
                             <button type="button" class="link-btn faint" id="tx-logo-remove" hidden>Remove logo</button>
                         </div>
                         <input type="file" id="shop-logo-input" accept="image/*" hidden>
                     </div>
-                    <fieldset class="field">
-                        <legend class="field-label" style="margin-bottom:6px">Category</legend>
+                    <fieldset class="field cat-field">
+                        <legend class="field-label" style="margin-bottom:6px" id="tx-category-label">Category</legend>
+                        <div class="cat-edit-bar" id="cat-edit-done" hidden>
+                            <span>Tap <b>−</b> to delete, or tap a category to edit it.</span>
+                            <button type="button" class="cat-done" data-action="cat-edit-done">Done</button>
+                        </div>
                         <div class="cat-picker" id="tx-category-picker"></div>
+                        <span class="field-hint cat-hold-hint">Hold one of your own categories to edit or delete it.</span>
                     </fieldset>
                     <div class="field" id="tx-kind-field">
-                        <span class="field-label">Kind of expense</span>
-                        <div class="segmented segmented-full" role="group" aria-label="Kind of expense">
+                        <span class="field-label" id="tx-kind-label">Kind of expense</span>
+                        <div class="segmented segmented-full" role="group" aria-label="Kind of expense" id="tx-kind-group">
                             <button type="button" data-tx-kind="variable" aria-pressed="true">Variable</button>
                             <button type="button" data-tx-kind="fixed" aria-pressed="false">Fixed</button>
                         </div>
                         <span class="field-hint" id="tx-kind-hint"></span>
                         <div class="setting-row tx-repeat-row" id="tx-repeat-row" hidden>
-                            <div class="setting-text"><span class="setting-title">Repeats every month</span><span class="setting-desc">Adds it to your fixed expenses, logs it each month and reminds you.</span></div>
+                            <div class="setting-text"><span class="setting-title" id="tx-repeat-text">Repeats every month</span><span class="setting-desc" id="tx-repeat-desc">Adds it to your fixed expenses, logs it each month and reminds you.</span></div>
                             <button class="switch" type="button" role="switch" aria-checked="true" id="tx-repeat" aria-label="Repeats every month"></button>
                         </div>
                     </div>
@@ -1237,9 +1243,53 @@
                 <h2 class="sheet-title" id="categories-title">Categories</h2>
                 <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
             </div>
+            <div class="segmented segmented-full catman-tabs" role="group" aria-label="Show categories for">
+                <button type="button" data-catman-tab="expense" aria-pressed="true">Expenses</button>
+                <button type="button" data-catman-tab="income" aria-pressed="false">Income</button>
+            </div>
             <div class="sheet-body" id="categories-body"></div>
             <div class="sheet-foot">
                 <button type="button" class="btn btn-primary" id="btn-add-category"><svg class="ic"><use href="#i-plus"/></svg> New category</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Choose a brand logo for a name -->
+    <div class="sheet-overlay" id="modal-brand-pick" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="brand-pick-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <h2 class="sheet-title" id="brand-pick-title">Choose a logo</h2>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body">
+                <input type="search" id="brand-pick-search" class="input" placeholder="Search 400+ logos" autocomplete="off" aria-label="Search logos">
+                <div class="brand-choice-grid" id="brand-pick-grid"></div>
+            </div>
+            <div class="sheet-foot" id="brand-pick-auto" hidden>
+                <button type="button" class="btn btn-secondary btn-block" data-brand-choose="">Use the automatic logo</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete a category: choose where its entries go -->
+    <div class="sheet-overlay" id="modal-cat-delete" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="cat-del-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <h2 class="sheet-title" id="cat-del-title">Delete category?</h2>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body">
+                <p class="card-sub" id="cat-del-msg"></p>
+                <div class="field" id="cat-del-move-field">
+                    <label class="field-label" for="cat-del-move">Move them to</label>
+                    <div class="select"><select id="cat-del-move" class="input"></select></div>
+                </div>
+            </div>
+            <div class="sheet-foot">
+                <button type="button" class="btn btn-secondary" data-close-sheet>Cancel</button>
+                <button type="button" class="btn btn-danger-solid" data-action="cat-delete-ok">Delete</button>
             </div>
         </div>
     </div>
@@ -1536,7 +1586,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.38.0"></script>
+    <script src="app.js?v=4.39.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

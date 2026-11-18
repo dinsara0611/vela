@@ -656,7 +656,7 @@ export async function run() {
         await addTx({ amount: 450, desc: 'Sunil Stores', category: 'Food' });
         g('openAddTx')('expense'); await wait(250);
         $('tx-desc').value = 'sunil stores'; $('tx-desc').dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
-        const offered = !$('tx-logo-row').hidden && /Add a logo/.test($('tx-logo-add').innerText);
+        const offered = !$('tx-logo-row').hidden && /Add a photo logo/.test($('tx-logo-add').innerText);
         g('setShopLogo')('Sunil Stores', data); g('updateDescLogo')();
         const inForm = !!$('tx-desc-logo').querySelector('img[src^="data:image/"]') && !$('tx-logo-remove').hidden;
         await close('modal-tx');
@@ -1398,7 +1398,7 @@ export async function run() {
         await close('modal-category'); await close('modal-tx');
         await addTx({ amount: 5000, desc: 'Gym fee', category: cat.id });
         const used = find('Gym fee').category === cat.id;
-        g('deleteCategory')(cat.id); await confirmOk(); await close('modal-category');
+        g('deleteCategory')(cat.id); await wait(350); document.querySelector('[data-action="cat-delete-ok"]').click(); await wait(400); await close('modal-category');
         return (used && find('Gym fee').category === 'Other' && !s().categories.some((c) => c.id === cat.id)) || `used ${used}, now ${find('Gym fee').category}`;
     });
 
@@ -1568,6 +1568,173 @@ export async function run() {
         const dotAfter = $('btn-notifs').classList.contains('has-unread');
         $('btn-notifs-clear').click(); await wait(350);
         return (count === 1 && dot && shown && !dotAfter && g('notifLog').length === 0) || `count ${count}, dot ${dot}, shown ${shown}, dot after ${dotAfter}`;
+    });
+
+    // ---- 4.39: income kinds, categories, logos, transfers, saving
+    const reloadFromStorage = () => { g('loadState')(); return s(); };
+
+    await T('Fixed income: saved as fixed, expected monthly (not counted twice), kept after restart', async () => {
+        const before = g('accountBalance')(s().accounts.find((a) => a.id === 'acc-cash'));
+        g('openAddTx')('income'); await wait(250);
+        $('tx-amount').value = '150000';
+        $('tx-desc').value = 'Monthly salary';
+        $('tx-desc').dispatchEvent(new Event('input', { bubbles: true }));
+        const guessed = g('txKind');
+        const shown = !$('tx-kind-field').hidden && /income/.test($('tx-kind-label').textContent) && !$('tx-repeat-row').hidden;
+        await g('submitTx')(); await wait(350);
+        const t = find('Monthly salary');
+        const bill = s().recurring.find((b) => b.id === t.recurringId);
+        const after = g('accountBalance')(s().accounts.find((a) => a.id === 'acc-cash'));
+        g('processRecurring')();
+        const entries = s().transactions.filter((x) => x.desc === 'Monthly salary').length;
+        const kept = reloadFromStorage().transactions.find((x) => x.id === t.id).fixed === true;
+        return (guessed === 'fixed' && shown && t.fixed === true && bill && bill.type === 'income' && bill.autoLog === false && after - before === 150000 && entries === 1 && kept)
+            || `guessed ${guessed}, shown ${shown}, fixed ${t.fixed}, bill ${bill && bill.type}/${bill && bill.autoLog}, balance +${after - before}, entries ${entries}, kept ${kept}`;
+    });
+
+    await T('Variable income and both expense kinds are saved as chosen', async () => {
+        await addTx({ type: 'income', amount: 12000, desc: 'Freelance logo job' });
+        g('openAddTx')('expense'); await wait(250);
+        $('tx-amount').value = '45000'; $('tx-desc').value = 'House rent';
+        $('tx-desc').dispatchEvent(new Event('input', { bubbles: true }));
+        await g('submitTx')(); await wait(350);
+        await addTx({ amount: 900, desc: 'Kottu dinner' });
+        const r = reloadFromStorage();
+        const f = (d) => r.transactions.find((x) => x.desc === d).fixed;
+        return (f('Freelance logo job') === false && f('House rent') === true && f('Kottu dinner') === false) || `freelance ${f('Freelance logo job')}, rent ${f('House rent')}, kottu ${f('Kottu dinner')}`;
+    });
+
+    await T('Editing Fixed / Variable on income and expense is saved and kept', async () => {
+        const inc = find('Freelance logo job');
+        g('openEditTx')(inc.id); await wait(300);
+        const loaded = g('txKind') === 'variable' && $('tx-desc').value === 'Freelance logo job' && $('tx-account').value === inc.accountId;
+        document.querySelector('[data-tx-kind="fixed"]').click(); await wait(100);
+        await g('submitTx')(); await wait(350);
+        const exp = find('Kottu dinner');
+        g('openEditTx')(exp.id); await wait(300);
+        document.querySelector('[data-tx-kind="fixed"]').click(); await wait(100);
+        $('tx-note').value = 'every Friday';
+        await g('submitTx')(); await wait(350);
+        const r = reloadFromStorage();
+        const i2 = r.transactions.find((x) => x.id === inc.id);
+        const e2 = r.transactions.find((x) => x.id === exp.id);
+        const row = [...document.querySelectorAll('#tab-activity .tx-item, .tx-row')].length >= 0;
+        return (loaded && i2.fixed === true && e2.fixed === true && e2.note === 'every Friday' && e2.category === exp.category && e2.amount === exp.amount && row)
+            || `loaded ${loaded}, income fixed ${i2.fixed}, expense fixed ${e2.fixed}, note "${e2.note}", category ${e2.category}`;
+    });
+
+    await T('Transfer Commercial Bank -> HNB Bank: both balances move, not income or spending, bank logos right', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-com', name: 'Commercial Bank', kind: 'bank', currency: 'LKR', opening: 50000, createdAt: 1 }, { id: 'acc-hnb', name: 'HNB Bank', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 2 });
+        g('saveState')();
+        const bal = (id) => g('accountBalance')(s().accounts.find((a) => a.id === id));
+        const ms0 = g('monthStats')();
+        g('openTransfer')(); await wait(250);
+        $('transfer-from').value = 'acc-com'; $('transfer-to').value = 'acc-hnb';
+        g('updateTransferFields')();
+        $('transfer-amount').value = '10000'; $('transfer-date').value = today;
+        g('submitTransfer')(); await wait(500);
+        const ms1 = g('monthStats')();
+        const trs = s().transactions.filter((t) => t.type === 'transfer' && t.accountId === 'acc-com' && t.toAccountId === 'acc-hnb');
+        const logos = (g('accountBrand')(s().accounts.find((a) => a.id === 'acc-com')) || {}).slug + '/' + (g('accountBrand')(s().accounts.find((a) => a.id === 'acc-hnb')) || {}).slug;
+        return (bal('acc-com') === 40000 && bal('acc-hnb') === 10000 && trs.length === 1 && ms1.spent === ms0.spent && ms1.income === ms0.income && logos === 'combank/hnb')
+            || `Commercial ${bal('acc-com')}, HNB ${bal('acc-hnb')}, transfers ${trs.length}, spent ${ms0.spent}->${ms1.spent}, income ${ms0.income}->${ms1.income}, logos ${logos}`;
+    });
+
+    await T('HNB Assurance is the insurance company (not HNB Bank) and goes to your Insurance category', async () => {
+        g('openCategoryEditor')(null, 'expense'); await wait(250);
+        $('category-name').value = 'Insurance';
+        g('submitCategory')(); await wait(350);
+        await close('modal-category');
+        const ins = s().categories.find((c) => c.name === 'Insurance');
+        const merchant = g('brandFor')('HNB Assurance').slug;
+        const bank = g('accountBrand')({ name: 'HNB Bank' }).slug;
+        const sms = g('brandFor')('HNB ASSURANCE PLC', true).slug;
+        g('openAddTx')('expense'); await wait(250);
+        $('tx-desc').value = 'HNB Assurance';
+        $('tx-desc').dispatchEvent(new Event('input', { bubbles: true })); await wait(100);
+        const picked = (document.querySelector('input[name="tx-category"]:checked') || {}).value;
+        const logo = ($('tx-desc-logo').querySelector('img') || {}).src || '';
+        await close('modal-tx');
+        return (merchant === 'hnbassurance' && bank === 'hnb' && sms === 'hnbassurance' && picked === ins.id && /hnbassurance\.webp/.test(logo))
+            || `merchant ${merchant}, bank ${bank}, sms ${sms}, category ${picked} (Insurance is ${ins && ins.id}), logo ${logo}`;
+    });
+
+    await T('Choose a brand logo for a name: shown in the form and the list, kept, and can go back to automatic', async () => {
+        await addTx({ amount: 700, desc: 'Corner shop' });
+        g('openEditTx')(find('Corner shop').id); await wait(300);
+        g('openBrandPick')(); await wait(350);
+        $('brand-pick-search').value = 'keells';
+        g('renderBrandPick')();
+        const offered = !!document.querySelector('[data-brand-choose="keells"]');
+        document.querySelector('[data-brand-choose="keells"]').click(); await wait(400);
+        const inForm = /keells\.webp/.test($('tx-desc-logo').innerHTML);
+        await close('modal-tx');
+        const inList = /keells\.webp/.test(g('entryBadge')('Corner shop', 'Food', 'expense'));
+        const kept = /^brand:keells$/.test(JSON.parse(localStorage.getItem('VELA_SHOP_LOGOS') || '{}')['corner shop'] || '');
+        (0, eval)("brandPickFor = 'Corner shop'"); g('chooseBrandLogo')(''); await wait(300);
+        const back = !/keells/.test(g('entryBadge')('Corner shop', 'Food', 'expense'));
+        return (offered && inForm && inList && kept && back) || `offered ${offered}, form ${inForm}, list ${inList}, kept ${kept}, back to automatic ${back}`;
+    });
+
+    await T('Categories: no duplicate names, built-in ones can\'t be deleted, manager has Income / Expenses tabs', async () => {
+        g('openCategoryEditor')(null, 'expense'); await wait(250);
+        $('category-name').value = 'insurance';
+        const dup = g('submitCategory')() === undefined || !!document.querySelector('#category-form .field-error, #category-name[aria-invalid="true"]');
+        const count = s().categories.filter((c) => c.name.toLowerCase() === 'insurance').length;
+        await close('modal-category');
+        g('deleteCategory')('Food'); await wait(300);
+        const foodKept = s().categories.some((c) => c.id === 'Food') && !g('openSheets').includes('modal-cat-delete');
+        g('openCategoryManager')(); await wait(300);
+        document.querySelector('[data-catman-tab="income"]').click(); await wait(100);
+        const incomeTab = /Salary/.test($('categories-body').textContent) && !/Insurance/.test($('categories-body').textContent);
+        document.querySelector('[data-catman-tab="expense"]').click(); await wait(100);
+        const rowBtns = !!document.querySelector('[data-delete-category]') && !document.querySelector('[data-delete-category="Food"]') && !!document.querySelector('[data-edit-category="Food"]');
+        await close('modal-categories');
+        return (dup && count === 1 && foodKept && incomeTab && rowBtns) || `duplicate blocked ${dup} (${count}), Food kept ${foodKept}, income tab ${incomeTab}, row buttons ${rowBtns}`;
+    });
+
+    await T('Hold a custom category: it wiggles, − asks where its entries go, they move there, it animates away', async () => {
+        g('openCategoryEditor')(null, 'expense'); await wait(250);
+        $('category-name').value = 'Gifts out';
+        g('submitCategory')(); await wait(350); await close('modal-category');
+        const cat = s().categories.find((c) => c.name === 'Gifts out');
+        await addTx({ amount: 2500, desc: 'Birthday gift', category: cat.id });
+        s().config.categoryBudgets[cat.id] = 10; g('saveState')();
+        g('openAddTx')('expense'); await wait(300);
+        const cell = document.querySelector(`[data-cat-cell="${cat.id}"]`);
+        const r = cell.getBoundingClientRect();
+        cell.querySelector('.cat-option-box').dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: r.x + 10, clientY: r.y + 10 }));
+        await wait(650);
+        cell.querySelector('.cat-option-box').dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: r.x + 10, clientY: r.y + 10 }));
+        await wait(120);
+        const editing = $('tx-category-picker').classList.contains('is-editing') && !$('cat-edit-done').hidden;
+        // A plain tap on a built-in category while editing doesn't change anything.
+        cell.querySelector('.cat-del').click(); await wait(400);
+        const asked = g('openSheets').includes('modal-cat-delete') && !$('cat-del-move-field').hidden;
+        $('cat-del-move').value = 'Shopping';
+        document.querySelector('[data-action="cat-delete-ok"]').click(); await wait(120);
+        const animating = !!document.querySelector(`[data-cat-cell="${cat.id}"].is-removing`);
+        await wait(500);
+        const moved = find('Birthday gift').category === 'Shopping' && !s().categories.some((c) => c.id === cat.id);
+        const budget = !s().config.categoryBudgets[cat.id] && s().config.categoryBudgets.Shopping >= 10;
+        const gone = !document.querySelector(`[data-cat-cell="${cat.id}"]`);
+        document.querySelector('[data-action="cat-edit-done"]').click();
+        await close('modal-tx');
+        return (editing && asked && animating && moved && budget && gone) || `editing ${editing}, asked ${asked}, animating ${animating}, moved ${moved}, budget moved ${budget}, gone ${gone}`;
+    });
+
+    await T('A save the phone refuses is undone and never reported as saved', async () => {
+        const store = g('storage');
+        const realSet = store.set;
+        const before = s().transactions.length;
+        store.set = () => false;
+        let ok;
+        try { ok = await addTx({ amount: 111, desc: 'Should not stay' }); } finally { store.set = realSet; }
+        await close('modal-tx');
+        const after = s().transactions.length;
+        const toast = [...document.querySelectorAll('.toast')].some((t) => /couldn.t be saved/.test(t.textContent));
+        return (ok === false && after === before && !find('Should not stay') && toast) || `returned ${ok}, entries ${before}->${after}, error shown ${toast}`;
     });
 
     // Cloud sync against a fake account.
@@ -1826,6 +1993,27 @@ export async function run() {
         const ok = offered && sheet && approvedByCode && $('approve-wait').hidden && !g('openSheets').includes('modal-mfa') && g('handledUserId') === 'u1';
         undo(); delete client.auth.mfa;
         return ok || `offered ${offered}, code sheet ${sheet}, approved by code ${approvedByCode}, waiting hidden ${$('approve-wait').hidden}, user ${g('handledUserId')}`;
+    });
+
+    await T('Signed in: an edit made while the cloud download runs is kept (not overwritten by the older copy)', async () => {
+        const client = window.__fakeClient;
+        const t = s().transactions.find((x) => x.type === 'expense');
+        const realFrom = client.from;
+        client.from = (tb) => {
+            const q = realFrom(tb);
+            if (tb !== 'vela_records') return q;
+            return { ...q, select: (...a) => { const r = q.select(...a); return { then: (ok, bad) => new Promise((res) => setTimeout(res, 400)).then(() => r).then(ok, bad) }; } };
+        };
+        const pull = g('pullFromCloud')();
+        await wait(150);
+        t.desc = 'Edited during sync';
+        g('queueSync')('transaction', t.id, 'upsert', false);
+        await pull;
+        client.from = realFrom;
+        const kept = (s().transactions.find((x) => x.id === t.id) || {}).desc === 'Edited during sync';
+        await g('flushSync')(); await wait(300);
+        const uploaded = (await client.from('vela_records').select()).data.some((r) => r.id === t.id && r.data && r.data.desc === 'Edited during sync');
+        return (kept && uploaded) || `kept ${kept}, uploaded ${uploaded}`;
     });
 
     await T('Sign out clears this phone', async () => {

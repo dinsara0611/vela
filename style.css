@@ -4547,3 +4547,44 @@ body.approve-waiting { overflow: hidden; }
 .mfa-row { margin: var(--sp-2) 0; }
 .mfa-state { flex: none; font-size: var(--fs-sm); font-weight: 700; color: var(--text-3); }
 .mfa-state[data-on="true"] { color: var(--income); }
+
+/* Categories: manager list with tabs; hold-to-edit in the entry form (your own categories wiggle, − deletes) */
+.catman-tabs { margin: 0 var(--sp-5) var(--sp-3); width: auto; }
+.cat-manage-list .cat-row { display: flex; align-items: center; gap: var(--sp-3); padding: 8px 0; border-bottom: 1px solid var(--border); }
+.cat-manage-list .cat-row:last-child { border-bottom: 0; }
+.cat-manage-list .row-label { flex: 1; min-width: 0; }
+.cat-manage-list .row-label > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-manage-list .row-label > span + span { font-size: var(--fs-xs); color: var(--text-3); }
+.cat-row-btn { width: 40px; height: 40px; flex: none; }
+.cat-row-btn.is-danger { color: var(--danger); }
+.cat-row-btn.is-locked { color: var(--text-3); opacity: 0.6; cursor: default; }
+.cat-field { position: relative; }
+.cat-edit-bar { display: flex; align-items: center; gap: var(--sp-3); margin-bottom: var(--sp-2); padding: 8px 8px 8px 12px; border-radius: 12px; background: color-mix(in srgb, var(--primary) 14%, transparent); font-size: var(--fs-sm); color: var(--text-2); animation: cat-pop 220ms ease both; }
+.cat-edit-bar[hidden] { display: none; }
+.cat-edit-bar > span { flex: 1; min-width: 0; }
+.cat-done { flex: none; padding: 6px 16px; border-radius: 999px; border: 0; background: var(--primary); color: #fff; font: inherit; font-size: var(--fs-sm); font-weight: 700; cursor: pointer; animation: cat-pop 220ms ease both; }
+.cat-hold-hint { display: block; margin-top: 6px; }
+.cat-cell { position: relative; min-width: 0; transition: transform 260ms cubic-bezier(.3,1.4,.5,1), opacity 260ms ease; -webkit-touch-callout: none; user-select: none; }
+.cat-cell > .cat-option { display: block; }
+.cat-cell.is-held { transform: scale(1.08); }
+.cat-cell.is-removing { transform: scale(0.2); opacity: 0; pointer-events: none; }
+.cat-del { position: absolute; top: -7px; left: -7px; width: 24px; height: 24px; border-radius: 50%; border: 2px solid var(--bg-elevated, var(--surface)); background: var(--primary); display: grid; place-items: center; padding: 0; cursor: pointer; transform: scale(0); opacity: 0; transition: transform 220ms cubic-bezier(.3,1.5,.5,1), opacity 160ms ease; pointer-events: none; z-index: 2; box-shadow: 0 4px 10px -2px var(--primary); }
+.cat-del span { width: 10px; height: 2px; border-radius: 2px; background: #fff; }
+.cat-picker.is-editing .cat-cell.is-custom .cat-del { transform: scale(1); opacity: 1; pointer-events: auto; }
+.cat-picker.is-editing .cat-cell.is-custom .cat-option-box { animation: cat-jiggle 300ms ease-in-out infinite alternate; animation-delay: calc(var(--i) * -70ms); border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); }
+.cat-picker.is-editing .cat-cell:not(.is-custom) { opacity: 0.45; }
+@keyframes cat-jiggle { from { transform: rotate(-1.8deg); } to { transform: rotate(1.8deg); } }
+@keyframes cat-pop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+    .cat-picker.is-editing .cat-cell.is-custom .cat-option-box { animation: none; }
+    .cat-cell, .cat-del { transition: none; }
+}
+
+/* Choose a brand logo */
+.brand-choice-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--sp-2); margin-top: var(--sp-3); }
+.brand-choice { display: grid; justify-items: center; gap: 6px; padding: 10px 4px; border-radius: 14px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text-2); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; min-width: 0; }
+.brand-choice > span:last-child { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brand-choice .cat-badge { width: 40px; height: 40px; border-radius: 12px; position: relative; }
+.brand-choice:active { transform: scale(0.96); border-color: var(--primary); }
+.logo-row { flex-wrap: wrap; row-gap: 4px; }
+@media (max-width: 360px) { .brand-choice-grid { grid-template-columns: repeat(3, 1fr); } }

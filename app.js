@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.38.0';
+const APP_VERSION = '4.39.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -580,8 +580,8 @@ const normalizeTx = (t, forcedType) => {
         note: t.note ? String(t.note).slice(0, 500) : '',
         createdAt: stamp(t.createdAt) || stamp(t.created_at),
         recurringId: t.recurringId ? String(t.recurringId) : null,
-        // Fixed expenses: rent, internet, subscriptions... Entries logged from a bill are always fixed.
-        fixed: type === 'expense' && (t.fixed === true || !!t.recurringId),
+        // Fixed: the same every month (rent, internet / salary, allowance). Entries logged from a bill are always fixed.
+        fixed: type !== 'transfer' && (t.fixed === true || !!t.recurringId),
         // Money that hasn't come in / gone out yet: counts once confirmed. Old future-dated entries become waiting.
         pending: type !== 'transfer' && (t.pending === true || (t.pending === undefined && (cleanDate(t.date) || '') > toISODate())),
         // Kept across restarts and sync: when it was due and actually paid, and the bank details it was matched with
@@ -910,6 +910,17 @@ const saveState = () => {
         storageWarningShown = true;
         showToast("This device isn't letting Vela save. Check that storage is allowed and not full.", 'error');
     }
+    return ok;
+};
+// Saves a change the user just made. If the phone refuses to store it, the change is undone (what was saved
+// before comes back), an error is shown, and the caller must not say "Saved".
+const commitState = (what = 'That change') => {
+    if (saveState()) return true;
+    loadState();
+    applyViewBudget();
+    showToast(`${what} couldn't be saved on this phone, so nothing was changed. Free up some space and try again.`, 'error');
+    renderActive();
+    return false;
 };
 
 /* ---- Region: a new install starts in the local currency ---- */
@@ -2731,7 +2742,15 @@ const setShopLogo = (name, dataUrl) => {
     if (before) shopLogos[k] = before; else delete shopLogos[k];
     return false;
 };
+const chosenBrand = (name) => {
+    const d = customLogoFor(name);
+    return d && d.startsWith('brand:') ? BRANDS.find((b) => b.slug === d.slice(6)) || null : null;
+};
+// The brand of a name: the one you picked for it, else the one its name matches.
+const brandOfName = (name) => chosenBrand(name) || brandFor(name);
 const customBadge = (name, extra = '') => {
+    const picked = chosenBrand(name);
+    if (picked) return brandBadge(picked, extra);
     const d = customLogoFor(name);
     return d && /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/.test(d)
         ? `<span class="cat-badge brand-badge has-logo${extra}" title="${escapeHtml(name)}"><img src="${d}" alt="" decoding="async" draggable="false"></span>` : '';
@@ -2946,7 +2965,7 @@ const parseBankSms = (msg) => {
         : merchant || (kind.kind === 'salary' ? 'Salary' : `${bankName} ${kind.label.toLowerCase()}`);
     let category = type === 'income'
         ? (kind.kind === 'salary' || /\bsalary\b/i.test(body) ? 'Salary' : kind.kind === 'interest' ? 'Investment' : 'OtherIncome')
-        : kind.kind === 'fee' ? 'Other' : ((brand && brand.cat && expenseCatExists(brand.cat) ? brand.cat : null) || guessCategory(merchant) || (kind.kind === 'bill' ? 'Utilities' : 'Other'));
+        : kind.kind === 'fee' ? 'Other' : (brandCategory(brand) || guessCategory(merchant) || (kind.kind === 'bill' ? 'Utilities' : 'Other'));
     const catType = type === 'income' ? 'income' : 'expense';
     if (!state.categories.some((c) => c.id === category && c.type === catType)) category = FALLBACK_CATEGORY[catType];
     const dedupe = ref ? `ref:${bankName}:${ref.toUpperCase()}` : `sig:${bankName}:${kind.dir}:${amt.cur}:${amt.value}:${when.date}:${when.time || ''}:${last4 || ''}`;
@@ -4555,25 +4574,40 @@ let txType = 'expense';
 let txKind = 'variable';
 let txKindTouched = false;
 const FIXED_HINT = /\b(rent|lease|boarding|internet|wifi|broadband|electric|water bill|phone bill|reload|subscription|netflix|spotify|youtube|insurance|loan|emi|installment|instalment|tuition|school fee|class fee|gym|membership|bill)\b/i;
+// Income that is the same every month.
+const FIXED_INCOME_HINT = /\b(salary|salaries|wage|wages|pay ?roll|allowance|pension|stipend|rent(al)? income|rent from|monthly)\b/i;
+const fixedHintFor = (text) => (txType === 'income' ? FIXED_INCOME_HINT : FIXED_HINT).test(text || '');
 const setTxKind = (kind) => {
     const editing = $('tx-id').value ? state.transactions.find((t) => t.id === $('tx-id').value) : null;
     const fromBill = !!(editing && editing.recurringId);
     txKind = fromBill ? 'fixed' : kind;
     setPressed('[data-tx-kind]', (b) => b.dataset.txKind === txKind);
     document.querySelectorAll('[data-tx-kind]').forEach((b) => { b.disabled = fromBill; });
-    $('tx-kind-field').hidden = txType !== 'expense';
-    $('tx-repeat-row').hidden = !(txType === 'expense' && txKind === 'fixed' && !editing);
+    const income = txType === 'income';
+    $('tx-kind-field').hidden = false;
+    $('tx-kind-label').textContent = income ? 'Kind of income' : 'Kind of expense';
+    $('tx-kind-group').setAttribute('aria-label', income ? 'Kind of income' : 'Kind of expense');
+    $('tx-repeat-row').hidden = !(txKind === 'fixed' && !editing);
+    $('tx-repeat-text').textContent = income ? 'Expect it every month' : 'Repeats every month';
+    $('tx-repeat-desc').textContent = income
+        ? 'Vela shows it as expected each month and counts it only when you tap Received.'
+        : 'Adds it to your fixed expenses, logs it each month and reminds you.';
     $('tx-kind-hint').textContent = fromBill
-        ? `Logged from your fixed expense "${(state.recurring.find((b) => b.id === editing.recurringId) || {}).name || editing.desc}". Change it in Plan > Fixed.`
-        : txKind === 'fixed' ? 'Fixed: the same every month, like rent or internet. It is taken off your income for the month.' : 'Variable: changes from month to month, like food or transport.';
+        ? `Logged from your fixed ${income ? 'income' : 'expense'} "${(state.recurring.find((b) => b.id === editing.recurringId) || {}).name || editing.desc}". Change it in Plan > Fixed.`
+        : income
+            ? (txKind === 'fixed' ? 'Fixed: the same every month, like a salary, allowance or rent you receive.' : 'Variable: changes or comes once, like freelancing, gifts or extra income.')
+            : (txKind === 'fixed' ? 'Fixed: the same every month, like rent or internet. It is taken off your income for the month.' : 'Variable: changes from month to month, like food or transport.');
 };
 
 const buildCategoryPicker = (type, selected) => {
-    $('tx-category-picker').innerHTML = catsOfType(type).map((c) => `
-        <label class="cat-option" style="--cat:${catColor(c)}">
-            <input type="radio" name="tx-category" value="${escapeHtml(c.id)}" ${c.id === selected ? 'checked' : ''}>
-            <span class="cat-option-box">${catBadge(c.id, type)}<span>${escapeHtml(c.name)}</span></span>
-        </label>`).join('') + `
+    $('tx-category-picker').innerHTML = catsOfType(type).map((c, i) => `
+        <div class="cat-cell${c.builtIn ? '' : ' is-custom'}" data-cat-cell="${escapeHtml(c.id)}" style="--i:${i % 4}">
+            <label class="cat-option" style="--cat:${catColor(c)}">
+                <input type="radio" name="tx-category" value="${escapeHtml(c.id)}" ${c.id === selected ? 'checked' : ''}>
+                <span class="cat-option-box">${catBadge(c.id, type)}<span>${escapeHtml(c.name)}</span></span>
+            </label>
+            ${c.builtIn ? '' : `<button type="button" class="cat-del" data-cat-del="${escapeHtml(c.id)}" aria-label="Delete ${escapeHtml(c.name)}" tabindex="-1"><span aria-hidden="true"></span></button>`}
+        </div>`).join('') + `
         <button type="button" class="cat-option" data-action="new-category-inline" style="border:0;background:none;padding:0">
             <span class="cat-option-box" style="border-style:dashed"><span class="cat-badge" style="--cat:var(--text-3)">${icon('i-plus')}</span><span>New</span></span>
         </button>`;
@@ -4585,6 +4619,7 @@ const buildCategoryPicker = (type, selected) => {
 
 const setTxType = (type, keepCategory) => {
     txType = type;
+    if (catEditing) setCatEditing(false);
     setPressed('[data-tx-type]', (b) => b.dataset.txType === type);
     const editing = !!$('tx-id').value;
     $('tx-title').textContent = editing ? (type === 'income' ? 'Edit income' : 'Edit expense') : (type === 'income' ? 'New income' : 'New expense');
@@ -4727,19 +4762,20 @@ const submitTx = async () => {
     if (prev) {
         const idx = state.transactions.findIndex((t) => t.id === id);
         const waiting = date > todayISO() || txWaiting;
-        record = { ...prev, type: txType, desc, amount, currency, category, date, note, accountId, receipt, fixed: txType === 'expense' && (txKind === 'fixed' || !!prev.recurringId), pending: waiting };
+        record = { ...prev, type: txType, desc, amount, currency, category, date, note, accountId, receipt, fixed: txKind === 'fixed' || !!prev.recurringId, pending: waiting };
         // Marked done here: same as tapping Received / Paid. Marked not done: it waits again, with reminders.
         if (prev.pending && !waiting) { record.paidAt = new Date().toISOString(); record.dueDate = prev.dueDate || prev.date; cancelPaymentReminders(`tx:${id}`); }
         if (!prev.pending && waiting) delete record.paidAt;
         if (prev.pending !== waiting) setTimeout(scheduleReminders, 0);
         state.transactions[idx] = record;
     } else {
-        record = { id: generateId(), type: txType, desc, amount, currency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txType === 'expense' && txKind === 'fixed', pending: date > todayISO() || txWaiting };
+        record = { id: generateId(), type: txType, desc, amount, currency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txKind === 'fixed', pending: date > todayISO() || txWaiting };
         if (record.pending) setTimeout(scheduleReminders, 0);
-        // A new fixed expense that repeats becomes a monthly fixed expense (a bill); this entry is its first payment.
+        // A new fixed entry that repeats becomes a monthly fixed payment; this entry is its first one.
+        // Fixed income is only expected each month: it counts when you tap Received (never on its own, never twice).
         if (record.fixed && isOn($('tx-repeat'))) {
             const day = parseDate(date).getDate();
-            const bill = { id: generateId(), type: 'expense', name: desc, amount, currency, category, frequency: 'monthly', nextDate: advanceDate(date, 'monthly', day), anchorDay: day, autoLog: true, accountId, createdAt: Date.now() };
+            const bill = { id: generateId(), type: txType, name: desc, amount, currency, category, frequency: 'monthly', nextDate: advanceDate(date, 'monthly', day), anchorDay: day, autoLog: txType === 'expense', accountId, createdAt: Date.now() };
             state.recurring.push(bill);
             record.recurringId = bill.id;
             queueSync('recurring', bill.id, 'upsert', false);
@@ -4750,7 +4786,7 @@ const submitTx = async () => {
     state.config.lastCategory[txType] = category;
     state.config.lastAccount = accountId;
     if (smsEditing && !id) smsEditSaved(record);
-    saveState();
+    if (!commitState(txType === 'income' ? 'The income' : 'The expense')) return false;
     haptic('MEDIUM');
     queueSync('transaction', record.id, 'upsert');
     if (receipt && !receipt.path) uploadReceipt(record);
@@ -4782,9 +4818,9 @@ const deleteTx = (id) => {
         title: `Delete this ${t.type === 'income' ? 'income' : 'expense'}?`,
         message: `"${t.desc}" (${formatCurrency(t.amount, t.currency)}) will be removed.`,
         onConfirm: () => {
-            if (t.receipt) removeReceipt(t.receipt);
             state.transactions = state.transactions.filter((x) => x.id !== id);
-            saveState();
+            if (!commitState('Deleting it')) return;
+            if (t.receipt) removeReceipt(t.receipt);
             queueSync('transaction', id, 'delete');
             closeSheet('modal-tx');
             showToast('Deleted', 'success');
@@ -4952,12 +4988,48 @@ const updateDescLogo = () => {
     // Add / change / remove your own logo for this name (shops you pay, not income like a salary).
     const row = $('tx-logo-row');
     row.hidden = name.length < 2 || (txType !== 'expense' && !own);
-    $('tx-logo-add-text').textContent = own ? 'Change logo' : b && logoSlug(b.slug) ? 'Use my own logo' : 'Add a logo for this shop';
+    const picked = chosenBrand(name);
+    $('tx-logo-add-text').textContent = own && !picked ? 'Change photo' : b && logoSlug(b.slug) ? 'Use my own photo' : 'Add a photo logo';
+    $('tx-logo-pick-text').textContent = picked ? 'Change brand logo' : b ? 'Not this logo?' : 'Choose a brand logo';
     $('tx-logo-remove').hidden = !own;
     const list = document.activeElement === input || input.dataset.typing === '1' ? descBrands(input.value) : [];
     const box = $('tx-brand-suggest');
     box.hidden = !list.length;
     box.innerHTML = list.map((x) => `<button type="button" class="brand-pick" data-brand-pick="${escapeHtml(x.name)}">${brandBadge(x, ' is-mini')}<span>${escapeHtml(x.name)}</span></button>`).join('');
+};
+// Choose the right logo from Vela's list (when the name matched the wrong one, or none).
+let brandPickFor = null;
+const renderBrandPick = () => {
+    const q = $('brand-pick-search').value.trim().toLowerCase();
+    const list = BRANDS.filter((b) => logoSlug(b.slug) && (!q || b.name.toLowerCase().includes(q) || b.slug.includes(q.replace(/[^a-z0-9]/g, ''))))
+        .sort((a, b) => a.name.localeCompare(b.name)).slice(0, 80);
+    $('brand-pick-grid').innerHTML = list.length ? list.map((b) => `<button type="button" class="brand-choice" data-brand-choose="${escapeHtml(b.slug)}">
+            <span class="cat-badge brand-badge has-logo"><img src="logos/${logoSlug(b.slug)}.webp" alt="" loading="lazy" decoding="async" draggable="false"></span>
+            <span>${escapeHtml(b.name)}</span></button>`).join('')
+        : `<p class="field-hint">No logo called "${escapeHtml(q)}". You can add a photo of the logo instead.</p>`;
+};
+const openBrandPick = () => {
+    const name = $('tx-desc').value.trim();
+    if (name.length < 2) { fieldError($('tx-desc'), 'Type the name first.'); return; }
+    brandPickFor = name;
+    $('brand-pick-title').textContent = `Logo for "${name}"`;
+    $('brand-pick-search').value = '';
+    $('brand-pick-auto').hidden = !chosenBrand(name);
+    renderBrandPick();
+    openOrSwap('modal-brand-pick');
+    setTimeout(() => $('brand-pick-search').focus(), 350);
+};
+const chooseBrandLogo = (slug) => {
+    const name = brandPickFor;
+    if (!name) return;
+    if (!setShopLogo(name, slug ? `brand:${slug}` : null)) { showToast('No room left on this phone for more logos.', 'error'); return; }
+    brandMemo.clear();
+    closeSheet('modal-brand-pick');
+    const b = slug ? BRANDS.find((x) => x.slug === slug) : null;
+    if (b && txType === 'expense' && !txCatTouched) { const cat = brandCategory(b); if (cat) selectTxCategory(cat); }
+    updateDescLogo();
+    renderActive();
+    showToast(b ? `${name} now shows the ${b.name} logo` : `${name} uses the automatic logo again`, 'success');
 };
 const pickShopLogo = () => {
     const name = $('tx-desc').value.trim();
@@ -5031,7 +5103,7 @@ const renderTxSuggest = () => {
 };
 
 const applyPick = (p) => {
-    if (!txKindTouched) txKind = FIXED_HINT.test(p.name) || p.category === 'Rent' || p.category === 'Utilities' ? 'fixed' : 'variable';
+    if (!txKindTouched) txKind = fixedHintFor(p.name) || p.category === 'Rent' || p.category === 'Utilities' ? 'fixed' : 'variable';
     $('tx-desc').value = p.name;
     $('tx-amount').value = p.price;
     if (expenseCatExists(p.category)) { selectTxCategory(p.category); txCatTouched = true; }
@@ -5041,6 +5113,23 @@ const applyPick = (p) => {
     updatePriceHint();
 };
 
+const BRAND_KINDS = [
+    [/insur|assur|policy/i, 'aia ceylinco unionassurance allianz softlogiclife slinsurance hnbassurance janashakthi fairfirst'],
+    [/educat|school|class|tuition|course|campus|stud|exam/i, 'udemy coursera duolingo edx skillshare quizlet chegg icbt nsbm sliit iit apiit esoft britishcouncil cima acca ielts'],
+    [/fuel|petrol|diesel|gas station/i, 'ceypetco lankaioc sinopec shell'],
+    [/game|gaming|play ?store|g ?play/i, 'steam playstation xbox nintendo roblox pubg freefire epicgames ea riot minecraft mobilelegends supercell callofduty hoyoverse king ubisoft blizzard codashop'],
+    [/subscri|stream/i, 'netflix spotify disney primevideo hbomax youtube crunchyroll deezer soundcloud twitch audible hulu paramount tidal scribd viu zee5 hotstar sonyliv anghami patreon openai claude gemini perplexity canva notion dropbox grammarly'],
+    [/hospital|medical|doctor|pharm|health/i, 'asiri nawaloka lankahospitals hemas durdans ninewells kingshospital osusala healthguard']
+].map(([re, slugs]) => [re, new Set(slugs.split(' '))]);
+const brandCategory = (brand) => {
+    if (!brand) return null;
+    for (const [re, slugs] of BRAND_KINDS) {
+        if (!slugs.has(brand.slug)) continue;
+        const mine = catsOfType('expense').find((c) => re.test(c.name));
+        if (mine) return mine.id;
+    }
+    return brand.cat && expenseCatExists(brand.cat) ? brand.cat : null;
+};
 const guessCategory = (desc) => {
     const key = normDesc(desc);
     if (key.length < 2) return null;
@@ -5048,8 +5137,8 @@ const guessCategory = (desc) => {
     if (g && expenseCatExists(g.last.category)) return g.last.category;
     const item = sessionPriceList(normCur($('tx-currency').value)).items.find((i) => normDesc(i.name) === key);
     if (item) return item.category;
-    const brand = brandFor(desc);
-    if (brand && brand.cat && expenseCatExists(brand.cat)) return brand.cat;
+    const fromBrand = brandCategory(brandOfName(desc));
+    if (fromBrand) return fromBrand;
     const hit = CATEGORY_HINTS.find(([, re]) => re.test(key));
     return hit && expenseCatExists(hit[0]) ? hit[0] : null;
 };
@@ -5086,7 +5175,7 @@ const updatePriceHint = () => {
 };
 
 const onTxDescInput = () => {
-    if (txType === 'expense' && !txKindTouched && !$('tx-id').value) setTxKind(FIXED_HINT.test($('tx-desc').value) ? 'fixed' : 'variable');
+    if (!txKindTouched && !$('tx-id').value) setTxKind(fixedHintFor($('tx-desc').value) ? 'fixed' : 'variable');
     if (txType === 'expense' && !txCatTouched && !$('tx-id').value) {
         const cat = guessCategory($('tx-desc').value);
         if (cat) selectTxCategory(cat);
@@ -5884,16 +5973,27 @@ const backToCategoryManager = () => {
     showSheetElement('modal-categories');
 };
 
+let catManTab = 'expense';
+// How many entries, fixed payments and budgets use a category (shown in the list and before deleting).
+const categoryUse = (id) => ({
+    entries: state.transactions.filter((t) => t.category === id).length,
+    bills: state.recurring.filter((b) => b.category === id).length,
+    budget: !!state.config.categoryBudgets[id]
+});
 const renderCategoryManager = () => {
-    const section = (type, title) => `
-        <div class="section-head"><h2>${title}</h2></div>
-        <ul class="cat-manage">${catsOfType(type).map((c) => `
-            <li><button type="button" class="row-btn" data-edit-category="${escapeHtml(c.id)}">
-                ${catBadge(c.id, type)}
-                <span class="row-label"><span>${escapeHtml(c.name)}</span><span>${c.builtIn ? 'Built in. You can rename it or change its look.' : 'Added by you'}</span></span>
-                ${icon('i-chevron', 'ic chev')}
-            </button></li>`).join('')}</ul>`;
-    $('categories-body').innerHTML = section('expense', 'Expenses') + section('income', 'Income');
+    setPressed('[data-catman-tab]', (b) => b.dataset.catmanTab === catManTab);
+    const counts = {};
+    state.transactions.forEach((t) => { counts[t.category] = (counts[t.category] || 0) + 1; });
+    $('categories-body').innerHTML = `<ul class="cat-manage cat-manage-list">${catsOfType(catManTab).map((c) => `
+        <li class="cat-row" data-cat-row="${escapeHtml(c.id)}">
+            ${catBadge(c.id, catManTab)}
+            <span class="row-label"><span>${escapeHtml(c.name)}</span><span>${c.builtIn ? 'Built in' : 'Added by you'} · ${counts[c.id] ? plural(counts[c.id], 'entry', 'entries') : 'not used yet'}</span></span>
+            <button type="button" class="icon-btn cat-row-btn" data-edit-category="${escapeHtml(c.id)}" aria-label="Edit ${escapeHtml(c.name)}">${icon('i-edit')}</button>
+            ${c.builtIn
+        ? `<span class="icon-btn cat-row-btn is-locked" title="Built in: it can be renamed but not deleted" aria-label="${escapeHtml(c.name)} is built in and can't be deleted">${icon('i-lock')}</span>`
+        : `<button type="button" class="icon-btn cat-row-btn is-danger" data-delete-category="${escapeHtml(c.id)}" aria-label="Delete ${escapeHtml(c.name)}">${icon('i-trash')}</button>`}
+        </li>`).join('')}</ul>`;
+    $('btn-add-category').lastChild.textContent = catManTab === 'income' ? ' New income category' : ' New expense category';
 };
 
 const openCategoryManager = () => {
@@ -5913,7 +6013,7 @@ const openCategoryEditor = (id, presetType) => {
     $('category-id').value = c ? c.id : '';
     $('category-title').textContent = c ? `Edit ${c.name}` : 'New category';
     $('category-name').value = c ? c.name : '';
-    catEditType = c ? c.type : (presetType || 'expense');
+    catEditType = c ? c.type : (presetType || catManTab || 'expense');
     catEditColor = c ? c.color : PALETTE[state.categories.length % PALETTE.length];
     catEditIcon = c ? c.icon : (catEditType === 'income' ? 'c-OtherIncome' : 'c-Other');
     $('category-type-group').hidden = !!c;
@@ -5939,16 +6039,18 @@ const submitCategory = () => {
         record = { id: generateId(), name, type: catEditType, color: catEditColor, icon: catEditIcon, builtIn: false };
         state.categories.push(record);
     }
-    saveState();
+    if (!commitState('The category')) return false;
     queueSync('category', record.id, 'upsert');
     showToast(id ? 'Category updated' : `Category "${name}" added`, 'success');
-    if (catReturnToTx && !id) {
+    if (catReturnToTx) {
         catReturnToTx = false;
-        state.config.lastCategory[catEditType] = record.id;
+        if (!id) state.config.lastCategory[catEditType] = record.id;
         hideSheet('modal-category');
         history.replaceState({ vela: 'sheet', id: 'modal-tx', tab: currentTab }, '');
         showSheetElement('modal-tx');
-        buildCategoryPicker(txType, record.id);
+        const keep = document.querySelector('input[name="tx-category"]:checked');
+        buildCategoryPicker(txType, id ? (keep && keep.value) : record.id);
+        if (catEditing) setCatEditing(true);
     } else if (catReturnToManager) {
         backToCategoryManager();
     } else {
@@ -5958,27 +6060,126 @@ const submitCategory = () => {
     return true;
 };
 
-const deleteCategory = (id) => {
+let catDeleting = null;
+// Deleting a category: unused ones go after a confirm. Used ones ask where their entries, fixed payments and
+// budget should move first; nothing in your history is deleted, only re-labelled. Built-in ones can't be deleted.
+const deleteCategory = (id, onDeleted) => {
     const c = state.categories.find((x) => x.id === id);
-    if (!c || c.builtIn) return;
-    const used = state.transactions.filter((t) => t.category === id).length + state.recurring.filter((b) => b.category === id).length;
-    const fallback = catById(FALLBACK_CATEGORY[c.type], c.type);
-    showConfirm({
-        title: `Delete "${c.name}"?`,
-        message: used ? `${plural(used, 'entry', 'entries')} will move to "${fallback.name}".` : 'This category is not used yet.',
-        onConfirm: () => {
-            state.transactions.forEach((t) => { if (t.category === id) { t.category = fallback.id; queueSync('transaction', t.id, 'upsert', false); } });
-            state.recurring.forEach((b) => { if (b.category === id) { b.category = fallback.id; queueSync('recurring', b.id, 'upsert', false); } });
-            if (state.config.categoryBudgets[id]) { delete state.config.categoryBudgets[id]; state.syncSettings = true; }
-            state.categories = state.categories.filter((x) => x.id !== id);
-            saveState();
-            queueSync('category', id, 'delete');
-            if (catReturnToManager) backToCategoryManager();
-            else closeSheet('modal-category');
-            showToast('Category deleted', 'success');
-            renderActive();
-        }
+    if (!c) return;
+    if (c.builtIn) { showToast(`"${c.name}" is built in. You can rename it or change its look, but not delete it.`, 'info'); return; }
+    const use = categoryUse(id);
+    catDeleting = { id, onDeleted };
+    const others = catsOfType(c.type).filter((x) => x.id !== id);
+    const fallback = FALLBACK_CATEGORY[c.type];
+    $('cat-del-title').textContent = `Delete "${c.name}"?`;
+    const parts = [use.entries ? plural(use.entries, 'entry', 'entries') : '', use.bills ? plural(use.bills, 'fixed payment', 'fixed payments') : '', use.budget ? 'its budget' : ''].filter(Boolean);
+    const used = parts.length > 0;
+    $('cat-del-msg').textContent = used
+        ? (() => {
+            const one = use.entries + use.bills + (use.budget ? 1 : 0) === 1;
+            return `${parts.join(', ').replace(/, ([^,]*)$/, ' and $1')} ${one ? 'uses' : 'use'} this category. Choose where ${one ? 'it goes' : 'they go'}. Nothing in your history is deleted.`;
+        })()
+        : 'No entries use this category. It will be removed.';
+    $('cat-del-move-field').hidden = !used;
+    $('cat-del-move').innerHTML = others.map((x) => `<option value="${escapeHtml(x.id)}" ${x.id === fallback ? 'selected' : ''}>${escapeHtml(x.name)}</option>`).join('');
+    openOrSwap('modal-cat-delete');
+};
+const confirmDeleteCategory = () => {
+    const job = catDeleting;
+    if (!job) return;
+    const c = state.categories.find((x) => x.id === job.id);
+    if (!c) { closeSheet('modal-cat-delete'); return; }
+    const to = $('cat-del-move').value || FALLBACK_CATEGORY[c.type];
+    const target = catById(to, c.type);
+    const moved = [];
+    state.transactions.forEach((t) => { if (t.category === c.id) { t.category = target.id; moved.push(['transaction', t.id]); } });
+    state.recurring.forEach((b) => { if (b.category === c.id) { b.category = target.id; moved.push(['recurring', b.id]); } });
+    const budgets = state.config.categoryBudgets;
+    if (budgets[c.id]) {
+        // Its budget joins the category the entries moved to.
+        budgets[target.id] = (budgets[target.id] || 0) + budgets[c.id];
+        delete budgets[c.id];
+        state.syncSettings = true;
+    }
+    Object.keys(state.config.lastCategory).forEach((k) => { if (state.config.lastCategory[k] === c.id) state.config.lastCategory[k] = target.id; });
+    state.categories = state.categories.filter((x) => x.id !== c.id);
+    if (!commitState('Deleting the category')) { closeSheet('modal-cat-delete'); return; }
+    moved.forEach(([kind, rid]) => queueSync(kind, rid, 'upsert', false));
+    queueSync('category', c.id, 'delete');
+    catDeleting = null;
+    haptic('MEDIUM');
+    closeSheet('modal-cat-delete');
+    if (openSheets.includes('modal-category')) closeSheet('modal-category');
+    showToast(moved.length ? `"${c.name}" deleted. ${plural(moved.length, 'item')} moved to ${target.name}.` : `"${c.name}" deleted`, 'success');
+    if (job.onDeleted) job.onDeleted(target.id);
+    if (openSheets.includes('modal-categories')) renderCategoryManager();
+    renderActive();
+};
+
+// ---- Hold a category in the entry form: your own categories wiggle and can be deleted (like iPhone apps) ----
+let catEditing = false;
+let catHold = null;
+let catHeld = false;
+const setCatEditing = (on) => {
+    catEditing = !!on;
+    const picker = $('tx-category-picker');
+    picker.classList.toggle('is-editing', catEditing);
+    $('cat-edit-done').hidden = !catEditing;
+
+};
+const initCategoryHold = () => {
+    const picker = $('tx-category-picker');
+    const cancel = () => { if (catHold) { clearTimeout(catHold.timer); catHold = null; } };
+    picker.addEventListener('pointerdown', (e) => {
+        catHeld = false;
+        const cell = e.target.closest('.cat-cell.is-custom');
+        if (!cell || e.target.closest('.cat-del')) return;
+        catHold = { x: e.clientX, y: e.clientY, timer: setTimeout(() => {
+            catHold = null;
+            catHeld = true;
+            haptic('MEDIUM');
+            cell.classList.add('is-held');
+            setTimeout(() => cell.classList.remove('is-held'), 260);
+            setCatEditing(true);
+        }, 480) };
     });
+    picker.addEventListener('pointermove', (e) => { if (catHold && Math.hypot(e.clientX - catHold.x, e.clientY - catHold.y) > 8) cancel(); });
+    ['pointerup', 'pointercancel', 'pointerleave'].forEach((ev) => picker.addEventListener(ev, cancel));
+    // The lift that ends a hold may or may not become a tap: either way the next real tap works.
+    ['pointerup', 'pointercancel'].forEach((ev) => picker.addEventListener(ev, () => { if (catHeld) setTimeout(() => { catHeld = false; }, 60); }));
+    picker.addEventListener('contextmenu', (e) => { if (e.target.closest('.cat-cell')) e.preventDefault(); });
+    // The tap that ends a hold doesn't also pick the category; while editing, a tap edits instead of picking.
+    picker.addEventListener('click', (e) => {
+        if (catHeld && !e.target.closest('.cat-del')) { catHeld = false; e.preventDefault(); e.stopPropagation(); return; }
+        catHeld = false;
+        if (!catEditing) return;
+        const del = e.target.closest('.cat-del');
+        const cell = e.target.closest('.cat-cell');
+        if (del) {
+            e.preventDefault(); e.stopPropagation();
+            const id = del.dataset.catDel;
+            deleteCategory(id, (movedTo) => {
+                const gone = picker.querySelector(`[data-cat-cell="${CSS.escape(id)}"]`);
+                const rebuild = () => {
+                    const keep = document.querySelector('input[name="tx-category"]:checked');
+                    buildCategoryPicker(txType, keep && keep.value !== id ? keep.value : movedTo);
+                    setCatEditing(catsOfType(txType).some((x) => !x.builtIn));
+                };
+                if (gone) { gone.classList.add('is-removing'); setTimeout(rebuild, 280); } else rebuild();
+            });
+            return;
+        }
+        if (cell && cell.classList.contains('is-custom')) {
+            e.preventDefault(); e.stopPropagation();
+            catReturnToTx = true; catReturnToManager = false;
+            openCategoryEditor(cell.dataset.catCell);
+        } else if (cell) {
+            e.preventDefault(); e.stopPropagation();
+            showToast('Built-in categories stay. Hold one of your own to edit or delete it.', 'info');
+        }
+    }, true);
+    // Tapping outside the categories ends editing.
+    document.addEventListener('pointerdown', (e) => { if (catEditing && !e.target.closest('#tx-category-picker, #cat-edit-done, .sheet-overlay:not(#modal-tx)')) setCatEditing(false); });
 };
 
 /* =========================================================================
@@ -6107,15 +6308,25 @@ const pullFromCloud = async () => {
         if (rec.error) throw rec.error;
         const by = { transaction: [], goal: [], recurring: [], debt: [], category: [] };
         (rec.data || []).forEach((r) => { if (by[r.kind] && r.data) by[r.kind].push(r.data); });
-        state.transactions = by.transaction.map((t) => normalizeTx(t)).filter(Boolean);
-        state.savings = by.goal.map(normalizeGoal).filter(Boolean);
-        state.recurring = by.recurring.map(normalizeBill).filter(Boolean);
-        state.debts = by.debt.map(normalizeDebt).filter(Boolean);
-        state.categories = mergeCategories(by.category);
+        // Anything added, edited or deleted on this phone while the download ran wins over the older cloud copy.
+        const keepLocal = (kind, remote, local) => {
+            const pending = Object.entries(state.sync).filter(([, v]) => v.kind === kind);
+            if (!pending.length) return remote;
+            const out = remote.filter((r) => !state.sync[r.id]);
+            pending.forEach(([pid, v]) => { const mine = v.op !== 'delete' && local.find((r) => r.id === pid); if (mine) out.push(mine); });
+            return out;
+        };
+        state.transactions = keepLocal('transaction', by.transaction.map((t) => normalizeTx(t)).filter(Boolean), state.transactions);
+        state.savings = keepLocal('goal', by.goal.map(normalizeGoal).filter(Boolean), state.savings);
+        state.recurring = keepLocal('recurring', by.recurring.map(normalizeBill).filter(Boolean), state.recurring);
+        state.debts = keepLocal('debt', by.debt.map(normalizeDebt).filter(Boolean), state.debts);
+        state.categories = keepLocal('category', mergeCategories(by.category), state.categories);
         // Tidy bank-SMS entries in the account too (shop names, lost bank details); the changes sync back.
         tidyBankEntryNames();
         repairAccountKinds();
-        const hadSettings = !set.error && set.data && set.data.data;
+        // Settings changed on this phone during the download stay as they are (and upload next).
+        const changedHere = settingsReady() && state.settingsSig !== null && state.settingsSig !== settingsSigNow();
+        const hadSettings = !set.error && set.data && set.data.data && !changedHere;
         if (hadSettings) applyCloudSettings(set.data.data);
         recoverAccounts();
         ensureAccounts(state);
@@ -6125,7 +6336,7 @@ const pullFromCloud = async () => {
             state.settingsSig = settingsSigNow();
             state.syncSettings = false;
         } else if (!set.error) {
-            state.syncSettings = true; // the account has no settings yet: save this phone's
+            state.syncSettings = true; // the account has no settings yet, or this phone changed them: save this phone's
         }
         migrateBudgets();
         fixAccountCurrencies();
@@ -7528,6 +7739,12 @@ const initEvents = () => {
         if (d.editDebt) { openEditDebt(d.editDebt); return; }
         if (d.repayDebt) { openRepay(d.repayDebt); return; }
         if (d.editCategory) { catReturnToTx = false; catReturnToManager = true; openCategoryEditor(d.editCategory); return; }
+        if (d.deleteCategory) { deleteCategory(d.deleteCategory); return; }
+        if (d.catmanTab) { catManTab = d.catmanTab; renderCategoryManager(); return; }
+        if (d.action === 'cat-edit-done') { setCatEditing(false); return; }
+        if (d.brandChoose !== undefined) { chooseBrandLogo(d.brandChoose); return; }
+        if (d.action === 'pick-brand-logo') { openBrandPick(); return; }
+        if (d.action === 'cat-delete-ok') { confirmDeleteCategory(); return; }
         if (d.catColor) { catEditColor = d.catColor; renderCategoryEditor(); return; }
         if (d.catIcon) { catEditIcon = d.catIcon; renderCategoryEditor(); return; }
         if (d.catType) { catEditType = d.catType; if (!$('category-id').value) catEditIcon = catEditType === 'income' ? 'c-OtherIncome' : 'c-Other'; renderCategoryEditor(); return; }
@@ -7716,7 +7933,11 @@ const initEvents = () => {
     $('btn-delete-budget').addEventListener('click', deleteBudget);
     $('btn-delete-bill').addEventListener('click', () => deleteBill($('bill-id').value));
     $('btn-delete-debt').addEventListener('click', () => deleteDebt($('debt-id').value));
-    $('btn-delete-category').addEventListener('click', () => deleteCategory($('category-id').value));
+    $('btn-delete-category').addEventListener('click', () => deleteCategory($('category-id').value, () => {
+        if (catReturnToTx) { catReturnToTx = false; const keep = document.querySelector('input[name="tx-category"]:checked'); buildCategoryPicker(txType, keep && keep.value); }
+    }));
+    initCategoryHold();
+    $('brand-pick-search').addEventListener('input', renderBrandPick);
     $('btn-repay-all').addEventListener('click', () => {
         const d = state.debts.find((x) => x.id === $('repay-id').value);
         if (d) $('repay-amount').value = round2(d.amount - d.repaid);
