@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.48.0';
+const APP_VERSION = '4.49.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -4792,6 +4792,8 @@ const renderSettings = () => {
     $('biometric-title').textContent = bioWords().title;
     $('biometric-desc').textContent = `${bioWords().desc} It uses what is saved in your phone's own settings.`;
     $('switch-biometric').setAttribute('aria-label', bioWords().title);
+    $('bio-mode-row').hidden = !(lock.enabled && biometricAvailable && lock.biometric && bioChoices().length > 1);
+    setPressed('[data-bio-mode]', (b) => b.dataset.bioMode === bioMode());
     const native = !!nativePlugin('LocalNotifications');
     setSwitch($('switch-reminders'), native && state.config.reminders && notifPermission !== 'denied');
     $('reminders-desc').textContent = !native
@@ -7426,33 +7428,39 @@ const planSectionsHtml = () => {
             <span class="sec-divide-text"><strong>${escapeHtml(formatCurrency(t.amount, t.currency))} ${escapeHtml(t.desc)}</strong><span>Received ${escapeHtml(shortDate(t.date))} · unallocated</span></span>
             <span class="sec-divide-actions"><button type="button" class="btn btn-primary btn-sm" data-sec-divide="${escapeHtml(t.id)}">Allocate now</button><button type="button" class="btn btn-secondary btn-sm" data-sec-skip="${escapeHtml(t.id)}">Don't allocate</button></span></section>`).join('')}
         <section class="card sec-summary">
-            <span class="sec-summary-label">Total in funds${viewing ? ` · ${escapeHtml(viewing.name)}` : ''}</span>
+            <div class="sec-sum-head"><span class="sec-summary-label">Total in funds${viewing ? ` · ${escapeHtml(viewing.name)}` : ''}</span><span class="sec-sum-count">${plural(shown.length, 'fund')}</span></div>
             <strong class="sec-summary-total amount" data-countup="${total}">${escapeHtml(formatCurrency(total, cur))}</strong>
             ${secStackBar(shown.map((x) => [x, bal[x.id] || 0]))}
-            ${!viewing ? (() => {
-        const inAccounts = round2(netWorth());
-        const inFunds = round2(secList().reduce((a, x) => a + (bal[x.id] || 0), 0));
-        const diff = round2(inAccounts - inFunds);
-        const rest = secList().find((x) => x.mode === 'rest') || secList()[0];
-        const bigFund = secList().slice().sort((p, q) => (bal[q.id] || 0) - (bal[p.id] || 0))[0];
-        return `<div class="fund-split"><span><small>All accounts</small><strong>${escapeHtml(formatCurrency(inAccounts, cur))}</strong></span><span><small>All funds</small><strong>${escapeHtml(formatCurrency(inFunds, cur))}</strong></span><span><small>Difference</small><strong class="${Math.abs(diff) < 0.005 ? 'text-income' : diff < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(diff, cur))}</strong></span></div>
-            <div class="fund-reconcile" data-state="${Math.abs(diff) < 0.005 ? 'ok' : diff > 0 ? 'free' : 'over'}">${Math.abs(diff) < 0.005
-            ? `${icon('i-check', 'ic ic-sm')}<span>Your funds hold exactly the money in your accounts.</span>`
-            : diff > 0 ? `${icon('i-info', 'ic ic-sm')}<span>${escapeHtml(formatCurrency(diff, cur))} of your money is not in any fund.</span>${rest ? `<button type="button" class="btn btn-secondary btn-xs" data-fund-fix="add" data-fund-id="${escapeHtml(rest.id)}" data-fund-amount="${diff}">Put it in ${escapeHtml(rest.name)}</button>` : ''}`
-                : `${icon('i-alert', 'ic ic-sm')}<span>Your funds hold ${escapeHtml(formatCurrency(-diff, cur))} more than your accounts have.</span>${bigFund ? `<button type="button" class="btn btn-secondary btn-xs" data-fund-fix="out" data-fund-id="${escapeHtml(bigFund.id)}" data-fund-amount="${Math.min(-diff, Math.max(0, bal[bigFund.id] || 0))}">Take it out of ${escapeHtml(bigFund.name)}</button>` : ''}`}</div>`;
-    })() : ''}
-            ${viewing ? (() => {
+            ${total > 0 ? `<div class="sec-legend">${shown.filter((x) => (bal[x.id] || 0) > 0).map((x) => `<span style="--cat:var(--pal-${x.color})"><i></i>${escapeHtml(x.name)} <b>${Math.round(((bal[x.id] || 0) / total) * 100)}%</b></span>`).join('')}</div>` : ''}
+            ${(() => {
+        // Do the funds hold exactly the money in the accounts?
+        const row = (label, v, cls = '') => `<div class="fund-check-row"><span>${label}</span><strong class="amount ${cls}">${escapeHtml(formatCurrency(v, cur))}</strong></div>`;
+        if (!viewing) {
+            const inAccounts = round2(netWorth());
+            const inFunds = round2(secList().reduce((a, x) => a + (bal[x.id] || 0), 0));
+            const diff = round2(inAccounts - inFunds);
+            const ok = Math.abs(diff) < 0.005;
+            const rest = secList().find((x) => x.mode === 'rest') || secList()[0];
+            const bigFund = secList().slice().sort((p, q) => (bal[q.id] || 0) - (bal[p.id] || 0))[0];
+            return `<div class="fund-check" data-state="${ok ? 'ok' : diff > 0 ? 'free' : 'over'}">
+                ${row('All accounts', inAccounts)}${row('All funds', inFunds)}${row('Difference', diff, ok ? 'text-income' : diff < 0 ? 'text-expense' : '')}
+                <div class="fund-reconcile" data-state="${ok ? 'ok' : diff > 0 ? 'free' : 'over'}">${ok
+                ? `${icon('i-check', 'ic ic-sm')}<span>Your funds hold exactly the money in your accounts.</span>`
+                : diff > 0 ? `${icon('i-info', 'ic ic-sm')}<span>${escapeHtml(formatCurrency(diff, cur))} of your money is not in any fund.</span>${rest ? `<button type="button" class="btn btn-secondary btn-xs" data-fund-fix="add" data-fund-id="${escapeHtml(rest.id)}" data-fund-amount="${diff}">Put it in ${escapeHtml(rest.name)}</button>` : ''}`
+                    : `${icon('i-alert', 'ic ic-sm')}<span>Your funds hold ${escapeHtml(formatCurrency(-diff, cur))} more than your accounts have.</span>${bigFund ? `<button type="button" class="btn btn-secondary btn-xs" data-fund-fix="out" data-fund-id="${escapeHtml(bigFund.id)}" data-fund-amount="${Math.min(-diff, Math.max(0, bal[bigFund.id] || 0))}">Take it out of ${escapeHtml(bigFund.name)}</button>` : ''}`}</div></div>`;
+        }
         const inAcc = toDisplay(accountBalance(viewing), viewing.currency);
         const held = accountFundsTotal(viewing.id, bal);
         const free = round2(inAcc - held);
-        return `<div class="fund-split"><span><small>In ${escapeHtml(viewing.name)}</small><strong>${escapeHtml(formatCurrency(inAcc, cur))}</strong></span><span><small>In its funds</small><strong>${escapeHtml(formatCurrency(held, cur))}</strong></span><span><small>Not in a fund</small><strong class="${free < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(free, cur))}</strong></span></div>
-            ${free < -0.004 ? `<p class="field-hint text-expense">Its funds hold ${escapeHtml(formatCurrency(-free, cur))} more than the account has. Take some out, or record the missing income.</p>` : '<p class="field-hint">Funds are part of this account\'s money set aside for a purpose, not extra money.</p>'}`;
-    })() : ''}
-            <div class="sec-summary-actions">
-                <button type="button" class="chip-btn" data-action="sec-move">${icon('i-swap', 'ic ic-sm')} Transfer</button>
-                <button type="button" class="chip-btn" data-action="sec-add-money">${icon('i-plus', 'ic ic-sm')} Add money</button>
-                <button type="button" class="chip-btn" data-action="sec-take-out">${icon('i-arrow-up', 'ic ic-sm')} Take out</button>
-                <button type="button" class="chip-btn" data-action="sec-new">${icon('i-plus', 'ic ic-sm')} New fund</button>
+        return `<div class="fund-check" data-state="${free < -0.004 ? 'over' : 'ok'}">
+                ${row(`In ${escapeHtml(viewing.name)}`, inAcc)}${row('In its funds', held)}${row('Not in a fund', free, free < 0 ? 'text-expense' : '')}
+                ${free < -0.004 ? `<p class="field-hint text-expense">Its funds hold ${escapeHtml(formatCurrency(-free, cur))} more than the account has. Take some out, or record the missing income.</p>` : '<p class="field-hint">Funds are part of this account\'s money set aside for a purpose, not extra money.</p>'}</div>`;
+    })()}
+            <div class="sec-actions">
+                <button type="button" class="sec-act" data-action="sec-add-money"><span class="sec-act-icon is-in">${icon('i-plus')}</span><span>Add</span></button>
+                <button type="button" class="sec-act" data-action="sec-take-out"><span class="sec-act-icon is-out">${icon('i-arrow-up')}</span><span>Take out</span></button>
+                <button type="button" class="sec-act" data-action="sec-move"><span class="sec-act-icon">${icon('i-swap')}</span><span>Transfer</span></button>
+                <button type="button" class="sec-act" data-action="sec-new"><span class="sec-act-icon">${icon('i-wallet')}</span><span>New fund</span></button>
             </div>
             ${pct > 100 ? '<p class="field-hint text-expense">Your percentages add up to more than 100%.</p>' : ''}
         </section>
@@ -7463,11 +7471,12 @@ const planSectionsHtml = () => {
         const tgt = x.target ? toDisplay(x.target, x.currency) : 0;
         const used = tgt ? Math.min(100, Math.max(0, (b / tgt) * 100)) : m.in > 0 ? Math.min(100, (m.spent / m.in) * 100) : (m.spent > 0 ? 100 : 0);
         return `<button type="button" class="sec-tile${b < 0 ? ' is-below' : ''}" data-sec-view="${escapeHtml(x.id)}" style="--cat:var(--pal-${x.color});--n:${n}">
-                <span class="sec-tile-top">${secBadge(x)}${b < 0 ? '<span class="sec-pill">Deficit</span>' : fundAccs(x).length === 1 ? '' : `<span class="sec-pill is-all">${fundAccs(x).length ? `${fundAccs(x).length} accounts` : 'All accounts'}</span>`}</span>
+                <span class="sec-tile-top">${secBadge(x)}${b < 0 ? '<span class="sec-pill">Deficit</span>' : fundAccs(x).length > 1 ? `<span class="sec-pill is-all">${fundAccs(x).length} accounts</span>` : fundAccs(x).length === 1 && !viewing ? `<span class="sec-pill is-all">${escapeHtml((state.accounts.find((a) => a.id === fundAccs(x)[0]) || {}).name || '')}</span>` : ''}</span>
                 <span class="sec-tile-name">${escapeHtml(x.name)}</span>
+                <span class="sec-tile-rule">${escapeHtml(x.mode === 'amount' ? `${formatCompact(toDisplay(x.value, x.currency), cur)} ${x.once ? 'once' : 'per income'}` : secPlanLabelBase(x))}</span>
                 <strong class="sec-tile-amount amount" data-countup="${b}">${escapeHtml(formatCurrency(b, cur))}</strong>
                 <span class="sec-tile-bar"><span data-grow="${used.toFixed(1)}"></span></span>
-                <span class="sec-tile-sub">${tgt ? `${Math.round(used)}% of ${escapeHtml(formatCompact(tgt, cur).replace(/^[^\d-]+/, ''))} target` : m.in || m.spent ? `${escapeHtml(formatCompact(m.spent, cur).replace(/^[^\d-]+/, ''))} of ${escapeHtml(formatCompact(m.in, cur).replace(/^[^\d-]+/, ''))} spent` : escapeHtml(secPlanLabel(x))}</span>
+                <span class="sec-tile-sub">${tgt ? `${Math.round(used)}% of ${escapeHtml(formatCompact(tgt, cur).replace(/^[^\d-]+/, ''))} target` : m.in || m.spent ? `Spent ${escapeHtml(formatCompact(m.spent, cur).replace(/^[^\d-]+/, ''))} of ${escapeHtml(formatCompact(m.in, cur).replace(/^[^\d-]+/, ''))}` : 'Nothing spent yet'}</span>
             </button>`;
     }).join('')}</div>
         ${shown.length ? '<p class="field-hint sec-hold-hint">Tap a fund to see its history. Hold it to add, take out, move, edit or delete.</p>' : ''}
@@ -8660,7 +8669,24 @@ const BIO_WORDS = {
     face: { name: 'face', title: 'Unlock with face', on: 'Face unlock is on', desc: 'Look at your phone instead of typing the PIN.', idle: 'Look at your phone to unlock', scan: 'Looking for your face…', again: 'Tap the face to try again', icon: 'i-face' },
     both: { name: 'face or fingerprint', title: 'Unlock with face or fingerprint', on: 'Face and fingerprint unlock is on', desc: 'Look at your phone or touch the sensor instead of typing the PIN.', idle: 'Look at your phone or touch the sensor', scan: 'Scanning…', again: 'Tap to try again', icon: 'i-face' }
 };
-const bioWords = () => BIO_WORDS[bioKind] || BIO_WORDS.finger;
+const BIO_MODE_KEY = 'VELA_BIO_MODE';
+const bioChoices = () => (bioKind === 'both' ? ['finger', 'face', 'both'] : [bioKind]);
+const bioMode = () => {
+    let m = null;
+    try { m = localStorage.getItem(BIO_MODE_KEY); } catch (e) { /* storage blocked */ }
+    return bioChoices().includes(m) ? m : bioKind;
+};
+const setBioMode = (m) => {
+    if (!bioChoices().includes(m)) return;
+    try { localStorage.setItem(BIO_MODE_KEY, m); } catch (e) { /* storage blocked */ }
+    if ($('fp-core')) $('fp-core').dataset.kind = '';
+    renderSettings();
+    showToast(BIO_WORDS[m].on, 'success');
+};
+// Android lets an app ask for "strong" sensors only (fingerprint, and the face unlock of a few phones like
+// Pixel) or for any sensor. Face, or both, needs "any"; fingerprint asks for strong only.
+const bioAllowed = () => (bioMode() === 'finger' ? [3] : [3, 4]);
+const bioWords = () => BIO_WORDS[bioMode()] || BIO_WORDS.finger;
 // Face scan: corner brackets, eyes, nose and smile, drawn with the same animated strokes as the fingerprint.
 const FACE_PATHS = [
     'M14 24v-6a4 4 0 0 1 4-4h6',
@@ -8687,7 +8713,7 @@ const FP_PATHS = [
     'M51.6 30.5c.3 1 .4 2 .4 3 0 3.2-.3 6.3-1 9.2'
 ];
 const fpPaths = (cls, list = FP_PATHS) => list.map((d, i) => `<path class="${cls}" pathLength="1" style="--i:${i}" d="${d}"/>`).join('');
-const fpCoreHtml = () => bioKind !== 'finger' ? `<svg class="fp-svg is-face" viewBox="0 0 64 64" aria-hidden="true">
+const fpCoreHtml = () => bioMode() !== 'finger' ? `<svg class="fp-svg is-face" viewBox="0 0 64 64" aria-hidden="true">
     <defs><linearGradient id="fp-grad" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="var(--fp-a)"/><stop offset="1" stop-color="var(--fp-b)"/></linearGradient></defs>
     <g class="fp-base">${fpPaths('', FACE_PATHS)}</g><g class="fp-fill">${fpPaths('', FACE_PATHS)}</g><g class="face-mesh">${FACE_DOTS.map(([x, y], i) => `<circle cx="${x}" cy="${y}" r="1.1" style="--i:${i}"/>`).join('')}</g></svg><span class="fp-laser"></span>` : `<svg class="fp-svg" viewBox="0 0 64 64" aria-hidden="true">
     <defs><linearGradient id="fp-grad" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="var(--fp-a)"/><stop offset="1" stop-color="var(--fp-b)"/></linearGradient></defs>
@@ -8716,8 +8742,8 @@ const setLockBio = () => {
     $('fp-wrap').hidden = !bio;
     $('lock-title').textContent = bio ? 'Unlock Vela' : 'Enter your PIN';
     if (bio) {
-        if (!$('fp-core').firstChild || $('fp-core').dataset.kind !== bioKind) { $('fp-core').innerHTML = fpCoreHtml(); $('fp-core').dataset.kind = bioKind; }
-        $('fp-scanner').dataset.kind = bioKind;
+        if (!$('fp-core').firstChild || $('fp-core').dataset.kind !== bioMode()) { $('fp-core').innerHTML = fpCoreHtml(); $('fp-core').dataset.kind = bioMode(); }
+        $('fp-scanner').dataset.kind = bioMode();
         $('fp-scanner').setAttribute('aria-label', `Unlock with your ${bioWords().name}`);
         if (!bioBusy) setScanner('idle', bioWords().idle);
     }
@@ -8755,7 +8781,7 @@ const tryBiometricUnlock = async () => {
     setScanner('scanning', bioWords().scan);
     const started = Date.now();
     try {
-        await bio.verifyIdentity({ reason: 'Unlock Vela', title: 'Unlock Vela', subtitle: `Use your ${bioWords().name}`, negativeButtonText: 'Use PIN', maxAttempts: 3 });
+        await bio.verifyIdentity({ reason: 'Unlock Vela', title: 'Unlock Vela', subtitle: `Use your ${bioWords().name}`, negativeButtonText: 'Use PIN', maxAttempts: 3, allowedBiometryTypes: bioAllowed() });
         await wait(Math.max(0, 1100 - (Date.now() - started))); // let the scan finish on screen
         setScanner('success', 'Welcome back');
         haptic('MEDIUM');
@@ -8901,7 +8927,7 @@ const toggleBiometric = async () => {
         return;
     }
     try {
-        await bio.verifyIdentity({ reason: `Turn on ${bioWords().name} unlock`, title: "Confirm it's you", subtitle: `Use your ${bioWords().name}`, negativeButtonText: 'Cancel' });
+        await bio.verifyIdentity({ reason: `Turn on ${bioWords().name} unlock`, title: "Confirm it's you", subtitle: `Use your ${bioWords().name}`, negativeButtonText: 'Cancel', allowedBiometryTypes: bioAllowed() });
         state.config.lock.biometric = true;
         saveState();
         showToast(bioWords().on, 'success');
@@ -9547,6 +9573,7 @@ const initEvents = () => {
             setViewAccount(d.viewAccount); if (isSheetOpen('modal-accounts')) closeSheet('modal-accounts'); return;
         }
         if (d.lockAfter !== undefined) { setLockAfter(Number(d.lockAfter)); return; }
+        if (d.bioMode) { setBioMode(d.bioMode); return; }
         if (d.notifOpen) { openNotif(d.notifOpen); return; }
         if (d.action === 'open-notifs') { openNotifs(); return; }
         if (d.action === 'clear-notifs') { notifLog = []; saveNotifLog(); updateNotifBell(); closeSheet('modal-notifs'); return; }

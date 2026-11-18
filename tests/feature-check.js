@@ -2429,6 +2429,21 @@ export async function run() {
         return (face && both && finger) || `face ${face}, both ${both}, fingerprint ${finger}`;
     });
 
+    await T('Unlock with: fingerprint, face or both on a phone that has both', async () => {
+        (0, eval)("bioKind = 'both'");
+        const choices = g('bioChoices')().join(',');
+        g('setBioMode')('finger');
+        const finger = g('bioMode')() === 'finger' && g('bioAllowed')().join(',') === '3' && !/is-face/.test(g('fpCoreHtml')());
+        g('setBioMode')('face');
+        const face = g('bioMode')() === 'face' && g('bioAllowed')().join(',') === '3,4' && /is-face/.test(g('fpCoreHtml')());
+        g('setBioMode')('both');
+        const both = g('bioWords')().title === 'Unlock with face or fingerprint';
+        (0, eval)("bioKind = 'finger'");
+        const onlyFinger = g('bioChoices')().join(',') === 'finger' && g('bioMode')() === 'finger';
+        try { localStorage.removeItem('VELA_BIO_MODE'); } catch (e) { /* storage blocked */ }
+        return (choices === 'finger,face,both' && finger && face && both && onlyFinger) || `choices ${choices}, fingerprint ${finger}, face ${face}, both ${both}, fingerprint-only phone ${onlyFinger}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };
