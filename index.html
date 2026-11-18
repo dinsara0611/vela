@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.42.2">
+    <link rel="stylesheet" href="style.css?v=4.42.3">
 </head>
 <body data-view="dashboard">
 
@@ -801,6 +801,7 @@
                         <span class="field-hint" id="tx-status-hint"></span>
                     </div>
                     <p class="tx-source" id="tx-source" hidden></p>
+                    <button type="button" class="link-btn tx-allocate" id="tx-allocate" data-action="tx-allocate" hidden><svg class="ic ic-sm"><use href="#i-wallet"/></svg><span id="tx-allocate-text">Allocate to funds</span></button>
                     <div class="field">
                         <label class="field-label" for="tx-note">Note <span class="faint">(optional)</span></label>
                         <textarea id="tx-note" class="input" placeholder="Anything to remember" maxlength="240"></textarea>
@@ -1295,6 +1296,10 @@
                 <div id="divide-fills"></div>
                 <div id="divide-split"></div>
                 <p class="divide-left" id="divide-left" aria-live="polite"></p>
+                <div class="setting-row divide-keep-row" id="divide-keep-row" hidden>
+                    <div class="setting-text"><span class="setting-title">Keep the rest unallocated</span><span class="setting-desc">Only part of this income goes to your funds. The rest stays in your account, outside the funds.</span></div>
+                    <button class="switch" type="button" role="switch" aria-checked="false" id="divide-keep" aria-label="Keep the rest unallocated"></button>
+                </div>
             </div>
             <div class="sheet-foot">
                 <button type="button" class="btn btn-secondary" data-action="divide-skip">Don't allocate</button>
@@ -1792,7 +1797,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.42.2"></script>
+    <script src="app.js?v=4.42.3"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

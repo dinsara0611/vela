@@ -1940,6 +1940,34 @@ export async function run() {
         return (queued === 2 && pairCard && added === 1 && left === 0 && atmWords) || `queued ${queued}, one card ${pairCard}, added ${added}, still waiting ${left}, ATM words ${atmWords} (${atm && atm.type})`;
     });
 
+    await T('Funds: only chosen income is allocated; other income by hand; part of an income can stay unallocated', async () => {
+        const [needs] = s().config.sections;
+        const sum = () => Math.round(Object.values(g('sectionBalances')()).reduce((a, v) => a + v, 0));
+        // Freelance income: not offered, sheet doesn't open by itself.
+        await addTx({ type: 'income', amount: 20000, desc: 'Logo job', category: 'Freelance' }); await wait(600);
+        const notAsked = !g('openSheets').includes('modal-divide') && !g('undividedIncomes')().some((t) => t.desc === 'Logo job');
+        // Allocate it by hand from its entry, keeping half outside the funds.
+        const before = sum();
+        g('openEditTx')(find('Logo job').id); await wait(300);
+        const btn = !$('tx-allocate').hidden;
+        $('tx-allocate').click(); await wait(800);
+        const opened = g('openSheets').includes('modal-divide');
+        document.querySelectorAll('[data-sec-alloc]').forEach((i) => { i.value = ''; i.dispatchEvent(new Event('input', { bubbles: true })); });
+        const first = document.querySelector(`[data-sec-alloc="${needs.id}"]`);
+        first.value = '10000'; first.dispatchEvent(new Event('input', { bubbles: true }));
+        const keepShown = !$('divide-keep-row').hidden;
+        $('divide-keep').click(); await wait(50);
+        g('confirmDivide')(); await wait(300);
+        const added = sum() - before;
+        // Choosing Freelance makes the next one offered.
+        g('toggleFundIncomeCat')('Freelance'); await wait(100);
+        await addTx({ type: 'income', amount: 5000, desc: 'Logo job 2', category: 'Freelance' }); await wait(600);
+        const asked = g('openSheets').includes('modal-divide');
+        g('skipDivide')(find('Logo job 2').id); await wait(300);
+        g('toggleFundIncomeCat')('Freelance');
+        return (notAsked && btn && opened && keepShown && added === 10000 && asked) || `not asked ${notAsked}, button ${btn}, opened ${opened}, keep switch ${keepShown}, added ${added}, asked once chosen ${asked}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

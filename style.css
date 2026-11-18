@@ -4747,3 +4747,7 @@ body.approve-waiting { overflow: hidden; }
 @keyframes sec-in { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .sec-tile, #divide-split .sec-line, #divide-carry .sec-line, #divide-fills .sec-line { animation: none; } .sec-stack > span, .sec-tile-bar > span { transition: none; } }
 @media (max-width: 340px) { .sec-grid { grid-template-columns: 1fr; } }
+
+.fund-income-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--sp-2); }
+.tx-allocate { margin: 4px 0 8px; }
+.divide-keep-row { margin-top: var(--sp-2); }

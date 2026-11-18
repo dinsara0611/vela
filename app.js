@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.42.2';
+const APP_VERSION = '4.42.3';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -114,7 +114,8 @@ const createDefaultState = () => ({
         sectionMoves: [],          // money into / out of sections: { id, date, kind, incomeId, from, to, amount, currency }
         sectionSince: null,        // incomes from this date on are offered for dividing
         sectionSkipped: [],        // incomes left out of the sections
-        sectionCatMap: {}          // category -> the section its expenses usually come out of
+        sectionCatMap: {},         // category -> the section its expenses usually come out of
+        fundIncomeCats: null       // income categories allocated to funds (null = Salary only)
     },
     auth: { user: null, isMock: true, completedOnboarding: false },
     sync: {},            // id -> { kind, op: 'upsert' | 'delete' }
@@ -808,6 +809,7 @@ function normalizeSectionConfig(cfg) {
     const map = {};
     Object.entries(cfg.sectionCatMap && typeof cfg.sectionCatMap === 'object' ? cfg.sectionCatMap : {}).forEach(([k, v]) => { if (ids.has(String(v))) map[String(k).slice(0, 64)] = String(v); });
     return {
+        fundIncomeCats: Array.isArray(cfg.fundIncomeCats) ? cfg.fundIncomeCats.map((x) => String(x).slice(0, 64)).slice(0, 40) : null,
         sections, sectionMoves: moves, sectionCatMap: map,
         sectionSince: sections.length ? (cleanDate(cfg.sectionSince) || null) : null,
         sectionSkipped: (Array.isArray(cfg.sectionSkipped) ? cfg.sectionSkipped : []).map(String).slice(-500)
@@ -954,6 +956,7 @@ const settingsPayload = () => {
         sectionSince: c.sectionSince || null,
         sectionSkipped: c.sectionSkipped || [],
         sectionCatMap: c.sectionCatMap || {},
+        fundIncomeCats: c.fundIncomeCats || null,
         // The PIN goes with the account; fingerprint stays per phone.
         lock: c.lock && c.lock.enabled ? { enabled: true, hash: c.lock.hash, salt: c.lock.salt } : { enabled: false },
         accounts: state.accounts
@@ -1917,7 +1920,7 @@ const markBillPaid = (id) => {
     if (!bill) return;
     // Recorded on the day it was really paid; the due date is kept on the entry.
     const tx = logBill(bill, todayISO());
-    if (bill.type === 'income' && secList().length) setTimeout(() => openDivide(tx.id), 600);
+    if (bill.type === 'income' && secList().length && allocatesIncome(tx)) setTimeout(() => openDivide(tx.id), 600);
     tx.dueDate = bill.nextDate;
     tx.paidAt = new Date().toISOString();
     cancelPaymentReminders(`bill:${bill.id}`);
@@ -4865,6 +4868,7 @@ const setTxStatus = (waiting) => {
 
 const openAddTx = (type = 'expense') => {
     smsEditing = null;
+    $('tx-allocate').hidden = true;
     if ($('tx-source')) $('tx-source').hidden = true;
     $('tx-form').reset();
     txHistory = historyStats();
@@ -4915,6 +4919,11 @@ const openEditTx = (id) => {
     txSectionId = t.sectionId && secById(t.sectionId) ? t.sectionId : null;
     txSectionTouched = true;
     setTxType(t.type, t.category);
+    const allocated = secMoves().some((m) => m.incomeId === t.id);
+    $('tx-allocate').hidden = !(t.type === 'income' && secList().length && !isUpcoming(t));
+    $('tx-allocate').dataset.id = t.id;
+    $('tx-allocate-text').textContent = allocated ? 'Allocated to funds · reverse' : 'Allocate to funds';
+    $('tx-allocate').dataset.done = String(allocated);
     $('tx-source').hidden = false;
     $('tx-source').innerHTML = t.bank
         ? `${icon('i-check', 'ic ic-sm')}<span>${escapeHtml(`${t.bank.bank} – ${sourceLabel(t.bank.sources || ['sms'])}`)}${t.bank.ref ? ` · Ref ${escapeHtml(t.bank.ref)}` : ''}${t.bank.last4 ? ` · ••${escapeHtml(t.bank.last4)}` : ''} · Bank-verified</span>`
@@ -5005,7 +5014,7 @@ const submitTx = async () => {
     queueSync('transaction', record.id, 'upsert');
     if (receipt && !receipt.path) uploadReceipt(record);
     closeSheet('modal-tx');
-    if (txType === 'income' && !id && secList().length && !isUpcoming(record)) {
+    if (txType === 'income' && !id && secList().length && !isUpcoming(record) && allocatesIncome(record)) {
         setTimeout(() => openDivide(record.id), 450);
     } else if (txType === 'income') {
         const d = parseDate(date);
@@ -6482,12 +6491,35 @@ const sectionMonth = (y, m) => {
 };
 const dividedIncomeIds = () => new Set([...secMoves().filter((m) => m.incomeId).map((m) => m.incomeId), ...(state.config.sectionSkipped || [])]);
 // Income that arrived since sections were set up and hasn't been divided (or skipped) yet.
+// Only the kinds of income you chose go to your funds (Salary unless you pick others). Any other income can
+// still be allocated by hand from its entry.
+const fundIncomeCats = () => {
+    const list = state.config.fundIncomeCats;
+    return new Set(Array.isArray(list) ? list : ['Salary']);
+};
+const allocatesIncome = (t) => !!t && t.type === 'income' && fundIncomeCats().has(t.category);
 const undividedIncomes = () => {
     if (!secList().length) return [];
     const since = state.config.sectionSince || '0000';
     const done = dividedIncomeIds();
-    return state.transactions.filter((t) => t.type === 'income' && !isUpcoming(t) && t.date >= since && !done.has(t.id))
+    return state.transactions.filter((t) => allocatesIncome(t) && !isUpcoming(t) && t.date >= since && !done.has(t.id))
         .sort((a, b) => (a.date < b.date ? -1 : 1));
+};
+const toggleFundIncomeCat = (cat) => {
+    const set = fundIncomeCats();
+    if (set.has(cat)) set.delete(cat); else set.add(cat);
+    state.config.fundIncomeCats = [...set];
+    if (!commitState('That')) return;
+    haptic();
+    renderActive();
+};
+const fundIncomeChooserHtml = () => {
+    const set = fundIncomeCats();
+    return `<section class="card fund-income">
+        <div class="card-head"><h2 class="card-title">Income allocated to funds</h2></div>
+        <p class="card-sub">Only these kinds of income are offered for allocation. Others stay out of your funds, unless you allocate one yourself from its entry.</p>
+        <div class="fund-income-chips">${catsOfType('income').map((c) => `<button type="button" class="chip" data-fund-income="${escapeHtml(c.id)}" aria-pressed="${set.has(c.id)}" style="--cat:${catColor(c)}"><span class="chip-dot"></span>${escapeHtml(c.name)}</button>`).join('')}</div>
+    </section>`;
 };
 // The section an expense of this category usually comes out of (learned from what you pick).
 const sectionForCategory = (cat) => {
@@ -6502,6 +6534,7 @@ const learnSection = (cat, secId) => {
 
 /* ---- Dividing an income ---- */
 let divideJob = null;
+let divideKeepRest = false;
 // The plan for an amount: fixed amounts first (in order), then percentages of the same base, the rest to the
 // "what's left" section. Never more than there is.
 const planSplit = (amount) => {
@@ -6538,6 +6571,7 @@ const openDivide = (incomeId) => {
     const t = state.transactions.find((x) => x.id === incomeId && x.type === 'income');
     if (!t || !secList().length) return;
     divideJob = { incomeId, total: round2(toDisplay(t.amount, t.currency)), carry: {}, alloc: null, name: t.desc, date: t.date };
+    divideKeepRest = false;
     const n = divideNumbers();
     divideJob.alloc = planSplit(n.pool).split;
     renderDivide();
@@ -6574,10 +6608,12 @@ const updateDivideLeft = () => {
     const el = $('divide-left');
     el.dataset.state = left < -0.004 ? 'over' : left > 0.004 ? 'left' : 'ok';
     el.textContent = left < -0.004 ? `Over-allocated by ${formatCurrency(-left, dcur())}. Lower an amount.`
-        : left > 0.004 ? `${formatCurrency(left, dcur())} unallocated${rest ? `: it goes to ${rest.name} as the remainder` : ''}.`
+        : left > 0.004 ? (divideKeepRest || !rest ? `${formatCurrency(left, dcur())} stays unallocated (not in any fund).` : `${formatCurrency(left, dcur())} unallocated: it goes to ${rest.name} as the remainder.`)
             : 'Fully allocated.';
-    $('btn-divide-ok').disabled = left < -0.004 || (left > 0.004 && !rest);
-    const parts = secList().map((x) => [x, (job.alloc[x.id] || 0) + (n.fills.find((f) => f.to === x.id) || { amount: 0 }).amount + (x.mode === 'rest' && left > 0 ? left : 0)]);
+    $('divide-keep-row').hidden = !(left > 0.004);
+    setSwitch($('divide-keep'), divideKeepRest || !rest);
+    $('btn-divide-ok').disabled = left < -0.004;
+    const parts = secList().map((x) => [x, (job.alloc[x.id] || 0) + (n.fills.find((f) => f.to === x.id) || { amount: 0 }).amount + (x.mode === 'rest' && left > 0 && !divideKeepRest ? left : 0)]);
     $('divide-bar').innerHTML = secStackBar(parts).replace(/data-grow="([\d.]+)"/g, 'style="width:$1%" data-w="$1"').replace(/style="--cat:([^"]+)" style="width/g, 'style="--cat:$1;width');
 };
 const confirmDivide = () => {
@@ -6588,8 +6624,9 @@ const confirmDivide = () => {
     const used = Object.values(job.alloc).reduce((s, v) => s + (v || 0), 0);
     let left = round2(n.pool - used);
     if (left < -0.004) return;
-    const rest = secList().find((x) => x.mode === 'rest');
-    if (left > 0.004 && !rest) return;
+    // Kept unallocated (your choice, or there's no remainder fund): it simply stays out of the funds.
+    const rest = divideKeepRest ? null : secList().find((x) => x.mode === 'rest');
+    if (!rest) left = 0;
     const moves = [];
     const mk = (kind, from, to, amount) => moves.push({ id: generateId(), date: job.date, kind, incomeId: job.incomeId, from: from || null, to: to || null, amount: round2(amount), currency: cur });
     n.carries.forEach((c) => mk('move', c.from, c.to, c.amount));
@@ -6911,6 +6948,7 @@ const planSectionsHtml = () => {
                 <span class="sec-tile-sub">${m.in || m.spent ? `${escapeHtml(formatCompact(m.spent, cur).replace(/^[^\d-]+/, ''))} of ${escapeHtml(formatCompact(m.in, cur).replace(/^[^\d-]+/, ''))} spent` : escapeHtml(secPlanLabel(x))}</span>
             </button>`;
     }).join('')}</div>
+        ${fundIncomeChooserHtml()}
         ${loose.length ? `<button type="button" class="card sec-loose" data-action="sec-unassigned"><span class="sec-loose-icon">${icon('i-alert')}</span><span><strong>${plural(loose.length, 'unallocated expense')}</strong><span>${escapeHtml(formatCurrency(sumDisplay(loose), cur))} · tap to assign them to funds</span></span>${icon('i-chevron', 'ic chev')}</button>` : ''}`;
 };
 const renderSectionsHome = () => {
@@ -8791,6 +8829,14 @@ const initEvents = () => {
         if (d.smsPairSplit) { smsPairSplit(d.smsPairSplit); return; }
         if (d.openTrip) { openTrips(d.openTrip); return; }
         if (d.secTemplate) { setupSections(d.secTemplate); return; }
+        if (d.fundIncome) { toggleFundIncomeCat(d.fundIncome); return; }
+        if (d.action === 'tx-allocate') {
+            const id = $('tx-allocate').dataset.id;
+            if ($('tx-allocate').dataset.done === 'true') { undoDivide(id); return; }
+            closeSheet('modal-tx');
+            setTimeout(() => openDivide(id), 300);
+            return;
+        }
         if (d.secView) { openSectionView(d.secView); return; }
         if (d.secDivide) { openDivide(d.secDivide); return; }
         if (d.secSkip) { skipDivide(d.secSkip); return; }
@@ -9059,6 +9105,7 @@ const initEvents = () => {
         const a = e.target.dataset.secAlloc;
         if (a && divideJob) { divideJob.alloc[a] = Math.max(0, toNumber(e.target.value, 0)); updateDivideLeft(); }
     });
+    $('divide-keep').addEventListener('click', () => { divideKeepRest = !divideKeepRest; updateDivideLeft(); });
     $('modal-divide').addEventListener('change', (e) => {
         const c = e.target.dataset.secCarry;
         if (c && divideJob) {
