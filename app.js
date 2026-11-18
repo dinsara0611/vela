@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.41.0';
+const APP_VERSION = '4.41.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -3077,6 +3077,7 @@ const merchantsAgree = (a, b) => { const x = merchantWord(a); const y = merchant
              with no card number that disagrees.
    'maybe' - looks like an SMS + notification pair but the shop names differ: the user decides.
    null    - different. Two SMS (or two notifications) with the same amount are two purchases. */
+const smsTextHashes = (x) => (x.sourceIds || [x.id]).map((id) => (/^sms-\d+-(\d+)$/.exec(String(id || '')) || [])[1]).filter(Boolean);
 const sameDetection = (a, b) => {
     if (!a || !b) return null;
     // The same text is a repeat (resent SMS, inbox + live copy, notification update) only close in time:
@@ -3086,6 +3087,11 @@ const sameDetection = (a, b) => {
     const sameText = (a.bodyKeys || []).some((k) => (b.bodyKeys || []).includes(k));
     const copyShared = sourceList(a).includes('shared') || sourceList(b).includes('shared');
     if (sameText && copyShared) return 'same';
+    // One SMS read twice: by the live listener (stamped with the network's send time) and from the inbox (stamped
+    // when the phone stored it). Same sender + text, so the same fingerprint in the id; the two times can be
+    // minutes apart when the network was slow or the phone was off.
+    const ha = smsTextHashes(a);
+    if (sameText && ha.length && smsTextHashes(b).some((x) => ha.includes(x)) && a.arrivedAt && b.arrivedAt && Math.abs(a.arrivedAt - b.arrivedAt) <= 30 * 60000) return 'same';
     if (a.bank !== b.bank) return null;
     const onlyNotif = (x) => sourceList(x).every((s) => s === 'notification');
     if (sameText && !(onlyNotif(a) && onlyNotif(b)) && a.arrivedAt && b.arrivedAt && Math.abs(a.arrivedAt - b.arrivedAt) <= 2 * 60000) return 'same';
@@ -3119,7 +3125,8 @@ const sameDetection = (a, b) => {
 const recordedAsDetection = (t) => ({
     bank: t.bank.bank, ref: t.bank.ref, last4: t.bank.last4, merchant: t.bank.merchant, amount: t.amount, currency: t.currency,
     type: t.bank.kind === 'atm' || t.type === 'transfer' ? 'atm' : t.bank.kind === 'reversal' ? 'reversal' : t.type,
-    sources: t.bank.sources || ['sms'], bodyKeys: t.bank.bodyKeys || [], shape: t.bank.shape || null, arrivedAt: t.bank.arrivedAt, time: t.bank.time || null
+    sources: t.bank.sources || ['sms'], bodyKeys: t.bank.bodyKeys || [], shape: t.bank.shape || null, arrivedAt: t.bank.arrivedAt, time: t.bank.time || null,
+    sourceIds: (t.bank.sourceIds && t.bank.sourceIds.length ? t.bank.sourceIds : [t.bank.smsId]).filter(Boolean)
 });
 // The confirmed transaction a detection is already recorded as (by id, reference, same text, or the other source).
 const recordedMatch = (i) => state.transactions.find((t) => t.bank && (

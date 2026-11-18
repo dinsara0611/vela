@@ -293,6 +293,13 @@ public class SmsReaderPlugin extends Plugin {
                 if (BankSms.parse(address, body) == null) continue; // only bank transactions leave this method
                 String id = "sms-" + date + "-" + Math.abs(((address == null ? "null" : address) + body).hashCode());
                 if (SmsStore.isHandled(getContext(), id)) continue; // added or ignored from the notification
+                // The live SMS listener keeps the same message under the network's send time, not this inbox time:
+                // match it by sender + text, so a message already waiting, added or ignored never comes a second time.
+                JSONObject probe = new JSONObject();
+                probe.put("address", address == null ? "" : address);
+                probe.put("body", body == null ? "" : body);
+                String sameText = SmsStore.textKey(probe);
+                if (SmsStore.isHandled(getContext(), sameText) || SmsStore.hasText(getContext(), sameText)) continue;
                 JSObject o = new JSObject();
                 o.put("id", id);
                 o.put("source", "sms");

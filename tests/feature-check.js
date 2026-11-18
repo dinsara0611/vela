@@ -1894,6 +1894,29 @@ export async function run() {
             || `moved ${moved}, added ${added}, home ${home}, plan ${plan}, insights ${insights}, total ${totalBeforeDelete}->${after}, gone ${gone}`;
     });
 
+    await T('One bank SMS read twice (live listener + inbox, times minutes apart) shows once, and not again once added', async () => {
+        const body = 'Your A/C xx4321 has been debited by LKR 2,450.00 at KEELLS SUPER on 18/11. Avl Bal LKR 52,300.00 - ComBank';
+        const addr = 'COMBANK';
+        const hash = Math.abs([...(addr + body)].reduce((h, c) => ((h << 5) - h + c.charCodeAt(0)) | 0, 0));
+        const t0 = Date.now() - 15 * 60000;
+        const live = { id: `sms-${t0}-${hash}`, source: 'sms', address: addr, body, date: t0 };
+        const inbox = { id: `sms-${t0 + 9 * 60000}-${hash}`, source: 'sms', address: addr, body, date: t0 + 9 * 60000 };
+        const before = g('smsQueue').length;
+        g('smsTake')([live]);
+        g('smsTake')([inbox]);
+        const waiting = g('smsQueue').filter((i) => (i.bodyKeys || []).length && i.amount === 2450).length;
+        const added = g('smsQueue').length - before;
+        // Hours apart, the same text is a second purchase (kept as two).
+        const later = { id: `sms-${t0 + 5 * 3600000}-${hash}`, source: 'sms', address: addr, body, date: t0 + 5 * 3600000 };
+        g('smsTake')([later]);
+        const twoLater = g('smsQueue').length - before;
+        // Add the first one, then the inbox copy comes again: nothing new.
+        const first = g('smsQueue').find((i) => i.amount === 2450);
+        g('smsApply')(first, s().accounts[0].id);
+        const recorded = g('smsAlreadyRecorded')(g('parseBankSms')({ ...inbox, id: `sms-${t0 + 60000}-${hash}`, date: t0 + 60000 }));
+        return (added === 1 && waiting === 1 && twoLater === 2 && recorded) || `first two -> ${added} in the list, hours later -> ${twoLater}, copy of an added one recognised ${recorded}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

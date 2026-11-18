@@ -149,6 +149,16 @@ final class SmsStore {
         return true;
     }
 
+    /** True when a message with this sender + text is already waiting (kept by the live SMS listener). */
+    static synchronized boolean hasText(Context ctx, String key) {
+        JSONArray list = all(ctx);
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject o = list.optJSONObject(i);
+            if (o != null && key.equals(textKey(o))) return true;
+        }
+        return false;
+    }
+
     /** A short fingerprint of sender + text (the text itself isn't kept in the handled list). */
     static String textKey(JSONObject o) {
         String text = o.optString("address", "") + "|" + o.optString("body", "").replaceAll("\s+", " ").trim();
