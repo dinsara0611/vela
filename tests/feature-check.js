@@ -1768,6 +1768,56 @@ export async function run() {
             || `Nw: ${water.join('/')}, filled ${filled}, netflix ${netflix}, salary ${salary}, goal ${goal}, bank ${bank}, entry ${entry}`;
     });
 
+    await T('Trip: start it, expenses (also from bank SMS) count for it, switch off excludes one, end it, kept after restart', async () => {
+        g('openTrips')(); await wait(350);
+        $('trip-name').value = 'Trip to Ella';
+        $('trip-budget').value = '30000';
+        g('fillCurrencySelect')($('trip-currency'), 'LKR');
+        $('trip-start').value = today;
+        g('startTrip')(); await wait(350);
+        const trip = g('activeTrip')();
+        const pre = s().transactions.filter((t) => t.tripId === trip.id).length; // today's earlier expenses join
+        g('openAddTx')('expense'); await wait(300);
+        const rowShown = !$('tx-trip-row').hidden && /Ella/.test($('tx-trip-name').textContent) && $('tx-trip').getAttribute('aria-checked') === 'true';
+        $('tx-amount').value = '4500'; $('tx-desc').value = 'Hotel Ella'; await g('submitTx')(); await wait(350);
+        g('openAddTx')('expense'); await wait(300);
+        $('tx-trip').click(); await wait(50);
+        $('tx-amount').value = '800'; $('tx-desc').value = 'Home internet'; await g('submitTx')(); await wait(350);
+        const sms = g('quickSaveTx')({ type: 'expense', desc: 'Ella train', amount: 1200, currency: 'LKR', category: 'Travel', date: today });
+        g('switchTab')('dashboard'); await wait(300);
+        const card = /Trip to Ella/.test($('dash-trip').textContent);
+        const st = g('tripStats')(trip);
+        const ok1 = find('Hotel Ella').tripId === trip.id && !find('Home internet').tripId && sms.tripId === trip.id;
+        g('openTrips')(trip.id); await wait(300);
+        const detail = /Hotel Ella/.test($('trip-view').textContent);
+        g('endTrip')(); await confirmOk(); await wait(300);
+        await addTx({ amount: 300, desc: 'After trip snack' });
+        const after = !find('After trip snack').tripId && !g('activeTrip')();
+        const r = g('loadState')() || s();
+        const kept = s().config.trips.some((t) => t.id === trip.id && t.endedAt) && s().transactions.find((t) => t.desc === 'Hotel Ella').tripId === trip.id;
+        const synced = Array.isArray(g('settingsPayload')().trips) && g('settingsPayload')().trips.length >= 1;
+        return (rowShown && ok1 && card && st.spent >= 5700 && st.budget === 30000 && detail && after && kept && synced)
+            || `row ${rowShown}, tagged ${ok1}, card ${card}, spent ${st.spent} (earlier ${pre}), budget ${st.budget}, detail ${detail}, ended ${after}, kept ${kept}, synced ${synced}`;
+    });
+
+    await T('Subscription: tap Spotify, type the price, it becomes a monthly bill; total per month shows', async () => {
+        g('openSubscriptions')(); await wait(350);
+        const tile = document.querySelector('[data-sub-pick="Spotify Premium"]');
+        const logo = !!(tile && tile.querySelector('img'));
+        tile.click(); await wait(400);
+        const form = $('bill-name').value === 'Spotify Premium' && $('bill-frequency').value === 'monthly' && $('bill-category').value === 'Entertainment';
+        $('bill-amount').value = '1290';
+        g('fillCurrencySelect')($('bill-currency'), 'LKR');
+        g('submitBill')(); await wait(400);
+        const bill = s().recurring.find((b) => b.name === 'Spotify Premium');
+        g('openSubscriptions')(); await wait(350);
+        const total = /1,290/.test($('subs-mine').textContent) && !document.querySelector('[data-sub-pick="Spotify Premium"]');
+        await close('modal-subs');
+        g('loadState')();
+        const kept = s().recurring.find((b) => b.name === 'Spotify Premium').sub === true;
+        return (logo && form && bill && bill.sub && bill.frequency === 'monthly' && total && kept) || `logo ${logo}, form ${form}, bill ${!!bill}/${bill && bill.sub}, total ${total}, kept ${kept}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.39.1';
+const APP_VERSION = '4.40.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -88,7 +88,8 @@ const createDefaultState = () => ({
         priceBook: {},             // currency -> item name -> { price, added?, category? } (your own prices)
         lock: { enabled: false, hash: null, salt: null, biometric: false },
         reminders: false,
-        reminderIds: []
+        reminderIds: [],
+        trips: []                  // { id, name, budget, currency, start, end, endedAt } - one at a time is on
     },
     auth: { user: null, isMock: true, completedOnboarding: false },
     sync: {},            // id -> { kind, op: 'upsert' | 'delete' }
@@ -588,7 +589,8 @@ const normalizeTx = (t, forcedType) => {
         // (without these, a restart forgot an entry came from a bank SMS and the same SMS could be added again).
         ...(cleanDate(t.dueDate) ? { dueDate: cleanDate(t.dueDate) } : {}),
         ...(typeof t.paidAt === 'string' && !isNaN(Date.parse(t.paidAt)) ? { paidAt: t.paidAt } : {}),
-        ...(normalizeBankMeta(t.bank) ? { bank: normalizeBankMeta(t.bank) } : {})
+        ...(normalizeBankMeta(t.bank) ? { bank: normalizeBankMeta(t.bank) } : {}),
+        ...(type === 'expense' && t.tripId ? { tripId: String(t.tripId).slice(0, 64) } : {})
     };
 };
 // Bank details on an entry: only known fields, short strings, no message text.
@@ -640,7 +642,8 @@ const normalizeBill = (b) => {
         anchorDay: Math.min(31, Math.max(1, toNumber(b.anchorDay, parseDate(nextDate).getDate()))),
         accountId: b.accountId ? String(b.accountId) : null,
         autoLog: b.autoLog !== false,
-        createdAt: stamp(b.createdAt)
+        createdAt: stamp(b.createdAt),
+        ...(b.sub === true ? { sub: true } : {})
     };
 };
 
@@ -734,6 +737,17 @@ const mergeCategories = (custom) => {
     return builtIns.concat(extra);
 };
 
+function normalizeTrips(list) {
+    return (Array.isArray(list) ? list : []).map((t) => (t && t.id && t.name ? {
+        id: String(t.id).slice(0, 64),
+        name: String(t.name).slice(0, 60),
+        budget: toNumber(t.budget, 0) > 0 ? toNumber(t.budget, 0) : 0,
+        currency: normCur(t.currency),
+        start: cleanDate(t.start) || toISODate(),
+        end: cleanDate(t.end) || null,
+        endedAt: t.endedAt ? String(t.endedAt).slice(0, 40) : null
+    } : null)).filter(Boolean).slice(-50);
+}
 const normalizeState = (raw) => {
     const base = createDefaultState();
     if (!raw || typeof raw !== 'object') return base;
@@ -768,6 +782,7 @@ const normalizeState = (raw) => {
         });
     }
     base.config.accountBudgets = cleanAccountBudgets(cfg.accountBudgets);
+    base.config.trips = normalizeTrips(cfg.trips);
     if (cfg.lastCategory && typeof cfg.lastCategory === 'object') {
         base.config.lastCategory = { ...base.config.lastCategory, ...cfg.lastCategory };
     } else if (typeof cfg.lastCategory === 'string') {
@@ -856,6 +871,7 @@ const settingsPayload = () => {
         lastCategory: c.lastCategory,
         lastAccount: c.lastAccount,
         reminders: !!c.reminders,
+        trips: c.trips || [],
         // The PIN goes with the account; fingerprint stays per phone.
         lock: c.lock && c.lock.enabled ? { enabled: true, hash: c.lock.hash, salt: c.lock.salt } : { enabled: false },
         accounts: state.accounts
@@ -879,6 +895,7 @@ const applyCloudSettings = (d) => {
     if (['income', 'fixed', 'balance'].includes(d.budgetMode)) c.budgetMode = d.budgetMode;
     if (d.budgetSavePct !== undefined) c.budgetSavePct = Math.min(90, Math.max(0, Math.round(toNumber(d.budgetSavePct, 0))));
     if (d.accountBudgets && typeof d.accountBudgets === 'object') c.accountBudgets = cleanAccountBudgets(d.accountBudgets);
+    if (Array.isArray(d.trips)) c.trips = normalizeTrips(d.trips);
     if (isCurrency(d.currency)) c.currency = d.currency;
     if (Array.isArray(d.currencies) && d.currencies.some(isCurrency)) c.currencies = [...new Set(d.currencies.filter(isCurrency).concat(dcur()))];
     if (d.rateOverrides && typeof d.rateOverrides === 'object') {
@@ -3954,6 +3971,7 @@ const renderDashboard = () => {
 
     const fx = fixedForMonth();
     $('dash-fixed').innerHTML = (fx.income > 0 || fx.total > 0) ? fixedSummaryHtml({ link: true }) : '';
+    renderTripHome();
     setMoney($('networth'), netWorth(), cur, 16);
     $('account-strip').innerHTML = state.accounts.map((a) => {
         const bal = accountBalance(a);
@@ -4633,6 +4651,20 @@ const setTxType = (type, keepCategory) => {
     updatePriceHint();
     updateDateHint();
     setTxKind(txKind);
+    updateTripRow();
+};
+// While a trip is on (or the entry already belongs to one), expenses show a "Part of the trip" switch.
+let txTripId = null;
+const updateTripRow = () => {
+    const trip = txTripId ? tripById(txTripId) : null;
+    const on = activeTrip();
+    const show = txType === 'expense' && !!(trip || on);
+    $('tx-trip-row').hidden = !show;
+    if (!show) return;
+    const t = trip || on;
+    $('tx-trip-name').textContent = `Part of ${t.name}`;
+    setSwitch($('tx-trip'), !!txTripId);
+    $('tx-trip').dataset.trip = t.id;
 };
 
 const updateDateHint = () => {
@@ -4679,6 +4711,7 @@ const openAddTx = (type = 'expense') => {
     fillCurrencySelect($('tx-currency'), dcur());
     $('tx-date').value = todayISO();
     txWaiting = false;
+    txTripId = tripIdFor(todayISO());
     setTxType(type);
     openOrSwap('modal-tx');
 };
@@ -4705,6 +4738,7 @@ const openEditTx = (id) => {
     $('tx-date').value = t.date;
     $('tx-note').value = t.note || '';
     txWaiting = t.pending === true;
+    txTripId = t.tripId || null;
     setTxType(t.type, t.category);
     $('tx-source').hidden = false;
     $('tx-source').innerHTML = t.bank
@@ -4763,6 +4797,7 @@ const submitTx = async () => {
         const idx = state.transactions.findIndex((t) => t.id === id);
         const waiting = date > todayISO() || txWaiting;
         record = { ...prev, type: txType, desc, amount, currency, category, date, note, accountId, receipt, fixed: txKind === 'fixed' || !!prev.recurringId, pending: waiting };
+        if (txType === 'expense' && txTripId) record.tripId = txTripId; else delete record.tripId;
         // Marked done here: same as tapping Received / Paid. Marked not done: it waits again, with reminders.
         if (prev.pending && !waiting) { record.paidAt = new Date().toISOString(); record.dueDate = prev.dueDate || prev.date; cancelPaymentReminders(`tx:${id}`); }
         if (!prev.pending && waiting) delete record.paidAt;
@@ -4770,6 +4805,7 @@ const submitTx = async () => {
         state.transactions[idx] = record;
     } else {
         record = { id: generateId(), type: txType, desc, amount, currency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txKind === 'fixed', pending: date > todayISO() || txWaiting };
+        if (txType === 'expense' && txTripId) record.tripId = txTripId;
         if (record.pending) setTimeout(scheduleReminders, 0);
         // A new fixed entry that repeats becomes a monthly fixed payment; this entry is its first one.
         // Fixed income is only expected each month: it counts when you tap Received (never on its own, never twice).
@@ -5455,6 +5491,7 @@ const quickSaveTx = (d) => {
     if (!state.accounts.length) ensureAccounts(state);
     const acc = state.accounts.find((a) => a.id === d.accountId) || state.accounts.find((a) => a.id === state.config.lastAccount) || state.accounts[0];
     const record = { id: generateId(), type: d.type, desc: d.desc, amount: d.amount, currency: d.currency, category: d.category, date: d.date, note: d.note || '', createdAt: Date.now(), recurringId: null, accountId: acc.id, receipt: null, fixed: d.type === 'expense' && !!d.fixed, pending: d.date > todayISO() };
+    if (d.type === 'expense' && tripIdFor(d.date)) record.tripId = tripIdFor(d.date);
     state.transactions.push(record);
     state.config.lastCategory[d.type] = d.category;
     saveState();
@@ -5837,6 +5874,7 @@ const setBillType = (type, selected) => {
 
 const openAddBill = (type = 'expense') => {
     $('bill-form').reset();
+    delete $('bill-form').dataset.sub;
     $('bill-id').value = '';
     $('bill-title').textContent = 'New bill or regular income';
     $('btn-delete-bill').hidden = true;
@@ -5853,6 +5891,7 @@ const openEditBill = (id) => {
     const b = state.recurring.find((x) => x.id === id);
     if (!b) return;
     $('bill-form').reset();
+    if (b.sub) $('bill-form').dataset.sub = '1'; else delete $('bill-form').dataset.sub;
     $('bill-id').value = b.id;
     $('bill-title').textContent = b.type === 'income' ? 'Edit regular income' : 'Edit bill';
     $('btn-delete-bill').hidden = false;
@@ -5886,7 +5925,8 @@ const submitBill = () => {
         nextDate,
         anchorDay: parseDate(nextDate).getDate(),
         autoLog: isOn($('bill-auto')),
-        accountId: $('bill-account').value || state.accounts[0].id
+        accountId: $('bill-account').value || state.accounts[0].id,
+        ...($('bill-form').dataset.sub === '1' ? { sub: true } : {})
     };
     let record;
     if (id) {
@@ -6034,6 +6074,187 @@ const submitRepay = () => {
     showToast(d.repaid >= d.amount ? `Settled with ${d.person}` : `Payment saved. ${formatCurrency(d.amount - d.repaid, d.currency)} still open.`, 'success');
     renderActive();
     return true;
+};
+
+/* =========================================================================
+   Trips: while a trip is on, every expense is tagged to it; see what the trip costs
+   ========================================================================= */
+const activeTrip = () => (state.config.trips || []).find((t) => !t.endedAt) || null;
+const tripById = (id) => (state.config.trips || []).find((t) => t.id === id) || null;
+// The trip a new expense on this date belongs to (the one that's on, if the date is in it).
+const tripIdFor = (date) => {
+    const t = activeTrip();
+    return t && date >= t.start && (!t.end || date <= addDaysISO(t.end, 1)) ? t.id : null;
+};
+const addDaysISO = (d, n) => toISODate(addDays(parseDate(d), n));
+const tripEntries = (id) => state.transactions.filter((t) => t.tripId === id && t.type === 'expense');
+const tripStats = (trip) => {
+    const list = tripEntries(trip.id).filter((t) => !isUpcoming(t));
+    const cur = dcur();
+    const spent = list.reduce((sum, t) => sum + toDisplay(t.amount, t.currency), 0);
+    const byCat = {};
+    list.forEach((t) => { byCat[t.category] = (byCat[t.category] || 0) + toDisplay(t.amount, t.currency); });
+    const budget = trip.budget ? convertAmount(trip.budget, trip.currency, cur) : 0;
+    const last = trip.endedAt ? (trip.end || trip.endedAt.slice(0, 10)) : todayISO();
+    const days = Math.max(1, Math.round((parseDate(last) - parseDate(trip.start)) / 86400000) + 1);
+    const total = trip.end ? Math.max(days, Math.round((parseDate(trip.end) - parseDate(trip.start)) / 86400000) + 1) : null;
+    return { list, spent, budget, left: budget - spent, byCat, days, total, perDay: spent / days, cur };
+};
+const tripCardHtml = (trip, opts = {}) => {
+    const st = tripStats(trip);
+    const pct = st.budget ? Math.min(100, (st.spent / st.budget) * 100) : 0;
+    const over = st.budget && st.spent > st.budget;
+    return `<div class="card trip-card${trip.endedAt ? ' is-ended' : ''}">
+        <div class="trip-head">
+            <span class="cat-badge trip-badge">${icon('x-plane')}</span>
+            <span class="trip-title"><span>${escapeHtml(trip.name)}</span><span>${trip.endedAt ? `${shortDate(trip.start)} – ${shortDate(trip.end || trip.endedAt.slice(0, 10))}` : `Day ${st.days}${st.total ? ` of ${st.total}` : ''} · since ${shortDate(trip.start)}`}</span></span>
+            ${opts.link ? `<button type="button" class="link-btn" data-open-trip="${escapeHtml(trip.id)}">Details</button>` : ''}
+        </div>
+        <div class="trip-amount"><span class="amount">${escapeHtml(formatCurrency(st.spent, st.cur))}</span><span>${st.budget ? `of ${escapeHtml(formatCurrency(st.budget, st.cur))}` : `spent · ${escapeHtml(formatCurrency(st.perDay, st.cur))} a day`}</span></div>
+        ${st.budget ? `<div class="meter${over ? ' is-over' : ''}" role="progressbar" aria-label="Trip budget used" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${Math.round(pct)}"><div class="meter-fill" style="width:${pct}%"></div></div>
+        <div class="meter-row"><span>${plural(st.list.length, 'expense')}</span><span>${over ? `<strong class="neg">${escapeHtml(formatCurrency(-st.left, st.cur))}</strong> over` : `<strong>${escapeHtml(formatCurrency(st.left, st.cur))}</strong> left`}</span></div>` : ''}
+        ${opts.actions && !trip.endedAt ? `<div class="trip-actions"><button type="button" class="btn btn-primary btn-sm" data-action="trip-add-expense">${icon('i-plus')} Add expense</button><button type="button" class="btn btn-secondary btn-sm" data-open-trip="${escapeHtml(trip.id)}">Details</button></div>` : ''}
+    </div>`;
+};
+const renderTripHome = () => {
+    const el = $('dash-trip');
+    if (!el) return;
+    const t = activeTrip();
+    el.innerHTML = t ? tripCardHtml(t, { actions: true }) : '';
+};
+let tripView = null;
+const openTrips = (id) => {
+    tripView = id || (activeTrip() ? activeTrip().id : null);
+    renderTripSheet();
+    openOrSwap('modal-trip');
+};
+const renderTripSheet = () => {
+    const trip = tripView ? tripById(tripView) : null;
+    const past = (state.config.trips || []).filter((t) => t.endedAt).slice().reverse();
+    $('trip-title').textContent = trip ? trip.name : 'Start a trip';
+    $('trip-form').hidden = !!trip;
+    $('trip-view').hidden = !trip;
+    $('btn-trip-start').hidden = !!trip;
+    $('btn-trip-end').hidden = !trip || !!trip.endedAt;
+    $('btn-trip-delete').hidden = !trip || !trip.endedAt;
+    if (!trip) {
+        $('trip-name').value = '';
+        $('trip-budget').value = '';
+        $('trip-start').value = todayISO();
+        $('trip-end').value = '';
+        fillCurrencySelect($('trip-currency'), dcur());
+    } else {
+        const st = tripStats(trip);
+        const cats = Object.entries(st.byCat).sort((a, b) => b[1] - a[1]).slice(0, 5);
+        $('trip-view').innerHTML = tripCardHtml(trip)
+            + (cats.length ? `<div class="section-head"><h2>Where it went</h2></div><ul class="trip-cats">${cats.map(([c, v]) => `<li>${catBadge(c, 'expense')}<span>${escapeHtml(catById(c).name)}</span><span class="amount">${escapeHtml(formatCurrency(v, st.cur))}</span></li>`).join('')}</ul>` : '')
+            + `<div class="section-head"><h2>Expenses</h2></div>`
+            + (st.list.length ? `<ul class="tx-list">${st.list.slice().sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, 40).map(txRow).join('')}</ul>`
+                : `<p class="field-hint">Nothing yet. Every expense you add while the trip is on lands here, also ones Vela reads from your bank SMS.</p>`);
+    }
+    $('trip-past').innerHTML = !trip && past.length ? `<div class="section-head"><h2>Past trips</h2></div>${past.map((t) => { const st = tripStats(t); return `<button type="button" class="row-btn" data-open-trip="${escapeHtml(t.id)}">${'<span class="row-icon tint">' + icon('x-plane') + '</span>'}<span class="row-label"><span>${escapeHtml(t.name)}</span><span>${shortDate(t.start)} · ${plural(st.list.length, 'expense')}</span></span><span class="amount">${escapeHtml(formatCurrency(st.spent, st.cur))}</span></button>`; }).join('')}` : '';
+};
+const startTrip = () => {
+    const name = $('trip-name').value.trim();
+    const start = $('trip-start').value;
+    const end = $('trip-end').value;
+    if (!name) return fieldError($('trip-name'), 'Give the trip a name, like "Trip to Ella".');
+    if (!isISODate(start)) return fieldError($('trip-start'), 'Pick the day the trip starts.');
+    if (end && end < start) return fieldError($('trip-end'), 'The trip ends after it starts.');
+    if (activeTrip()) activeTrip().endedAt = new Date().toISOString();
+    const trip = { id: generateId(), name, budget: Math.max(0, toNumber($('trip-budget').value, 0)), currency: normCur($('trip-currency').value), start, end: end || null, endedAt: null };
+    state.config.trips = [...(state.config.trips || []), trip];
+    // Expenses already added from the start day on join the trip.
+    state.transactions.forEach((t) => { if (t.type === 'expense' && !t.tripId && !t.recurringId && t.date >= start && (!end || t.date <= end)) { t.tripId = trip.id; queueSync('transaction', t.id, 'upsert', false); } });
+    if (!commitState('The trip')) return false;
+    flushSync();
+    haptic('MEDIUM');
+    closeSheet('modal-trip');
+    showToast(`${name} started. Expenses you add now count for the trip.`, 'success');
+    renderActive();
+    return true;
+};
+const endTrip = () => {
+    const trip = tripView && tripById(tripView);
+    if (!trip) return;
+    showConfirm({
+        title: `End ${trip.name}?`,
+        message: 'New expenses stop counting for this trip. You can still see it under Past trips.',
+        confirmLabel: 'End trip',
+        danger: false,
+        onConfirm: () => {
+            trip.endedAt = new Date().toISOString();
+            if (!trip.end || trip.end > todayISO()) trip.end = todayISO();
+            if (!commitState('Ending the trip')) return;
+            const st = tripStats(trip);
+            closeSheet('modal-trip');
+            showToast(`${trip.name}: ${formatCurrency(st.spent, st.cur)} in ${plural(st.days, 'day')}`, 'success');
+            renderActive();
+        }
+    });
+};
+const deleteTrip = () => {
+    const trip = tripView && tripById(tripView);
+    if (!trip) return;
+    showConfirm({
+        title: `Remove ${trip.name}?`,
+        message: 'The trip goes; its expenses stay in your history, just without the trip label.',
+        confirmLabel: 'Remove',
+        onConfirm: () => {
+            state.config.trips = state.config.trips.filter((t) => t.id !== trip.id);
+            state.transactions.forEach((t) => { if (t.tripId === trip.id) { delete t.tripId; queueSync('transaction', t.id, 'upsert', false); } });
+            if (!commitState('Removing the trip')) return;
+            flushSync();
+            closeSheet('modal-trip');
+            showToast('Trip removed', 'success');
+            renderActive();
+        }
+    });
+};
+
+/* =========================================================================
+   Subscriptions: pick the service, type what you pay, it's a monthly bill with a reminder
+   ========================================================================= */
+const SUBSCRIPTIONS = [
+    ['netflix', 'Netflix', 'Entertainment'], ['spotify', 'Spotify Premium', 'Entertainment'], ['youtube', 'YouTube Premium', 'Entertainment'],
+    ['disney', 'Disney+', 'Entertainment'], ['primevideo', 'Prime Video', 'Entertainment'], ['hbomax', 'HBO Max', 'Entertainment'],
+    ['apple', 'iCloud+', 'Other'], ['google', 'Google One', 'Other'], ['openai', 'ChatGPT Plus', 'Other'], ['claude', 'Claude Pro', 'Other'],
+    ['gemini', 'Gemini Advanced', 'Other'], ['microsoft', 'Microsoft 365', 'Other'], ['canva', 'Canva Pro', 'Other'], ['adobe', 'Adobe Creative Cloud', 'Other'],
+    ['notion', 'Notion', 'Other'], ['dropbox', 'Dropbox', 'Other'], ['duolingo', 'Duolingo Super', 'Other'], ['grammarly', 'Grammarly', 'Other'],
+    ['linkedin', 'LinkedIn Premium', 'Other'], ['crunchyroll', 'Crunchyroll', 'Entertainment'], ['audible', 'Audible', 'Entertainment'],
+    ['deezer', 'Deezer', 'Entertainment'], ['playstation', 'PlayStation Plus', 'Entertainment'], ['xbox', 'Xbox Game Pass', 'Entertainment'],
+    ['nintendo', 'Nintendo Switch Online', 'Entertainment'], ['peotv', 'PEO TV', 'Utilities'], ['dialog', 'Dialog TV', 'Utilities'],
+    ['slt', 'SLT Fibre', 'Utilities'], ['capcut', 'CapCut Pro', 'Other'], ['zoom', 'Zoom Pro', 'Other'], ['tinder', 'Tinder Gold', 'Entertainment'],
+    ['viu', 'Viu', 'Entertainment'], ['hotstar', 'Hotstar', 'Entertainment'], ['zee5', 'ZEE5', 'Entertainment'], ['perplexity', 'Perplexity Pro', 'Other']
+];
+const SUB_SLUGS = new Set([...SUBSCRIPTIONS.map(([slug]) => slug), ...BRAND_KINDS[4][1]]);
+// Your subscriptions: monthly bills for a streaming / app / TV service (or added from the Subscription menu).
+const mySubscriptions = () => state.recurring.filter((b) => b.type === 'expense' && (b.sub || SUB_SLUGS.has((brandOfName(b.name) || {}).slug)));
+const renderSubsSheet = () => {
+    const mine = mySubscriptions();
+    const cur = dcur();
+    const total = mine.reduce((sum, b) => sum + monthlyEquivalent(b), 0);
+    $('subs-mine').innerHTML = mine.length ? `<div class="subs-total"><span>Your subscriptions</span><strong class="amount">${escapeHtml(formatCurrency(total, cur))}</strong><span>a month · ${escapeHtml(formatCurrency(total * 12, cur))} a year</span></div>
+        <ul class="cat-manage">${mine.map((b) => `<li><button type="button" class="row-btn" data-edit-bill="${escapeHtml(b.id)}">${entryBadge(b.name, b.category, 'expense')}<span class="row-label"><span>${escapeHtml(b.name)}</span><span>Next ${escapeHtml(shortDate(b.nextDate))} · ${escapeHtml(FREQ_LABELS[b.frequency] || 'Monthly')}</span></span><span class="amount">${escapeHtml(formatCurrency(b.amount, b.currency))}</span></button></li>`).join('')}</ul>` : '';
+    const have = new Set(mine.map((b) => b.name.toLowerCase()));
+    $('subs-grid').innerHTML = SUBSCRIPTIONS.filter(([, name]) => !have.has(name.toLowerCase())).map(([slug, name]) => {
+        const b = BRANDS.find((x) => x.slug === slug);
+        return `<button type="button" class="brand-choice" data-sub-pick="${escapeHtml(name)}" data-sub-cat="${escapeHtml(BRAND_KINDS[4][1].has(slug) || !b ? 'Entertainment' : '')}">${b ? brandBadge(b) : ''}<span>${escapeHtml(name)}</span></button>`;
+    }).join('') + `<button type="button" class="brand-choice" data-sub-pick=""><span class="cat-badge" style="--cat:var(--text-3)">${icon('i-plus')}</span><span>Other</span></button>`;
+};
+const openSubscriptions = () => { renderSubsSheet(); openOrSwap('modal-subs'); };
+const pickSubscription = (name) => {
+    const entry = SUBSCRIPTIONS.find(([, n]) => n === name);
+    openAddBill('expense');
+    $('bill-title').textContent = name ? `Add ${name}` : 'New subscription';
+    $('bill-name').value = name;
+    $('bill-frequency').value = 'monthly';
+    if (entry && catsOfType('expense').some((c) => c.id === entry[2])) $('bill-category').value = entry[2];
+    // A price you paid before for it fills in; otherwise you type what you pay (Vela doesn't guess prices).
+    const before = state.transactions.filter((t) => t.type === 'expense' && name && t.desc.toLowerCase() === name.toLowerCase()).sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+    if (before) { $('bill-amount').value = before.amount; fillCurrencySelect($('bill-currency'), before.currency); }
+    $('bill-form').dataset.sub = '1';
+    setTimeout(() => (name ? $('bill-amount') : $('bill-name')).focus(), 380);
 };
 
 /* =========================================================================
@@ -7858,6 +8079,15 @@ const initEvents = () => {
         if (d.pick) { const p = txPicks[Number(d.pick)]; if (p) applyPick(p); return; }
         if (d.brandPick) { pickDescBrand(d.brandPick); return; }
         if (d.namePick) { pickName(d); return; }
+        if (d.openTrip) { openTrips(d.openTrip); return; }
+        if (d.subPick !== undefined) { pickSubscription(d.subPick); return; }
+        if (d.action === 'add-trip') { openTrips(); return; }
+        if (d.action === 'add-subscription') { openSubscriptions(); return; }
+        if (d.action === 'trip-start') { startTrip(); return; }
+        if (d.action === 'trip-end') { endTrip(); return; }
+        if (d.action === 'trip-delete') { deleteTrip(); return; }
+        if (d.action === 'trip-new') { tripView = null; renderTripSheet(); return; }
+        if (d.action === 'trip-add-expense') { openAddTx('expense'); return; }
         if (d.starterPick) { starterPick(d.starterPick); return; }
         if (d.budgetMode) { budgetModeDraft = d.budgetMode; syncBudgetModeUi(); return; }
         if (d.budgetSave !== undefined) { budgetSaveDraft = Number(d.budgetSave); syncBudgetModeUi(); return; }
@@ -8093,6 +8323,8 @@ const initEvents = () => {
     initAccountHold();
     updateNotifBell();
     $('switch-approval').addEventListener('click', toggleApproval);
+    $('tx-trip').addEventListener('click', () => { txTripId = txTripId ? null : $('tx-trip').dataset.trip; updateTripRow(); });
+    $('tx-date').addEventListener('change', () => { if (!$('tx-id').value && txType === 'expense') { txTripId = tripIdFor($('tx-date').value); updateTripRow(); } });
     $('mfa-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitMfa(); } });
     setInterval(pollSignInRequests, 8000);
     $('tx-logo-add').addEventListener('click', pickShopLogo);

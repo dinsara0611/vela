@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.39.1">
+    <link rel="stylesheet" href="style.css?v=4.40.0">
 </head>
 <body data-view="dashboard">
 
@@ -246,6 +246,7 @@
                         </div>
                     </article>
 
+                    <div id="dash-trip"></div>
                     <div id="dash-fixed"></div>
 
                     <div class="tile-row">
@@ -685,9 +686,11 @@
                 <button class="action-tile" type="button" data-action="add-expense"><span class="cat-badge" style="--cat:var(--expense)"><svg class="ic"><use href="#i-arrow-up"/></svg></span>Expense</button>
                 <button class="action-tile" type="button" data-action="add-income"><span class="cat-badge" style="--cat:var(--income)"><svg class="ic"><use href="#i-arrow-down"/></svg></span>Income</button>
                 <button class="action-tile" type="button" data-action="add-transfer"><span class="cat-badge" style="--cat:var(--pal-teal)"><svg class="ic"><use href="#i-swap"/></svg></span>Transfer</button>
+                <button class="action-tile" type="button" data-action="add-subscription"><span class="cat-badge" style="--cat:var(--pal-magenta)"><svg class="ic"><use href="#x-music"/></svg></span>Subscription</button>
                 <button class="action-tile" type="button" data-action="add-bill"><span class="cat-badge" style="--cat:var(--pal-cyan)"><svg class="ic"><use href="#i-repeat"/></svg></span>Bill</button>
-                <button class="action-tile" type="button" data-action="deposit"><span class="cat-badge" style="--cat:var(--pal-teal)"><svg class="ic"><use href="#i-deposit"/></svg></span>Deposit</button>
+                <button class="action-tile" type="button" data-action="add-trip"><span class="cat-badge" style="--cat:var(--pal-indigo)"><svg class="ic"><use href="#x-plane"/></svg></span>Trip</button>
                 <button class="action-tile" type="button" data-action="add-goal"><span class="cat-badge" style="--cat:var(--pal-violet)"><svg class="ic"><use href="#i-target"/></svg></span>Goal</button>
+                <button class="action-tile" type="button" data-action="deposit"><span class="cat-badge" style="--cat:var(--pal-teal)"><svg class="ic"><use href="#i-deposit"/></svg></span>Deposit</button>
                 <button class="action-tile" type="button" data-action="add-debt"><span class="cat-badge" style="--cat:var(--pal-orange)"><svg class="ic"><use href="#i-users"/></svg></span>Debt</button>
             </div>
         </div>
@@ -763,6 +766,10 @@
                             <div class="setting-text"><span class="setting-title" id="tx-repeat-text">Repeats every month</span><span class="setting-desc" id="tx-repeat-desc">Adds it to your fixed expenses, logs it each month and reminds you.</span></div>
                             <button class="switch" type="button" role="switch" aria-checked="true" id="tx-repeat" aria-label="Repeats every month"></button>
                         </div>
+                    </div>
+                    <div class="setting-row tx-trip-row" id="tx-trip-row" hidden>
+                        <div class="setting-text"><span class="setting-title" id="tx-trip-name">Part of the trip</span><span class="setting-desc">Counts in the trip's total.</span></div>
+                        <button class="switch" type="button" role="switch" aria-checked="false" id="tx-trip" aria-labelledby="tx-trip-name"></button>
                     </div>
                     <div class="field">
                         <label class="field-label" for="tx-date">Date</label>
@@ -1257,6 +1264,62 @@
         </div>
     </div>
 
+    <!-- Trips -->
+    <div class="sheet-overlay" id="modal-trip" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="trip-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <h2 class="sheet-title" id="trip-title">Start a trip</h2>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body">
+                <div id="trip-form">
+                    <p class="card-sub">While the trip is on, every expense you add (and ones from your bank SMS) counts for it, so you see what the whole trip cost.</p>
+                    <div class="field">
+                        <label class="field-label" for="trip-name">Trip name</label>
+                        <input type="text" id="trip-name" class="input" placeholder="e.g. Trip to Ella" maxlength="60" autocomplete="off">
+                    </div>
+                    <div class="field amount-field">
+                        <label class="field-label" for="trip-budget">Budget <span class="faint">(optional)</span></label>
+                        <div class="input-group">
+                            <input type="text" id="trip-budget" class="input money-input" inputmode="decimal" placeholder="0.00" autocomplete="off">
+                            <label class="sr-only" for="trip-currency">Currency</label>
+                            <div class="select"><select id="trip-currency" class="input"></select></div>
+                        </div>
+                    </div>
+                    <div class="field-row">
+                        <div class="field"><label class="field-label" for="trip-start">From</label><input type="date" id="trip-start" class="input"></div>
+                        <div class="field"><label class="field-label" for="trip-end">Until <span class="faint">(optional)</span></label><input type="date" id="trip-end" class="input"></div>
+                    </div>
+                </div>
+                <div id="trip-view" hidden></div>
+                <div id="trip-past"></div>
+            </div>
+            <div class="sheet-foot">
+                <button type="button" class="btn btn-danger" id="btn-trip-delete" data-action="trip-delete" aria-label="Remove trip" hidden><svg class="ic"><use href="#i-trash"/></svg></button>
+                <button type="button" class="btn btn-secondary" id="btn-trip-end" data-action="trip-end" hidden>End trip</button>
+                <button type="button" class="btn btn-primary" id="btn-trip-start" data-action="trip-start">Start trip</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Subscriptions -->
+    <div class="sheet-overlay" id="modal-subs" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="subs-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <h2 class="sheet-title" id="subs-title">Subscriptions</h2>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body">
+                <div id="subs-mine"></div>
+                <div class="section-head"><h2>Add one</h2></div>
+                <p class="field-hint" style="margin:0">Tap it, type what you pay, done. Vela reminds you before each payment.</p>
+                <div class="brand-choice-grid" id="subs-grid"></div>
+            </div>
+        </div>
+    </div>
+
     <!-- Choose a brand logo for a name -->
     <div class="sheet-overlay" id="modal-brand-pick" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="brand-pick-title">
@@ -1590,7 +1653,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.39.1"></script>
+    <script src="app.js?v=4.40.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
