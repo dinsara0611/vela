@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.45.1';
+const APP_VERSION = '4.46.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -763,6 +763,7 @@ const normalizeBill = (b) => {
         accountId: b.accountId ? String(b.accountId) : null,
         autoLog: b.autoLog !== false,
         createdAt: stamp(b.createdAt),
+        ...(toNumber(b.carry, 0) > 0 ? { carry: round2(toNumber(b.carry, 0)), ...(cleanDate(b.carryFrom) ? { carryFrom: cleanDate(b.carryFrom) } : {}) } : {}),
         ...(b.sub === true ? { sub: true } : {})
     };
 };
@@ -1524,7 +1525,19 @@ const renderViewBar = () => {
     document.querySelectorAll('.view-bar').forEach((el) => el.remove());
     const a = viewAccountObj();
     const view = $(`tab-${currentTab}`);
-    if (!a || !view || !['dashboard', 'activity', 'plan', 'analytics'].includes(currentTab)) return;
+    if (!view || !['dashboard', 'activity', 'plan', 'analytics'].includes(currentTab)) return;
+    if (!a) {
+        if (state.accounts.length < 2) return;
+        const total = netWorth();
+        const bar = document.createElement('button');
+        bar.type = 'button';
+        bar.className = 'view-bar';
+        bar.dataset.action = 'switch-account';
+        bar.setAttribute('aria-label', `All accounts, ${formatCurrency(total, dcur())}. Switch account`);
+        bar.innerHTML = `<span class="account-icon">${icon('i-wallet')}</span><span class="view-bar-text"><strong>All accounts</strong><span class="amount ${total < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(total, dcur()))}</span></span><span class="view-bar-switch">One account${icon('i-chevron-down', 'ic ic-sm')}</span>`;
+        view.prepend(bar);
+        return;
+    }
     if (currentTab === 'analytics' && insightsAll()) return; // Insights is showing every account together
     const bal = accountBalance(a);
     const bar = document.createElement('button');
@@ -1580,7 +1593,13 @@ const viewId = () => {
     if (!state.accounts.length) return 'all';
     let v = null;
     try { v = localStorage.getItem(VIEW_KEY); } catch (e) { /* storage blocked */ }
+    // Every account together (the default since 4.46): one balance, one list, one budget.
+    try {
+        if (localStorage.getItem('VELA_TOGETHER') !== '1') { localStorage.setItem('VELA_TOGETHER', '1'); if (state.accounts.length > 1) { localStorage.setItem(VIEW_KEY, 'all'); v = 'all'; } }
+    } catch (e) { /* storage blocked */ }
+    if (v === 'all' && state.accounts.length > 1) return 'all';
     if (v && state.accounts.some((a) => a.id === v)) return v;
+    if (state.accounts.length > 1) return 'all';
     // First time (or that account was deleted): the first account, kept until you switch, so saving an entry
     // to another account never moves you there by itself.
     const first = state.accounts[0].id;
@@ -1697,7 +1716,6 @@ const budgetSnapshot = () => {
 };
 function stashBudget() {
     const v = viewId();
-    if (v === 'all') return;
     state.config.accountBudgets = { ...(state.config.accountBudgets || {}), [v]: budgetSnapshot() };
 }
 function loadBudget(id) {
@@ -1709,7 +1727,6 @@ function loadBudget(id) {
 // On start, after cloud settings arrive and after a restore: the current account's budget in place.
 function applyViewBudget() {
     const v = viewId();
-    if (v === 'all') return;
     if (!loadBudget(v)) stashBudget();
 }
 const cleanAccountBudgets = (o) => {
@@ -1728,7 +1745,7 @@ const cleanAccountBudgets = (o) => {
     return out;
 };
 const setViewAccount = (id) => {
-    if (!id || !state.accounts.some((a) => a.id === id)) return;
+    if (!id || !(id === 'all' || state.accounts.some((a) => a.id === id))) return;
     const changed = id !== viewId();
     stashBudget();
     try { localStorage.setItem(VIEW_KEY, id); } catch (e) { /* storage blocked */ }
@@ -1737,7 +1754,7 @@ const setViewAccount = (id) => {
     activityAccount = id;
     renderActive();
     const a = state.accounts.find((x) => x.id === id);
-    if (changed) showToast(`Switched to ${a.name}`, 'info');
+    if (changed) showToast(id === 'all' ? 'Showing all accounts together' : `Switched to ${a.name}`, 'info');
     haptic();
 };
 const sortByNewest = (list) => [...list].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
@@ -1877,7 +1894,8 @@ const fixedForMonth = (y = new Date().getFullYear(), m = new Date().getMonth()) 
             items.push({ name: t.desc, amount: toDisplay(t.amount, t.currency), date: t.date, paid: !isUpcoming(t), billId: b.id, txId: t.id });
         });
         billDatesInMonth(b, y, m).filter((d) => d >= b.nextDate).forEach((d) => {
-            items.push({ name: b.name, amount: toDisplay(b.amount, b.currency), date: d, paid: false, billId: b.id });
+            // The next one includes anything carried over; the ones after are the normal amount.
+            items.push({ name: b.name, amount: toDisplay(d === b.nextDate ? billDue(b) : b.amount, b.currency), date: d, paid: false, billId: b.id });
         });
     });
     // One-off fixed entries, and entries whose repeating fixed expense was deleted (they still happened).
@@ -1941,12 +1959,14 @@ const advanceDate = (dateStr, frequency, anchorDay) => {
     return toISODate(new Date(y, m, Math.min(anchorDay || d.getDate(), daysInMonth(y, m))));
 };
 
+const billDue = (bill) => round2(bill.amount + (bill.carry || 0)); // this time's amount, with anything carried over
 const logBill = (bill, date) => {
+    const carried = bill.carry || 0;
     const tx = {
         id: generateId(),
         type: bill.type,
         desc: bill.name,
-        amount: bill.amount,
+        amount: billDue(bill),
         currency: bill.currency,
         category: bill.category,
         date,
@@ -1959,6 +1979,7 @@ const logBill = (bill, date) => {
     };
     if (tx.type === 'expense' && sectionForCategory(tx.category)) tx.sectionId = sectionForCategory(tx.category);
     if (beforeBalanceFor(tx.accountId, tx.date)) tx.beforeBalance = true;
+    if (carried) { tx.note = `Includes ${formatCurrency(carried, bill.currency)} carried from ${bill.carryFrom ? shortDate(bill.carryFrom) : 'last time'}`; delete bill.carry; delete bill.carryFrom; }
     state.transactions.push(tx);
     queueSync('transaction', tx.id, 'upsert', false);
     return tx;
@@ -2005,7 +2026,7 @@ const markBillPaid = (id) => {
     flushSync();
     haptic('MEDIUM');
     scheduleReminders();
-    showToast(`${bill.name} ${bill.type === 'income' ? 'received' : 'paid'}: ${formatCurrency(bill.amount, bill.currency)}. Next ${shortDate(bill.nextDate)}.`, 'success');
+    showToast(`${bill.name} ${bill.type === 'income' ? 'received' : 'paid'}: ${formatCurrency(tx.amount, bill.currency)}. Next ${shortDate(bill.nextDate)}.`, 'success');
     renderActive();
     if (isSheetOpen('modal-payments')) refreshPaymentsPopup();
 };
@@ -2131,7 +2152,7 @@ const enableReminders = async (on) => {
    ========================================================================= */
 const transferLine = (t) => `${accountById(t.accountId).name} to ${accountById(t.toAccountId).name}`;
 
-const txRow = (t, { showDate = true, withAccount = false } = {}) => {
+const txRow = (t, { showDate = true, withAccount = viewId() === 'all' && state.accounts.length > 1 } = {}) => {
     const accName = withAccount ? (() => { const a = state.accounts.find((x) => x.id === t.accountId); return a ? a.name : ''; })() : '';
     const when = showDate ? `<span class="tx-when">${escapeHtml(relativeDayLabel(t.date))}</span>` : '';
     if (t.type === 'transfer') {
@@ -3978,7 +3999,7 @@ const paymentItems = ({ horizonDays = 7, view = false } = {}) => {
         key: `tx:${t.id}`, kind: 'tx', id: t.id, name: t.desc, type: t.type, amount: t.amount, currency: t.currency, category: t.category, due: t.date, status: payStatus(t.date)
     }));
     (view ? viewBills() : state.recurring).filter((b) => !b.autoLog).forEach((b) => items.push({
-        key: `bill:${b.id}`, kind: 'bill', id: b.id, name: b.name, type: b.type, amount: b.amount, currency: b.currency, category: b.category, due: b.nextDate, status: payStatus(b.nextDate)
+        key: `bill:${b.id}`, kind: 'bill', id: b.id, name: b.name, type: b.type, amount: billDue(b), carry: b.carry || 0, carryFrom: b.carryFrom || null, currency: b.currency, category: b.category, due: b.nextDate, status: payStatus(b.nextDate)
     }));
     return items.filter((i) => i.status !== 'upcoming' || i.due <= horizon).sort((a, b) => (a.due > b.due ? 1 : a.due < b.due ? -1 : 0));
 };
@@ -4003,6 +4024,57 @@ const askMarkPaid = (key) => {
         onConfirm: () => markPaid(key)
     });
 };
+let payLaterKey = null;
+const openPayLater = (key) => {
+    const i = paymentByKey(key);
+    if (!i) return;
+    payLaterKey = key;
+    const income = i.type === 'income';
+    const bill = i.kind === 'bill' ? state.recurring.find((b) => b.id === i.id) : null;
+    $('pay-later-title').textContent = `${i.name}: not this time`;
+    $('pay-later-sub').textContent = `${formatDisplay(i.amount, i.currency)} ${income ? 'expected' : 'due'} ${shortDate(i.due)}.`;
+    if (bill) {
+        const next = advanceDate(bill.nextDate, bill.frequency, bill.anchorDay);
+        $('pay-later-carry-text').textContent = `${income ? 'Paid' : 'Pay'} next time, together`;
+        $('pay-later-carry-desc').textContent = `${shortDate(next)}: ${formatDisplay(billDue(bill) + bill.amount, bill.currency)} (this time's ${formatDisplay(billDue(bill), bill.currency)} + ${formatDisplay(bill.amount, bill.currency)}), then ${formatDisplay(bill.amount, bill.currency)} again.`;
+        $('pay-later-skip-desc').textContent = `Nothing ${income ? 'comes in' : 'is paid'} this time; next ${shortDate(next)} is ${formatDisplay(bill.amount, bill.currency)}.`;
+    }
+    $('pay-later-carry').hidden = !bill;
+    $('pay-later-skip').hidden = !bill;
+    $('pay-later-move').hidden = !!bill;
+    $('pay-later-move-desc').textContent = bill ? '' : `It waits until ${shortDate(toISODate(addMonthsSafe(parseDate(i.due), 1)))} instead.`;
+    openOrSwap('modal-pay-later');
+};
+const addMonthsSafe = (d, n) => { const day = d.getDate(); const x = new Date(d.getFullYear(), d.getMonth() + n, 1); x.setDate(Math.min(day, daysInMonth(x.getFullYear(), x.getMonth()))); return x; };
+const payLater = (how) => {
+    const key = payLaterKey;
+    const i = key && paymentByKey(key);
+    if (!i) return;
+    if (i.kind === 'bill') {
+        const bill = state.recurring.find((b) => b.id === i.id);
+        if (!bill) return;
+        const thisTime = billDue(bill);
+        const from = bill.carryFrom || bill.nextDate;
+        bill.nextDate = advanceDate(bill.nextDate, bill.frequency, bill.anchorDay);
+        if (how === 'carry') { bill.carry = round2(thisTime); bill.carryFrom = from; } else { delete bill.carry; delete bill.carryFrom; }
+        if (!commitState('That')) return;
+        queueSync('recurring', bill.id, 'upsert');
+        cancelPaymentReminders(key);
+        showToast(how === 'carry' ? `Next time (${shortDate(bill.nextDate)}): ${formatDisplay(billDue(bill), bill.currency)} together` : `Skipped. Next: ${formatDisplay(bill.amount, bill.currency)} on ${shortDate(bill.nextDate)}`, 'success');
+    } else {
+        const t = state.transactions.find((x) => x.id === i.id);
+        if (!t) return;
+        t.date = toISODate(addMonthsSafe(parseDate(t.date), 1));
+        if (!commitState('That')) return;
+        queueSync('transaction', t.id, 'upsert');
+        cancelPaymentReminders(key);
+        showToast(`Moved to ${shortDate(t.date)}`, 'success');
+    }
+    payLaterKey = null;
+    closeSheet('modal-pay-later');
+    scheduleReminders();
+    renderActive();
+};
 const markPaid = (key) => {
     if (key.startsWith('tx:')) confirmTx(key.slice(3));
     else if (key.startsWith('bill:')) markBillPaid(key.slice(5));
@@ -4013,9 +4085,10 @@ const paymentRowHtml = (i) => {
     const when = i.status === 'overdue' ? `${income ? 'Expected' : 'Was due'} ${shortDate(i.due)}` : i.status === 'due' ? (income ? 'Expected today' : 'Due today') : `${income ? 'Expected' : 'Due'} ${shortDate(i.due)}`;
     return `<li class="pay-row" data-status="${i.status}">
         ${entryBadge(i.name, i.category, i.type)}
-        <div class="pay-main"><span class="pay-name">${escapeHtml(i.name)}</span><span class="pay-meta"><span class="pay-pill" data-status="${i.status}">${payStatusLabel(i.status, i.type)}</span>${escapeHtml(when)}</span></div>
+        <div class="pay-main"><span class="pay-name">${escapeHtml(i.name)}</span><span class="pay-meta"><span class="pay-pill" data-status="${i.status}">${payStatusLabel(i.status, i.type)}</span>${escapeHtml(when)}</span>${i.carry ? `<span class="pay-carry">Includes ${escapeHtml(formatDisplay(i.carry, i.currency))} from ${escapeHtml(i.carryFrom ? shortDate(i.carryFrom) : 'last time')}</span>` : ''}</div>
         <div class="pay-end"><span class="amount ${income ? 'text-income' : ''}">${escapeHtml(formatDisplay(i.amount, i.currency))}</span>${origNote(i.amount, i.currency)}
-        <button type="button" class="btn btn-xs ${income ? 'btn-income' : 'btn-primary'}" data-pay="${escapeHtml(i.key)}">${income ? 'Mark received' : 'Mark as paid'}</button></div>
+        <button type="button" class="btn btn-xs ${income ? 'btn-income' : 'btn-primary'}" data-pay="${escapeHtml(i.key)}">${income ? 'Mark received' : 'Mark as paid'}</button>
+        <button type="button" class="link-btn pay-later-btn" data-pay-later="${escapeHtml(i.key)}">Not this time</button></div>
     </li>`;
 };
 const paymentSummary = (items) => {
@@ -4166,7 +4239,7 @@ const renderDashboard = () => {
     const s = monthStats();
 
     const acc = viewAccountObj();
-    $('dash-month-label').textContent = acc ? `${acc.name} balance` : 'Balance';
+    $('dash-month-label').textContent = acc ? `${acc.name} balance` : state.accounts.length > 1 ? 'All accounts balance' : 'Balance';
     const hideIt = viewBalanceHidden();
     const eye = $('btn-hide-balance');
     if (eye) {
@@ -4249,7 +4322,8 @@ const renderDashboard = () => {
     // Recent: this account, or every account (each entry then says which account it was in or out of).
     let recentAll = false;
     try { recentAll = localStorage.getItem('VELA_RECENT_ALL') === '1'; } catch (e) { /* storage blocked */ }
-    $('recent-scope').hidden = state.accounts.length < 2;
+    $('recent-scope').hidden = state.accounts.length < 2 || viewId() === 'all';
+    if (viewId() === 'all') recentAll = true;
     setPressed('[data-recent-all]', (b) => (b.dataset.recentAll === '1') === recentAll);
     const recentSrc = recentAll && state.accounts.length > 1 ? state.transactions : viewTx();
     const recent = sortByNewest(recentSrc.filter((t) => !t.pending)).slice(0, recentAll ? 10 : 6);
@@ -4481,9 +4555,9 @@ const billRow = (b) => {
         <button type="button" class="plan-row-main" data-edit-bill="${escapeHtml(b.id)}" aria-label="Edit ${escapeHtml(b.name)}">
             ${entryBadge(b.name, b.category, b.type)}
             <span class="row-main"><span class="row-title">${escapeHtml(b.name)}</span><span class="row-sub">${FREQ_PHRASE[b.frequency]}, ${how}</span></span>
-            <span class="row-end"><span class="amount ${b.type === 'income' ? 'text-income' : ''}">${escapeHtml(formatDisplay(b.amount, b.currency))}</span><span class="badge-due" data-tone="${dl.tone}">${escapeHtml(label)}</span></span>
+            <span class="row-end"><span class="amount ${b.type === 'income' ? 'text-income' : ''}">${escapeHtml(formatDisplay(billDue(b), b.currency))}</span>${b.carry ? `<span class="row-sub">incl. ${escapeHtml(formatDisplay(b.carry, b.currency))} carried</span>` : ''}<span class="badge-due" data-tone="${dl.tone}">${escapeHtml(label)}</span></span>
         </button>
-        ${b.autoLog ? '' : `<button type="button" class="btn btn-secondary btn-sm paid-btn" data-bill-paid="${escapeHtml(b.id)}">${icon('i-check', 'ic ic-sm')} ${b.type === 'income' ? 'Mark received' : 'Mark paid'}</button>`}
+        ${b.autoLog ? '' : `<div class="bill-actions"><button type="button" class="btn btn-secondary btn-sm paid-btn" data-bill-paid="${escapeHtml(b.id)}">${icon('i-check', 'ic ic-sm')} ${b.type === 'income' ? 'Mark received' : 'Mark paid'}</button><button type="button" class="link-btn pay-later-btn" data-pay-later="bill:${escapeHtml(b.id)}">Not this time</button></div>`}
     </div>`;
 };
 
@@ -4596,7 +4670,7 @@ const renderAnalytics = () => {
     const all = insightsAll();
     const sw = $('insights-scope');
     if (sw) {
-        sw.hidden = state.accounts.length < 2;
+        sw.hidden = state.accounts.length < 2 || viewId() === 'all';
         const a = viewAccountObj();
         $('insights-scope-this').textContent = a ? a.name : 'This account';
         setPressed('[data-insights-scope]', (b) => (b.dataset.insightsScope === 'all') === all);
@@ -5220,7 +5294,7 @@ const submitTx = async () => {
         showToast(`Saved as waiting: ${formatCurrency(amount, currency)} on ${shortDate(date)}. Tap “Paid” when it’s done and it counts in your balance.`, 'info');
     } else {
         // Saved to another account than the one you're in: say where it went (it shows there, not here).
-        const elsewhere = accountId !== viewId() ? state.accounts.find((x) => x.id === accountId) : null;
+        const elsewhere = viewId() !== 'all' && accountId !== viewId() ? state.accounts.find((x) => x.id === accountId) : null;
         showToast(elsewhere ? `Saved to ${elsewhere.name}` : id ? 'Saved' : `${txType === 'income' ? 'Income' : 'Expense'} added: ${formatCurrency(amount, currency)}`, 'success');
         const now = new Date();
         if (txType === 'expense' && inMonth(record, now.getFullYear(), now.getMonth())) setTimeout(() => budgetAlert(category), 400);
@@ -6948,6 +7022,9 @@ const submitSecMove = () => {
         if (fund && fund.accountId) {
             const free = accountFreeMoney(fund.accountId, bal);
             if (amount > free + 0.004) return fieldError($('sec-move-amount'), shortfallText(free, amount));
+        } else if (fund) {
+            const free = round2(netWorth() - secList().reduce((a, x) => a + Math.max(0, bal[x.id] || 0), 0));
+            if (amount > free + 0.004) return fieldError($('sec-move-amount'), shortfallText(free, amount));
         }
     }
     const token = secMoveToken;
@@ -7249,6 +7326,18 @@ const planSectionsHtml = () => {
             <span class="sec-summary-label">Total in funds${viewing ? ` · ${escapeHtml(viewing.name)}` : ''}</span>
             <strong class="sec-summary-total amount" data-countup="${total}">${escapeHtml(formatCurrency(total, cur))}</strong>
             ${secStackBar(shown.map((x) => [x, bal[x.id] || 0]))}
+            ${!viewing ? (() => {
+        const inAccounts = round2(netWorth());
+        const inFunds = round2(secList().reduce((a, x) => a + (bal[x.id] || 0), 0));
+        const diff = round2(inAccounts - inFunds);
+        const rest = secList().find((x) => x.mode === 'rest') || secList()[0];
+        const bigFund = secList().slice().sort((p, q) => (bal[q.id] || 0) - (bal[p.id] || 0))[0];
+        return `<div class="fund-split"><span><small>All accounts</small><strong>${escapeHtml(formatCurrency(inAccounts, cur))}</strong></span><span><small>All funds</small><strong>${escapeHtml(formatCurrency(inFunds, cur))}</strong></span><span><small>Difference</small><strong class="${Math.abs(diff) < 0.005 ? 'text-income' : diff < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(diff, cur))}</strong></span></div>
+            <div class="fund-reconcile" data-state="${Math.abs(diff) < 0.005 ? 'ok' : diff > 0 ? 'free' : 'over'}">${Math.abs(diff) < 0.005
+            ? `${icon('i-check', 'ic ic-sm')}<span>Your funds hold exactly the money in your accounts.</span>`
+            : diff > 0 ? `${icon('i-info', 'ic ic-sm')}<span>${escapeHtml(formatCurrency(diff, cur))} of your money is not in any fund.</span>${rest ? `<button type="button" class="btn btn-secondary btn-xs" data-fund-fix="add" data-fund-id="${escapeHtml(rest.id)}" data-fund-amount="${diff}">Put it in ${escapeHtml(rest.name)}</button>` : ''}`
+                : `${icon('i-alert', 'ic ic-sm')}<span>Your funds hold ${escapeHtml(formatCurrency(-diff, cur))} more than your accounts have.</span>${bigFund ? `<button type="button" class="btn btn-secondary btn-xs" data-fund-fix="out" data-fund-id="${escapeHtml(bigFund.id)}" data-fund-amount="${Math.min(-diff, Math.max(0, bal[bigFund.id] || 0))}">Take it out of ${escapeHtml(bigFund.name)}</button>` : ''}`}</div>`;
+    })() : ''}
             ${viewing ? (() => {
         const inAcc = toDisplay(accountBalance(viewing), viewing.currency);
         const held = accountFundsTotal(viewing.id, bal);
@@ -7295,6 +7384,7 @@ const renderSectionsHome = () => {
         <div class="card-head"><h2 class="card-title">Funds</h2><button type="button" class="link-btn" data-goto-plan="sections">See all</button></div>
         ${waiting.length ? `<button type="button" class="btn btn-primary btn-block sec-home-divide" data-sec-divide="${escapeHtml(waiting[0].id)}">Allocate ${escapeHtml(waiting[0].desc)} · ${escapeHtml(formatCurrency(waiting[0].amount, waiting[0].currency))}</button>` : ''}
         ${secStackBar(mine.map((x) => [x, bal[x.id] || 0]))}
+        ${!viewing ? (() => { const diff = round2(netWorth() - secList().reduce((a, x) => a + (bal[x.id] || 0), 0)); return Math.abs(diff) < 0.005 ? '' : `<p class="fund-home-diff ${diff < 0 ? 'text-expense' : ''}">${diff > 0 ? `${escapeHtml(formatCurrency(diff, cur))} not in any fund` : `Funds hold ${escapeHtml(formatCurrency(-diff, cur))} more than your accounts`}</p>`; })() : ''}
         <div class="sec-chips">${mine.map((x) => `<button type="button" class="sec-chip${bal[x.id] < 0 ? ' is-below' : ''}" data-sec-view="${escapeHtml(x.id)}">${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span class="amount ${bal[x.id] < 0 ? 'text-expense' : ''}">${escapeHtml(formatCompact(bal[x.id] || 0, cur))}</span></span></button>`).join('')}</div>
     </section>`;
     animateIn(el);
@@ -9170,6 +9260,10 @@ const initEvents = () => {
         if (d.editBill) { openEditBill(d.editBill); return; }
         if (d.billPaid) { askMarkPaid(`bill:${d.billPaid}`); return; }
         if (d.pay) { askMarkPaid(d.pay); return; }
+        if (d.payLater) { openPayLater(d.payLater); return; }
+        if (d.action === 'pay-later-carry') { payLater('carry'); return; }
+        if (d.action === 'pay-later-skip') { payLater('skip'); return; }
+        if (d.action === 'pay-later-move') { payLater('move'); return; }
         if (d.editDebt) { openEditDebt(d.editDebt); return; }
         if (d.repayDebt) { openRepay(d.repayDebt); return; }
         if (d.editCategory) { catReturnToTx = false; catReturnToManager = true; openCategoryEditor(d.editCategory); return; }
@@ -9240,6 +9334,12 @@ const initEvents = () => {
         if (d.action === 'sec-add-money') { openSecMove(secViewId && openSheets.includes('modal-section-view') ? secViewId : null, 'add'); return; }
         if (d.action === 'sec-move-ok') { submitSecMove(); return; }
         if (d.action === 'sec-take-out') { openSecMove(secViewId && (openSheets.includes('modal-section-view') || openSheets.includes('modal-fund-actions')) ? secViewId : null, 'out'); return; }
+        if (d.fundFix) {
+            openSecMove(d.fundId, d.fundFix);
+            $('sec-move-amount').value = round2(Number(d.fundAmount));
+            if (d.fundFix === 'add') $('sec-move-note').value = 'Money not in any fund';
+            return;
+        }
         if (d.fundAction) {
             const id = secViewId;
             if (d.fundAction === 'view') openSectionView(id);
@@ -9948,7 +10048,7 @@ const removeDevice = (id, name) => {
 const renderAccountManager = () => {
     const v = viewId();
     const tick = (on) => (on ? `<span class="acc-current" aria-label="Showing now">${icon('i-check', 'ic ic-sm')}</span>` : '');
-    $('accounts-body').innerHTML = `<p class="acc-hint">Tap an account to switch to it. Tap the pencil to edit it.</p><ul class="cat-manage acc-list">${state.accounts.map((a) => {
+    $('accounts-body').innerHTML = `<p class="acc-hint">Tap an account to see only it, or All accounts to see everything together. Tap the pencil to edit.</p><ul class="cat-manage acc-list">${state.accounts.length > 1 ? `<li class="acc-row${v === 'all' ? ' is-current' : ''}"><button type="button" class="row-btn" data-view-account="all"><span class="row-icon tint">${icon('i-wallet')}</span><span class="row-label"><span>All accounts</span><span>Everything together</span></span><span class="amount ${netWorth() < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(netWorth(), dcur()))}</span>${tick(v === 'all')}</button></li>` : ''}${state.accounts.map((a) => {
         const bal = accountBalance(a);
         return `<li class="acc-row${v === a.id ? ' is-current' : ''}"><button type="button" class="row-btn" data-view-account="${escapeHtml(a.id)}">
             ${accountBadge(a, 'is-row', 'row-icon tint')}

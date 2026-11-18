@@ -4798,3 +4798,13 @@ body.approve-waiting { overflow: hidden; }
 .recent-scope { margin-bottom: var(--sp-2); }
 .sec-chip { -webkit-touch-callout: none; user-select: none; transition: transform 200ms ease; }
 .sec-chip.is-held { transform: scale(1.05); }
+
+.fund-reconcile { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px 12px; border-radius: 12px; font-size: var(--fs-sm); background: var(--surface-2); }
+.fund-reconcile > span { flex: 1; min-width: 160px; }
+.fund-reconcile[data-state="ok"] { color: var(--income); background: var(--income-soft); }
+.fund-reconcile[data-state="over"] { color: var(--danger); background: var(--danger-soft); }
+.fund-home-diff { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); color: var(--text-2); }
+
+.pay-later-btn { font-size: var(--fs-xs); margin-top: 4px; }
+.pay-carry { display: block; font-size: var(--fs-xs); color: var(--warning); margin-top: 2px; }
+.bill-actions { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }

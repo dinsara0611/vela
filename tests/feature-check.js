@@ -2284,6 +2284,72 @@ export async function run() {
         return named || `recent list: ${text.slice(0, 120)}`;
     });
 
+    await T('All accounts together: one balance and list with account names; funds total vs accounts total, difference fixed', async () => {
+        const st = s();
+        g('setViewAccount')('all'); await wait(200);
+        g('switchTab')('dashboard'); await wait(400);
+        const total = Math.round(g('netWorth')());
+        const homeTotal = Math.round(Number($('dash-balance').dataset.v));
+        const label = $('dash-month-label').textContent;
+        const named = /(From|Into) /.test($('recent-list').textContent);
+        const bar = /All accounts/.test((document.querySelector('#tab-dashboard .view-bar') || {}).textContent || '');
+        // Income and spending of every account count together this month.
+        const ms = g('monthStats')();
+        const now = new Date();
+        const allSpent = Math.round(g('sumDisplay')(st.transactions.filter((t) => t.type === 'expense' && !g('isUpcoming')(t) && g('inMonth')(t, now.getFullYear(), now.getMonth()))));
+        // Funds: set up one remainder fund for everything, then compare.
+        const keep = { sections: st.config.sections, sectionMoves: st.config.sectionMoves };
+        st.config.sections = [{ id: 'allf', name: 'Everything', mode: 'rest', value: 0, currency: 'LKR', color: 'green', icon: 'c-Investment', accountId: null, target: 0 }];
+        st.config.sectionMoves = [];
+        g('saveState')();
+        g('goToPlan')('sections'); await wait(400);
+        const card = $('plan-content').textContent;
+        const showsDiff = /not in any fund/.test(card) && /Difference/.test(card);
+        const fix = document.querySelector('[data-fund-fix="add"]');
+        if (fix) { fix.click(); await wait(350); g('submitSecMove')(); await wait(350); }
+        const fundsNow = Math.round(Object.values(g('sectionBalances')()).reduce((a, v) => a + v, 0));
+        g('goToPlan')('sections'); await wait(300);
+        const matched = /exactly the money in your accounts/.test($('plan-content').textContent);
+        Object.assign(st.config, keep); g('saveState')();
+        // One account, then back to all.
+        g('setViewAccount')('acc-cash'); await wait(200);
+        const one = g('viewId')() === 'acc-cash';
+        g('setViewAccount')('all'); await wait(200);
+        return (homeTotal === total && /All accounts/.test(label) && named && bar && Math.round(ms.spent) === allSpent && showsDiff && fundsNow === total && matched && one && g('viewId')() === 'all')
+            || `home ${homeTotal} vs total ${total}, label "${label}", names ${named}, bar ${bar}, spent ${Math.round(ms.spent)} vs ${allSpent}, difference shown ${showsDiff}, funds after fix ${fundsNow}, matched ${matched}, one account ${one}`;
+    });
+
+    await T('Sister pays Netflix money: not this month -> next month Rs. 2,000 together, then Rs. 1,000 again; skip; move', async () => {
+        const st = s();
+        const late = iso(addDays(new Date(), -2));
+        const day = addDays(new Date(), -2).getDate();
+        st.recurring.push({ id: 'sis', type: 'income', name: 'Netflix from sister', amount: 1000, currency: 'LKR', category: 'OtherIncome', frequency: 'monthly', nextDate: late, anchorDay: day, autoLog: false, accountId: 'acc-cash', createdAt: 1 });
+        st.recurring.push({ id: 'sk', type: 'income', name: 'Skip test', amount: 500, currency: 'LKR', category: 'OtherIncome', frequency: 'monthly', nextDate: late, anchorDay: day, autoLog: false, accountId: 'acc-cash', createdAt: 1 });
+        st.transactions.push({ id: 'one-off', type: 'income', desc: 'Loan back', amount: 3000, currency: 'LKR', category: 'OtherIncome', date: late, note: '', createdAt: 1, accountId: 'acc-cash', recurringId: null, receipt: null, fixed: false, pending: true });
+        g('saveState')();
+        g('openPayLater')('bill:sis'); await wait(300);
+        const offered = !$('pay-later-carry').hidden && /2,000/.test($('pay-later-carry-desc').textContent);
+        document.querySelector('[data-action="pay-later-carry"]').click(); await wait(300);
+        const bill = () => s().recurring.find((b) => b.id === 'sis');
+        const next = g('paymentByKey')('bill:sis');
+        const carried = next.amount === 2000 && bill().nextDate > late && bill().carry === 1000;
+        // When she pays: Rs. 2,000 recorded, then Rs. 1,000 again.
+        const before = s().transactions.length;
+        g('markBillPaid')('sis'); await wait(300);
+        const got = s().transactions.slice(before).find((t) => t.recurringId === 'sis');
+        const after = g('paymentByKey')('bill:sis');
+        const received = got && got.amount === 2000 && !bill().carry && after.amount === 1000;
+        // Skip: nothing carried.
+        g('openPayLater')('bill:sk'); await wait(300);
+        document.querySelector('[data-action="pay-later-skip"]').click(); await wait(300);
+        const skipped = g('paymentByKey')('bill:sk').amount === 500 && s().recurring.find((b) => b.id === 'sk').nextDate > late;
+        // A one-off expected payment moves to next month.
+        g('openPayLater')('tx:one-off'); await wait(300);
+        document.querySelector('[data-action="pay-later-move"]').click(); await wait(300);
+        const moved = s().transactions.find((t) => t.id === 'one-off').date > iso(addDays(new Date(), 20));
+        return (offered && carried && received && skipped && moved) || `offered ${offered}, carried ${carried} (${next.amount}), received ${received} (${got && got.amount}, next ${after && after.amount}), skipped ${skipped}, moved ${moved}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

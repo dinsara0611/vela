@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.45.1">
+    <link rel="stylesheet" href="style.css?v=4.46.0">
 </head>
 <body data-view="dashboard">
 
@@ -1299,6 +1299,25 @@
         </div>
     </div>
 
+    <!-- A payment that doesn't happen this time -->
+    <div class="sheet-overlay" id="modal-pay-later" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pay-later-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <h2 class="sheet-title" id="pay-later-title">Not this time</h2>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body">
+                <p class="card-sub" id="pay-later-sub"></p>
+                <div class="fund-actions">
+                    <button type="button" class="row-btn" id="pay-later-carry" data-action="pay-later-carry"><span class="row-icon tint"><svg class="ic"><use href="#i-repeat"/></svg></span><span class="row-label"><span id="pay-later-carry-text">Next time, together</span><span id="pay-later-carry-desc"></span></span></button>
+                    <button type="button" class="row-btn" id="pay-later-skip" data-action="pay-later-skip"><span class="row-icon tint"><svg class="ic"><use href="#i-x"/></svg></span><span class="row-label"><span>Skip this time</span><span id="pay-later-skip-desc"></span></span></button>
+                    <button type="button" class="row-btn" id="pay-later-move" data-action="pay-later-move"><span class="row-icon tint"><svg class="ic"><use href="#i-calendar"/></svg></span><span class="row-label"><span>Move to next month</span><span id="pay-later-move-desc"></span></span></button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Hold a fund -->
     <div class="sheet-overlay" id="modal-fund-actions" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="fund-actions-title">
@@ -1893,7 +1912,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.45.1"></script>
+    <script src="app.js?v=4.46.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
