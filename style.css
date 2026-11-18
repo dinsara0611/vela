@@ -4916,3 +4916,10 @@ body.approve-waiting { overflow: hidden; }
 :root:not([data-theme="light"]) .appbar .icon-btn { background: var(--surface); border: 1px solid var(--border); }
 /* Progress tracks a little more visible on black */
 :root:not([data-theme="light"]) .meter, :root:not([data-theme="light"]) .sec-tile-bar { background: #222222; }
+
+/* Funds below zero: said once, with a fix */
+.fund-short { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: var(--sp-3); padding: 10px 12px; border-radius: 12px; font-size: var(--fs-sm); color: var(--danger); background: var(--danger-soft); }
+.fund-short > span { flex: 1; min-width: 170px; color: var(--text-2); }
+.fund-short strong { color: var(--danger); }
+.fund-fix-link { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; padding: 0; border: 0; background: none; color: var(--primary); font: inherit; font-size: var(--fs-sm); font-weight: 600; cursor: pointer; }
+.fund-home-empty { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); color: var(--text-3); }

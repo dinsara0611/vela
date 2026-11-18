@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.50.0';
+const APP_VERSION = '4.50.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1750,15 +1750,13 @@ const cleanAccountBudgets = (o) => {
 };
 const setViewAccount = (id) => {
     if (!id || !(id === 'all' || state.accounts.some((a) => a.id === id))) return;
-    const changed = id !== viewId();
     stashBudget();
     try { localStorage.setItem(VIEW_KEY, id); } catch (e) { /* storage blocked */ }
     if (!loadBudget(id)) stashBudget();
     saveState();
     activityAccount = id;
     renderActive();
-    const a = state.accounts.find((x) => x.id === id);
-    if (changed) showToast(id === 'all' ? 'Showing all accounts together' : `Switched to ${a.name}`, 'info');
+    // No pop-up: the account bar at the top already shows which account you're looking at.
     haptic();
 };
 const sortByNewest = (list) => [...list].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
@@ -1981,7 +1979,7 @@ const logBill = (bill, date, times = 1) => {
         accountId: bill.accountId || state.accounts[0].id,
         receipt: null
     };
-    if (tx.type === 'expense' && sectionForCategory(tx.category)) tx.sectionId = sectionForCategory(tx.category);
+    if (tx.type === 'expense' && autoFundFor(tx.category, tx.amount, tx.currency)) tx.sectionId = autoFundFor(tx.category, tx.amount, tx.currency);
     if (beforeBalanceFor(tx.accountId, tx.date)) tx.beforeBalance = true;
     if (carried) { tx.note = `Includes ${formatCurrency(carried, bill.currency)} carried from ${bill.carryFrom ? shortDate(bill.carryFrom) : 'last time'}`; delete bill.carry; delete bill.carryFrom; }
     if (times > 1) {
@@ -5290,7 +5288,7 @@ const submitTx = async () => {
         record = { id: generateId(), type: txType, desc, amount: saveAmount, currency: saveCurrency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txKind === 'fixed', pending: date > todayISO() || txWaiting };
         if (fx) record.fx = fx;
         if (txType === 'expense' && txTripId) record.tripId = txTripId;
-        if (txType === 'expense' && txSectionId && secById(txSectionId)) record.sectionId = txSectionId;
+        if (txType === 'expense' && txSectionId && secById(txSectionId) && (txSectionTouched || (sectionBalances()[txSectionId] || 0) + 0.004 >= toDisplay(saveAmount, saveCurrency))) record.sectionId = txSectionId;
         if (!$('tx-before-row').hidden && txBefore) record.beforeBalance = true;
         if (record.pending) setTimeout(scheduleReminders, 0);
         // A new fixed entry that repeats becomes a monthly fixed payment; this entry is its first one.
@@ -5984,7 +5982,7 @@ const quickSaveTx = (d) => {
     const record = { id: generateId(), type: d.type, desc: d.desc, amount: d.amount, currency: d.currency, category: d.category, date: d.date, note: d.note || '', createdAt: Date.now(), recurringId: null, accountId: acc.id, receipt: null, fixed: d.type === 'expense' && !!d.fixed, pending: d.date > todayISO() };
     if (d.type === 'expense' && tripIdFor(d.date)) record.tripId = tripIdFor(d.date);
     if (beforeBalanceFor(acc.id, d.date)) record.beforeBalance = true;
-    if (d.type === 'expense' && sectionForCategory(d.category)) record.sectionId = sectionForCategory(d.category);
+    if (d.type === 'expense' && autoFundFor(d.category, d.amount, d.currency)) record.sectionId = autoFundFor(d.category, d.amount, d.currency);
     state.transactions.push(record);
     state.config.lastCategory[d.type] = d.category;
     saveState();
@@ -6880,6 +6878,57 @@ const sectionForCategory = (cat) => {
     const id = (state.config.sectionCatMap || {})[cat];
     return id && secById(id) ? id : null;
 };
+// A fund chosen automatically (from the category, a fixed payment or an SMS) must hold the money;
+// otherwise the expense comes from money not in a fund instead of pushing the fund below zero.
+const autoFundFor = (cat, amount, currency) => {
+    const id = sectionForCategory(cat);
+    if (!id) return null;
+    return (sectionBalances()[id] || 0) + 0.004 >= toDisplay(amount, currency) ? id : null;
+};
+// Funds below zero were paid from before money was put in. Keep those expenses, but stop paying them
+// from the fund (they come from money not in a fund): replay the fund by date and unlink only the ones
+// that found it empty. Account balances don't change.
+const repairShortFunds = (onlyId = null) => {
+    let n = 0;
+    secList().filter((x) => !onlyId || x.id === onlyId).forEach((x) => {
+        const ev = [];
+        secMoves().forEach((m) => {
+            if (m.to === x.id) ev.push({ d: m.date, k: 0, v: toDisplay(m.amount, m.currency) });
+            if (m.from === x.id) ev.push({ d: m.date, k: 1, v: -toDisplay(m.amount, m.currency) });
+        });
+        state.transactions.forEach((t) => {
+            if (t.type === 'expense' && t.sectionId === x.id && !isUpcoming(t)) ev.push({ d: t.date, k: 2, v: -toDisplay(t.amount, t.currency), t });
+        });
+        ev.sort((a, b) => (a.d < b.d ? -1 : a.d > b.d ? 1 : a.k - b.k));
+        let run = 0;
+        ev.forEach((e) => {
+            if (e.t && run + e.v < -0.004) { delete e.t.sectionId; queueSync('transaction', e.t.id, 'upsert', false); n++; return; }
+            run += e.v;
+        });
+    });
+    return n;
+};
+const askRepairShort = (onlyId = null) => {
+    const bal = sectionBalances();
+    const short = secList().filter((x) => (!onlyId || x.id === onlyId) && bal[x.id] < -0.004);
+    if (!short.length) return;
+    const cur = dcur();
+    const total = short.reduce((a, x) => a + -bal[x.id], 0);
+    showConfirm({
+        title: short.length === 1 ? `Fix ${short[0].name}` : 'Fix funds below zero',
+        message: `${short.map((x) => x.name).join(', ')} ${short.length === 1 ? 'is' : 'are'} ${formatCurrency(total, cur)} short: expenses were paid from ${short.length === 1 ? 'it' : 'them'} before money was put in. Vela keeps those expenses, but they'll come from money not in a fund. Your account balances don't change.`,
+        confirmLabel: 'Fix it',
+        cancelLabel: 'Not now',
+        danger: false,
+        onConfirm: () => {
+            const n = repairShortFunds(onlyId);
+            if (!commitState('The funds')) return;
+            flushSync();
+            showToast(n ? `Fixed: ${plural(n, 'expense')} no longer paid from a fund` : 'Nothing to fix', 'success');
+            renderActive();
+        }
+    });
+};
 const learnSection = (cat, secId) => {
     if (!cat) return;
     const map = state.config.sectionCatMap || (state.config.sectionCatMap = {});
@@ -7431,7 +7480,7 @@ const openUnassigned = () => {
     const opts = (sel) => `<option value="">Unallocated</option>${secList().map((x) => `<option value="${escapeHtml(x.id)}" ${sel === x.id ? 'selected' : ''}>${escapeHtml(x.name)}</option>`).join('')}`;
     $('sec-unassigned-body').innerHTML = list.length ? list.slice(0, 100).map((t) => `
         <div class="sec-line">${entryBadge(t.desc, t.category, 'expense')}<span class="sec-line-name"><span>${escapeHtml(t.desc)}</span><span>${escapeHtml(shortDate(t.date))} · ${escapeHtml(formatCurrency(t.amount, t.currency))}</span></span>
-            <div class="select sec-carry"><select class="input" data-assign-tx="${escapeHtml(t.id)}" aria-label="Fund for ${escapeHtml(t.desc)}">${opts(sectionForCategory(t.category))}</select></div></div>`).join('')
+            <div class="select sec-carry"><select class="input" data-assign-tx="${escapeHtml(t.id)}" aria-label="Fund for ${escapeHtml(t.desc)}">${opts(autoFundFor(t.category, t.amount, t.currency))}</select></div></div>`).join('')
         : '<p class="field-hint">Every expense is assigned to a fund.</p>';
     openOrSwap('modal-sec-unassigned');
 };
@@ -7475,7 +7524,8 @@ const planSectionsHtml = () => {
     const bal = sectionBalances();
     const now = new Date();
     const mo = sectionMonth(now.getFullYear(), now.getMonth());
-    const total = shown.reduce((a, x) => a + (bal[x.id] || 0), 0);
+    const total = shown.reduce((a, x) => a + Math.max(0, bal[x.id] || 0), 0);
+    const shortSum = round2(shown.reduce((a, x) => a + Math.min(0, bal[x.id] || 0), 0));
     const waiting = undividedIncomes().filter((t) => !viewing || t.accountId === viewing.id);
     const loose = unassignedExpenses().filter((t) => !viewing || t.accountId === viewing.id);
     const pct = secList().filter((x) => x.mode === 'percent').reduce((a, x) => a + x.value, 0);
@@ -7488,6 +7538,7 @@ const planSectionsHtml = () => {
             <div class="card-head" style="margin-bottom:var(--sp-1)"><span class="card-sub">Total in funds${viewing ? ` · ${escapeHtml(viewing.name)}` : ''}</span><button type="button" class="btn btn-primary btn-xs" data-action="sec-new">${icon('i-plus', 'ic ic-sm')} New fund</button></div>
             <div class="big-number amount" data-countup="${total}">${escapeHtml(formatCurrency(total, cur))}</div>
             <div style="margin-top:var(--sp-3)">${secStackBar(shown.map((x) => [x, bal[x.id] || 0]))}</div>
+            ${shortSum < -0.004 ? `<div class="fund-short">${icon('i-alert', 'ic ic-sm')}<span><strong>${escapeHtml(formatCurrency(-shortSum, cur))} short</strong> in ${plural(shown.filter((x) => bal[x.id] < -0.004).length, 'fund')}: expenses were paid from ${shown.filter((x) => bal[x.id] < -0.004).length === 1 ? 'it' : 'them'} before money was put in.</span><button type="button" class="btn btn-secondary btn-xs" data-fund-repair="all">Fix</button></div>` : ''}
             ${total > 0 ? `<div class="sec-legend">${shown.filter((x) => (bal[x.id] || 0) > 0).map((x) => `<span style="--cat:var(--pal-${x.color})"><i></i>${escapeHtml(x.name)} <b>${Math.round(((bal[x.id] || 0) / total) * 100)}%</b></span>`).join('')}</div>` : ''}
             ${(() => {
         // Do the funds hold exactly the money in the accounts?
@@ -7529,7 +7580,7 @@ const planSectionsHtml = () => {
         const accs = fundAccs(x).map((id) => state.accounts.find((a) => a.id === id)).filter(Boolean);
         const where = accs.length === 1 ? accs[0].name : accs.length > 1 ? `${accs.length} accounts` : '';
         const rule = x.mode === 'amount' ? `${formatCompact(toDisplay(x.value, x.currency), cur)} ${x.once ? 'once' : 'per income'}` : secPlanLabelBase(x);
-        const hint = b < 0 ? `${icon('i-alert')} ${escapeHtml(formatCurrency(-b, cur))} short. The next income covers it first.`
+        const hint = b < 0 ? `${icon('i-alert')} ${escapeHtml(formatCurrency(-b, cur))} short: paid from before money was put in.`
             : tgt ? (b >= tgt ? `${icon('i-check')} Target reached` : `${icon('i-target')} ${escapeHtml(formatCurrency(tgt - Math.max(0, b), cur))} to go`)
                 : m.in || m.spent ? `${icon('i-calendar')} This month: ${escapeHtml(formatCompact(m.in, cur))} in · ${escapeHtml(formatCompact(m.spent, cur))} spent`
                     : `${icon('i-info')} Nothing in or out this month`;
@@ -7540,6 +7591,7 @@ const planSectionsHtml = () => {
                 ${meterHtml(Math.min(100, p), b < 0 ? 'over' : tgt && p >= 100 ? 'done' : !tgt ? budgetState(p) : null, `${x.name} progress`)}
                 <span class="goal-hint">${hint}</span>
             </button>
+            ${b < 0 ? `<button type="button" class="fund-fix-link" data-fund-repair="${escapeHtml(x.id)}">${icon('i-check', 'ic ic-sm')} Fix: pay those expenses from money not in a fund</button>` : ''}
             <div class="row-actions">
                 <button type="button" class="btn btn-primary btn-sm" data-fund-add="${escapeHtml(x.id)}">${icon('i-plus', 'ic ic-sm')} Add money</button>
                 <button type="button" class="btn btn-secondary btn-sm" data-fund-out="${escapeHtml(x.id)}">${icon('i-arrow-up', 'ic ic-sm')} Take out</button>
@@ -7563,7 +7615,7 @@ const renderSectionsHome = () => {
     el.innerHTML = `<section class="card sec-home">
         <div class="card-head"><h2 class="card-title">Funds</h2><button type="button" class="link-btn" data-goto-plan="sections">See all</button></div>
         ${waiting.length ? `<button type="button" class="btn btn-primary btn-block sec-home-divide" data-sec-divide="${escapeHtml(waiting[0].id)}">Allocate ${escapeHtml(waiting[0].desc)} · ${escapeHtml(formatCurrency(waiting[0].amount, waiting[0].currency))}</button>` : ''}
-        ${secStackBar(mine.map((x) => [x, bal[x.id] || 0]))}
+        ${mine.some((x) => (bal[x.id] || 0) > 0) ? secStackBar(mine.map((x) => [x, Math.max(0, bal[x.id] || 0)])) : `<p class="fund-home-empty">Nothing in your funds yet. <button type="button" class="link-btn" data-action="sec-add-money">Add money</button></p>`}
         ${!viewing ? (() => { const diff = round2(netWorth() - secList().reduce((a, x) => a + (bal[x.id] || 0), 0)); return Math.abs(diff) < 0.005 ? '' : `<p class="fund-home-diff ${diff < 0 ? 'text-expense' : ''}">${diff > 0 ? `${escapeHtml(formatCurrency(diff, cur))} not in any fund` : `Funds hold ${escapeHtml(formatCurrency(-diff, cur))} more than your accounts`}</p>`; })() : ''}
         <div class="sec-chips">${mine.map((x) => `<button type="button" class="sec-chip${bal[x.id] < 0 ? ' is-below' : ''}" data-sec-view="${escapeHtml(x.id)}">${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span class="amount ${bal[x.id] < 0 ? 'text-expense' : ''}">${escapeHtml(formatCompact(bal[x.id] || 0, cur))}</span></span></button>`).join('')}</div>
     </section>`;
@@ -9552,6 +9604,7 @@ const initEvents = () => {
         if (d.fundAdd) { openSecMove(d.fundAdd, 'add'); return; }
         if (d.fundOut) { openSecMove(d.fundOut, 'out'); return; }
         if (d.fundMore) { openFundActions(d.fundMore); return; }
+        if (d.fundRepair) { askRepairShort(d.fundRepair === 'all' ? null : d.fundRepair); return; }
         if (d.secDivide) { openDivide(d.secDivide); return; }
         if (d.secSkip) { skipDivide(d.secSkip); return; }
         if (d.secUndo) { undoDivide(d.secUndo); return; }

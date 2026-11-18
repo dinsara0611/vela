@@ -2470,6 +2470,33 @@ export async function run() {
             || `equal ${equal}, 90% refused ${refused}, saved ${saved}, filled ${filled}, portions ${JSON.stringify(por)}`;
     });
 
+    await T('Funds below zero: an empty fund is not picked automatically; old short funds fixed without changing balances', async () => {
+        const st = s();
+        const keep = { sections: st.config.sections, sectionMoves: st.config.sectionMoves, sectionCatMap: st.config.sectionCatMap };
+        st.config.sections = [{ id: 'nd', name: 'Needs', mode: 'percent', value: 50, currency: 'LKR', color: 'cyan', icon: 'i-wallet', accountIds: [] }];
+        st.config.sectionMoves = [{ id: 'nd-in', date: iso(addDays(new Date(), -5)), kind: 'add', from: null, to: 'nd', amount: 1000, currency: 'LKR' }];
+        st.config.sectionCatMap = { Food: 'nd' };
+        // Like on the phone: expenses already paid from Needs with too little in it.
+        st.transactions.push(
+            { id: 'nd-1', type: 'expense', desc: 'Rice', amount: 800, currency: 'LKR', category: 'Food', date: iso(addDays(new Date(), -4)), note: '', createdAt: 1, accountId: 'acc-cash', sectionId: 'nd', recurringId: null, receipt: null },
+            { id: 'nd-2', type: 'expense', desc: 'Dinner', amount: 3000, currency: 'LKR', category: 'Food', date: iso(addDays(new Date(), -3)), note: '', createdAt: 2, accountId: 'acc-cash', sectionId: 'nd', recurringId: null, receipt: null });
+        g('saveState')();
+        const before = Math.round(g('netWorth')());
+        const shortBefore = g('sectionBalances')().nd === -2800;
+        g('goToPlan')('sections'); await wait(400);
+        const shown = /2,800\.00 short/.test($('plan-content').textContent) && !!document.querySelector('[data-fund-repair="all"]');
+        // A new food expense bigger than what Needs has is not paid from it automatically.
+        const tx = g('autoFundFor')('Food', 5000, 'LKR');
+        document.querySelector('[data-fund-repair="nd"]').click(); await wait(250);
+        await confirmOk(); await wait(300);
+        const after = g('sectionBalances')().nd;
+        const kept = s().transactions.find((t) => t.id === 'nd-1').sectionId === 'nd' && !s().transactions.find((t) => t.id === 'nd-2').sectionId;
+        const same = Math.round(g('netWorth')()) === before;
+        st.transactions = st.transactions.filter((t) => !/^nd-/.test(t.id));
+        Object.assign(st.config, keep); g('saveState')();
+        return (shortBefore && shown && tx === null && after === 200 && kept && same) || `short before ${shortBefore}, shown ${shown}, auto pick ${tx}, after fix ${after}, kept first ${kept}, balance same ${same}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };
