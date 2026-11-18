@@ -2418,6 +2418,17 @@ export async function run() {
         return ok || `options ${opts}, shows 2,000 ${shows2000}, entry ${tx && tx.amount} "${tx && tx.note}", next ${bill.nextDate} (want ${twoAhead})`;
     });
 
+    await T('Face unlock: face scan drawing and words for face, fingerprint, or both', async () => {
+        const set = (k) => (0, eval)(`bioKind = '${k}'`);
+        set('face');
+        const face = /is-face/.test(g('fpCoreHtml')()) && g('bioWords')().idle === 'Look at your phone to unlock';
+        set('both');
+        const both = /is-face/.test(g('fpCoreHtml')()) && /face or fingerprint/.test(g('bioWords')().title);
+        set('finger');
+        const finger = !/is-face/.test(g('fpCoreHtml')()) && g('bioWords')().title === 'Unlock with fingerprint';
+        return (face && both && finger) || `face ${face}, both ${both}, fingerprint ${finger}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

@@ -4828,3 +4828,12 @@ body.approve-waiting { overflow: hidden; }
 
 .mark-paid-options { margin-bottom: var(--sp-3); }
 .mark-paid-options .row-btn .amount { margin-left: auto; font-weight: 700; white-space: nowrap; }
+
+/* Face scan: same strokes as the fingerprint, plus points that light up while it looks */
+.fp-svg.is-face path { stroke-width: 2.6; }
+.face-mesh circle { fill: var(--fp-b); opacity: 0; transform-box: fill-box; transform-origin: center; }
+.fp-scanner[data-state="scanning"] .face-mesh circle { animation: faceDot 1.2s ease-in-out infinite; animation-delay: calc(var(--i) * 110ms); }
+@keyframes faceDot { 0%, 100% { opacity: 0; transform: scale(0.4); } 50% { opacity: 0.9; transform: scale(1.4); } }
+.fp-scanner[data-state="idle"] .fp-svg.is-face { animation: faceLook 4s ease-in-out infinite; }
+@keyframes faceLook { 0%, 100% { transform: translateX(0); } 30% { transform: translateX(-2px); } 60% { transform: translateX(2px); } }
+@media (prefers-reduced-motion: reduce) { .face-mesh circle, .fp-svg.is-face { animation: none !important; } }

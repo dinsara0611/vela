@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.47.1';
+const APP_VERSION = '4.48.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -144,6 +144,7 @@ let handledUserId = null;
 let confirmHandler = null;
 let storageWarningShown = false;
 let biometricAvailable = false;
+let bioKind = 'finger'; // what the phone unlocks with: 'finger', 'face' or 'both'
 const openSheets = [];
 const charts = { trend: null, history: null, category: null };
 
@@ -4788,6 +4789,9 @@ const renderSettings = () => {
     updateMfaRow();
     setPressed('[data-lock-after]', (b) => Number(b.dataset.lockAfter) * 1000 === lockAfterMs());
     setSwitch($('switch-biometric'), lock.biometric);
+    $('biometric-title').textContent = bioWords().title;
+    $('biometric-desc').textContent = `${bioWords().desc} It uses what is saved in your phone's own settings.`;
+    $('switch-biometric').setAttribute('aria-label', bioWords().title);
     const native = !!nativePlugin('LocalNotifications');
     setSwitch($('switch-reminders'), native && state.config.reminders && notifPermission !== 'denied');
     $('reminders-desc').textContent = !native
@@ -8640,7 +8644,7 @@ const buildKeypad = (container, prefix, withBio) => {
     container.innerHTML = keys.map((k) => {
         if (!k) return '<span></span>';
         if (k === 'del') return `<button type="button" class="key plain" data-${prefix}-key="del" aria-label="Delete last digit">${icon('i-backspace')}</button>`;
-        if (k === 'bio') return `<button type="button" class="key plain" data-${prefix}-key="bio" aria-label="Use fingerprint">${icon('i-fingerprint')}</button>`;
+        if (k === 'bio') return `<button type="button" class="key plain" data-${prefix}-key="bio" aria-label="Use ${bioWords().name}">${icon(bioWords().icon)}</button>`;
         return `<button type="button" class="key" data-${prefix}-key="${k}">${k}</button>`;
     }).join('');
 };
@@ -8650,7 +8654,25 @@ const shake = (el) => { el.classList.remove('shake'); void el.offsetWidth; el.cl
 const isLocked = () => $('lock-screen').classList.contains('active');
 
 
-/* ---- Fingerprint scanner: animated states for the lock screen ---- */
+/* ---- Face / fingerprint scanner: animated states for the lock screen ---- */
+const BIO_WORDS = {
+    finger: { name: 'fingerprint', title: 'Unlock with fingerprint', on: 'Fingerprint unlock is on', desc: 'Use your fingerprint instead of the PIN.', idle: 'Touch the sensor to unlock', scan: 'Scanning…', again: 'Tap the fingerprint to try again', icon: 'i-fingerprint' },
+    face: { name: 'face', title: 'Unlock with face', on: 'Face unlock is on', desc: 'Look at your phone instead of typing the PIN.', idle: 'Look at your phone to unlock', scan: 'Looking for your face…', again: 'Tap the face to try again', icon: 'i-face' },
+    both: { name: 'face or fingerprint', title: 'Unlock with face or fingerprint', on: 'Face and fingerprint unlock is on', desc: 'Look at your phone or touch the sensor instead of typing the PIN.', idle: 'Look at your phone or touch the sensor', scan: 'Scanning…', again: 'Tap to try again', icon: 'i-face' }
+};
+const bioWords = () => BIO_WORDS[bioKind] || BIO_WORDS.finger;
+// Face scan: corner brackets, eyes, nose and smile, drawn with the same animated strokes as the fingerprint.
+const FACE_PATHS = [
+    'M14 24v-6a4 4 0 0 1 4-4h6',
+    'M40 14h6a4 4 0 0 1 4 4v6',
+    'M50 40v6a4 4 0 0 1-4 4h-6',
+    'M24 50h-6a4 4 0 0 1-4-4v-6',
+    'M25 26v4',
+    'M39 26v4',
+    'M32 26v9h-2.5',
+    'M25.5 40.5a9.5 9.5 0 0 0 13 0'
+];
+const FACE_DOTS = [[22, 22], [42, 22], [18, 34], [46, 34], [24, 46], [40, 46], [32, 18], [32, 48]];
 let bioBusy = false;
 const FP_PATHS = [
     'M32 30.5c-1.7 0-3 1.3-3 3 0 5.2-1.1 9.6-3.6 13.6',
@@ -8664,8 +8686,10 @@ const FP_PATHS = [
     'M21.4 16.6a20.8 20.8 0 0 1 21.2 0',
     'M51.6 30.5c.3 1 .4 2 .4 3 0 3.2-.3 6.3-1 9.2'
 ];
-const fpPaths = (cls) => FP_PATHS.map((d, i) => `<path class="${cls}" pathLength="1" style="--i:${i}" d="${d}"/>`).join('');
-const fpCoreHtml = () => `<svg class="fp-svg" viewBox="0 0 64 64" aria-hidden="true">
+const fpPaths = (cls, list = FP_PATHS) => list.map((d, i) => `<path class="${cls}" pathLength="1" style="--i:${i}" d="${d}"/>`).join('');
+const fpCoreHtml = () => bioKind !== 'finger' ? `<svg class="fp-svg is-face" viewBox="0 0 64 64" aria-hidden="true">
+    <defs><linearGradient id="fp-grad" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="var(--fp-a)"/><stop offset="1" stop-color="var(--fp-b)"/></linearGradient></defs>
+    <g class="fp-base">${fpPaths('', FACE_PATHS)}</g><g class="fp-fill">${fpPaths('', FACE_PATHS)}</g><g class="face-mesh">${FACE_DOTS.map(([x, y], i) => `<circle cx="${x}" cy="${y}" r="1.1" style="--i:${i}"/>`).join('')}</g></svg><span class="fp-laser"></span>` : `<svg class="fp-svg" viewBox="0 0 64 64" aria-hidden="true">
     <defs><linearGradient id="fp-grad" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="var(--fp-a)"/><stop offset="1" stop-color="var(--fp-b)"/></linearGradient></defs>
     <g class="fp-base">${fpPaths('')}</g><g class="fp-fill">${fpPaths('')}</g></svg><span class="fp-laser"></span>`;
 const setScanner = (st, label) => {
@@ -8692,8 +8716,10 @@ const setLockBio = () => {
     $('fp-wrap').hidden = !bio;
     $('lock-title').textContent = bio ? 'Unlock Vela' : 'Enter your PIN';
     if (bio) {
-        if (!$('fp-core').firstChild) $('fp-core').innerHTML = fpCoreHtml();
-        if (!bioBusy) setScanner('idle', 'Touch the sensor to unlock');
+        if (!$('fp-core').firstChild || $('fp-core').dataset.kind !== bioKind) { $('fp-core').innerHTML = fpCoreHtml(); $('fp-core').dataset.kind = bioKind; }
+        $('fp-scanner').dataset.kind = bioKind;
+        $('fp-scanner').setAttribute('aria-label', `Unlock with your ${bioWords().name}`);
+        if (!bioBusy) setScanner('idle', bioWords().idle);
     }
 };
 
@@ -8726,10 +8752,10 @@ const tryBiometricUnlock = async () => {
     bioBusy = true;
     await splashDone;
     if (!isLocked()) { bioBusy = false; return; }
-    setScanner('scanning', 'Scanning…');
+    setScanner('scanning', bioWords().scan);
     const started = Date.now();
     try {
-        await bio.verifyIdentity({ reason: 'Unlock Vela', title: 'Unlock Vela', subtitle: 'Use your fingerprint or face', negativeButtonText: 'Use PIN', maxAttempts: 3 });
+        await bio.verifyIdentity({ reason: 'Unlock Vela', title: 'Unlock Vela', subtitle: `Use your ${bioWords().name}`, negativeButtonText: 'Use PIN', maxAttempts: 3 });
         await wait(Math.max(0, 1100 - (Date.now() - started))); // let the scan finish on screen
         setScanner('success', 'Welcome back');
         haptic('MEDIUM');
@@ -8738,12 +8764,12 @@ const tryBiometricUnlock = async () => {
     } catch (err) {
         const why = String((err && (err.message || err.code)) || '');
         if (/cancel|negative|use pin|user/i.test(why)) {
-            setScanner('idle', 'Tap the fingerprint to try again');
+            setScanner('idle', bioWords().again);
         } else {
             setScanner('error', 'Not recognised. Try again or use your PIN');
             haptic('HEAVY');
             await wait(1600);
-            if (isLocked()) setScanner('idle', 'Tap the fingerprint to try again');
+            if (isLocked()) setScanner('idle', bioWords().again);
         }
     } finally {
         bioBusy = false;
@@ -8875,12 +8901,12 @@ const toggleBiometric = async () => {
         return;
     }
     try {
-        await bio.verifyIdentity({ reason: 'Turn on fingerprint unlock', title: "Confirm it's you", negativeButtonText: 'Cancel' });
+        await bio.verifyIdentity({ reason: `Turn on ${bioWords().name} unlock`, title: "Confirm it's you", subtitle: `Use your ${bioWords().name}`, negativeButtonText: 'Cancel' });
         state.config.lock.biometric = true;
         saveState();
-        showToast('Fingerprint unlock is on', 'success');
+        showToast(bioWords().on, 'success');
     } catch (err) {
-        showToast("Fingerprint wasn't confirmed, so it stays off.", 'info');
+        showToast(`Your ${bioWords().name} wasn't confirmed, so it stays off.`, 'info');
     }
     renderSettings();
 };
@@ -8889,8 +8915,11 @@ const checkBiometric = async () => {
     const bio = nativePlugin('NativeBiometric');
     if (!bio) return;
     try {
-        const res = await bio.isAvailable();
+        // Report face too when the phone has a face sensor next to the fingerprint (Pixel face unlock).
+        const res = await bio.isAvailable({ preferMultipleBiometryType: true });
         biometricAvailable = !!(res && res.isAvailable);
+        const t = Number(res && res.biometryType);
+        bioKind = t === 4 || t === 5 ? 'face' : t === 6 ? 'both' : 'finger';
     } catch (err) {
         biometricAvailable = false;
     }
