@@ -4923,3 +4923,13 @@ body.approve-waiting { overflow: hidden; }
 .fund-short strong { color: var(--danger); }
 .fund-fix-link { display: inline-flex; align-items: center; gap: 6px; align-self: flex-start; padding: 0; border: 0; background: none; color: var(--primary); font: inherit; font-size: var(--fs-sm); font-weight: 600; cursor: pointer; }
 .fund-home-empty { margin: 0 0 var(--sp-2); font-size: var(--fs-sm); color: var(--text-3); }
+
+/* Goals saved from the budget each month */
+.goal-month { display: flex; align-items: center; gap: 6px; font-size: var(--fs-sm); color: var(--text-2); padding: 8px 10px; border-radius: 10px; background: var(--surface-2); }
+.goal-month .ic { color: var(--primary); flex: none; }
+.goal-month[data-done="true"] { color: var(--income); background: var(--income-soft); }
+.goal-month[data-done="true"] .ic { color: var(--income); }
+.budget-goals { width: 100%; border: 0; font: inherit; text-align: left; cursor: pointer; color: inherit; }
+.budget-goals > span { flex: 1; }
+.goal-monthly-suggest { margin-top: 6px; align-self: flex-start; }
+.budget-goals { color: var(--primary); background: none; padding: 0; }

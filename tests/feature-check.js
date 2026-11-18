@@ -2497,6 +2497,37 @@ export async function run() {
         return (shortBefore && shown && tx === null && after === 200 && kept && same) || `short before ${shortBefore}, shown ${shown}, auto pick ${tx}, after fix ${after}, kept first ${kept}, balance same ${same}`;
     });
 
+    await T('Goal saved from the budget: Rs. 20,000 a month kept aside, "Save Rs. 20K" fills it, done for the month', async () => {
+        const st = s();
+        const keepSav = st.savings;
+        g('setViewAccount')('all'); await wait(150);
+        const before = g('monthStats')();
+        // Create it in the goal editor, like on the phone.
+        g('openAddGoal')(); await wait(300);
+        $('goal-name').value = 'Ps5 pro'; $('goal-target').value = '400000';
+        $('goal-deadline').value = iso(addDays(new Date(), 300)); $('goal-deadline').dispatchEvent(new Event('change', { bubbles: true }));
+        const suggested = !$('goal-monthly-suggest').hidden;
+        $('goal-monthly').value = '20000';
+        g('submitGoal')(); await wait(350);
+        const goal = s().savings.find((x) => x.name === 'Ps5 pro');
+        const after = g('monthStats')();
+        const kept = goal && goal.monthly === 20000 && Math.round(after.goalKeep) === 20000 && Math.round(after.budget) === Math.max(0, Math.round(before.budget) - 20000);
+        g('goToPlan')('budgets'); await wait(300);
+        const said = /20,000\.00 kept for goals/.test($('plan-content').textContent);
+        g('goToPlan')('goals'); await wait(300);
+        const btn = document.querySelector(`[data-deposit-goal="${goal.id}"]`);
+        const saveBtn = /Save/.test(btn.textContent);
+        btn.click(); await wait(300);
+        const prefilled = $('funds-amount').value.replace(/,/g, '') === '20000';
+        g('submitFunds')(); await wait(300);
+        const g2 = s().savings.find((x) => x.id === goal.id);
+        const month = g2.saved === 20000 && g2.months[g('ymKey')()] === 20000;
+        g('goToPlan')('goals'); await wait(300);
+        const done = /Done for/.test($('plan-content').textContent);
+        st.savings = keepSav; g('saveState')();
+        return (suggested && kept && said && saveBtn && prefilled && month && done) || `suggested ${suggested}, kept ${kept} (${after.goalKeep}, ${before.budget} -> ${after.budget}), said ${said}, save button ${saveBtn}, prefilled ${prefilled}, month ${month}, done ${done}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

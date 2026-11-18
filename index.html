@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.50.1">
+    <link rel="stylesheet" href="style.css?v=4.51.0">
 </head>
 <body data-view="dashboard">
 
@@ -1050,6 +1050,12 @@
                         <input type="date" id="goal-deadline" class="input">
                         <span class="field-hint">Vela shows how much to save each month to get there.</span>
                     </div>
+                    <div class="field">
+                        <label class="field-label" for="goal-monthly">Save each month <span class="faint">(optional)</span></label>
+                        <input type="text" id="goal-monthly" class="input money-input" autocomplete="off" placeholder="e.g. 20,000" inputmode="decimal">
+                        <button type="button" class="chip-btn goal-monthly-suggest" id="goal-monthly-suggest" hidden></button>
+                        <span class="field-hint" id="goal-monthly-hint">Kept aside from your monthly budget, so you don't spend it.</span>
+                    </div>
                 </div>
                 <div class="sheet-foot">
                     <button type="button" class="btn btn-danger" id="btn-delete-goal" aria-label="Delete goal" hidden><svg class="ic"><use href="#i-trash"/></svg></button>
@@ -1940,7 +1946,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.50.1"></script>
+    <script src="app.js?v=4.51.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

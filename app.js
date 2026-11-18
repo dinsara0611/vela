@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.50.1';
+const APP_VERSION = '4.51.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -741,6 +741,8 @@ const normalizeGoal = (g) => {
         saved: Math.max(0, toNumber(g.saved, 0)),
         deadline: cleanDate(g.deadline),
         accountId: g.accountId ? String(g.accountId) : null,
+        monthly: Math.max(0, round2(toNumber(g.monthly, 0))),
+        months: g.months && typeof g.months === 'object' ? Object.fromEntries(Object.entries(g.months).filter(([k]) => /^\d{4}-\d{2}$/.test(k)).sort().slice(-24).map(([k, v]) => [k, round2(toNumber(v, 0))])) : {},
         createdAt: stamp(g.createdAt) || stamp(g.created_at)
     };
 };
@@ -1707,6 +1709,19 @@ const viewTx = () => {
     return list;
 };
 const ownedBy = (x, v) => (x.accountId || (state.accounts[0] && state.accounts[0].id)) === v;
+// Saving for goals each month, kept aside from the budget so it isn't spent.
+const ymKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+const goalMonthly = (g) => (g.saved >= g.target ? 0 : Math.min(g.monthly || 0, Math.max(0, g.target - g.saved) + ((g.months || {})[ymKey()] || 0)));
+const goalSavedThisMonth = (g) => Math.max(0, (g.months || {})[ymKey()] || 0);
+const goalsKeep = (list) => round2(list.reduce((a, g) => a + toDisplay(goalMonthly(g), g.currency), 0));
+// What to save a month to reach the target by its date.
+const goalSuggestMonthly = (target, saved, deadline) => {
+    if (!deadline || !(target > saved)) return 0;
+    const now = new Date();
+    const end = parseDate(deadline);
+    const months = Math.max(1, (end.getFullYear() - now.getFullYear()) * 12 + (end.getMonth() - now.getMonth()) + (end.getDate() >= now.getDate() ? 1 : 0));
+    return Math.ceil((target - saved) / months / 100) * 100;
+};
 const viewGoals = () => { const v = scopeId(); return v === 'all' ? state.savings : state.savings.filter((g) => ownedBy(g, v)); };
 const viewDebts = () => { const v = scopeId(); return v === 'all' ? state.debts : state.debts.filter((d) => ownedBy(d, v)); };
 const viewBills = () => { const v = scopeId(); return v === 'all' ? state.recurring : state.recurring.filter((b) => (b.accountId || (state.accounts[0] && state.accounts[0].id)) === v); };
@@ -1829,12 +1844,16 @@ const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => 
     const incomeFallback = !scopeAll && fromIncome && plannedIncome <= 0;
     // From the balance: what you can spend this month is what's in the account now plus what you already spent.
     const fromBalance = !scopeAll && (state.config.budgetMode === 'balance' || incomeFallback);
-    const budget = scopeAll ? allAccountsBudget(y, m)
+    const baseBudget = scopeAll ? allAccountsBudget(y, m)
         : fromBalance ? Math.max(0, viewBalance() + spent - sumDisplay(spentList.filter((e) => e.beforeBalance)))
         : fromIncome ? plannedIncome * (1 - state.config.budgetSavePct / 100) : budgetIn(state.config.budget, dcur());
+    // Goals with a monthly saving: that money is kept aside, so the budget to spend is what's left after it.
+    const now0 = new Date();
+    const goalKeep = y === now0.getFullYear() && m === now0.getMonth() ? goalsKeep(viewGoals()) : 0;
+    const budget = Math.max(0, baseBudget - goalKeep);
     const byCat = {};
     spentList.forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + toDisplay(e.amount, e.currency); });
-    return { list, spentList, incomeList, spent, income, net: income - spent, prevSpent, budget, budgetPct: budget > 0 ? (spent / budget) * 100 : (spent > 0 && fromIncome ? 100 : 0), byCat, fromIncome, fromBalance, plannedIncome, incomeFallback, expectedIncome };
+    return { list, spentList, incomeList, spent, income, net: income - spent, prevSpent, budget, budgetPct: budget > 0 ? (spent / budget) * 100 : (spent > 0 && fromIncome ? 100 : 0), byCat, fromIncome, fromBalance, plannedIncome, incomeFallback, expectedIncome, baseBudget, goalKeep };
 };
 
 const rangeBounds = (range) => {
@@ -4562,6 +4581,7 @@ const planBudgetsHtml = () => {
         ${s.fromIncome ? `<div class="budget-source">${icon('i-arrow-down', 'ic ic-sm')}<span>${s.incomeFallback ? `No income has come in here this month yet, so your account balance is used until it does.` : `From your income received: ${escapeHtml(formatCurrency(s.plannedIncome, cur))} this month`}${state.config.budgetSavePct ? `, keeping ${state.config.budgetSavePct}% (${escapeHtml(formatCurrency(s.plannedIncome - s.budget, cur))}) for saving` : ''}</span></div>`
             : (s.plannedIncome > 0 ? `<button type="button" class="link-btn budget-switch" data-action="budget-from-income">${icon('i-arrow-down', 'ic ic-sm')} Use my income (${escapeHtml(formatCurrency(s.plannedIncome, cur))}) as the budget</button>` : '')}
         ${s.fromIncome && s.expectedIncome > 0 ? `<div class="budget-source is-expected">${icon('i-calendar', 'ic ic-sm')}<span>+${escapeHtml(formatCurrency(s.expectedIncome, cur))} more when your expected income arrives</span></div>` : ''}
+        ${s.goalKeep > 0 ? `<button type="button" class="budget-source budget-goals" data-goto-plan="goals">${icon('i-target', 'ic ic-sm')}<span>${escapeHtml(formatCurrency(s.goalKeep, cur))} kept for goals (${escapeHtml(viewGoals().filter((g) => goalMonthly(g) > 0).map((g) => g.name).join(', '))}), so your budget to spend is ${escapeHtml(formatCurrency(s.budget, cur))} of ${escapeHtml(formatCurrency(s.baseBudget, cur))}</span>${icon('i-chevron', 'ic ic-sm')}</button>` : ''}
         ${meterHtml(s.budgetPct, budgetState(s.budgetPct), 'Monthly budget used')}
         <div class="meter-row" style="margin-top:var(--sp-2)"><span>${Math.round(s.budgetPct)}% used</span><span>Spent <strong>${escapeHtml(formatCurrency(s.spent, cur))}</strong></span></div>
     </article>
@@ -4633,13 +4653,17 @@ const planGoalsHtml = () => {
             else if (daysBetween(now, end) >= 0) hint = `${icon('i-calendar')} Due ${escapeHtml(shortDate(g.deadline))}: ${escapeHtml(formatDisplay(remaining, g.currency))} to go`;
             else hint = `${icon('i-alert')} Target date passed`;
         } else hint = `${icon('i-target')} ${escapeHtml(formatDisplay(remaining, g.currency))} to go`;
+        const mon = goalMonthly(g);
+        const inMon = goalSavedThisMonth(g);
+        const monLine = mon > 0 ? `<div class="goal-month" data-done="${inMon >= mon - 0.004}">${icon(inMon >= mon - 0.004 ? 'i-check' : 'i-calendar', 'ic ic-sm')}<span>${inMon >= mon - 0.004 ? `Saved ${escapeHtml(formatDisplay(inMon, g.currency))} this month. Done for ${escapeHtml(new Date().toLocaleDateString(undefined, { month: 'long' }))}` : `${escapeHtml(formatDisplay(mon, g.currency))} a month from your budget · ${escapeHtml(formatDisplay(inMon, g.currency))} saved this month`}</span></div>` : '';
         return `<article class="card row-card plan-half">
             <div class="row-top"><span class="cat-badge" style="--cat:var(--pal-${done ? 'green' : 'violet'})">${icon('i-target')}</span><div class="row-main"><span class="row-title">${escapeHtml(g.name)}</span><span class="row-sub">${g.currency !== cur ? `Saving in ${g.currency}` : 'Savings goal'}</span></div><span class="goal-pct" data-done="${done}">${Math.floor(Math.min(p, 999))}%</span></div>
             <div class="goal-figures"><span class="amount">${escapeHtml(formatDisplay(g.saved, g.currency))}</span><span>of ${escapeHtml(formatDisplay(g.target, g.currency))}</span></div>
             ${meterHtml(p, done ? 'done' : null, `${g.name} progress`)}
             <div class="goal-hint">${hint}</div>
+            ${monLine}
             <div class="row-actions">
-                <button type="button" class="btn btn-primary btn-sm" data-deposit-goal="${escapeHtml(g.id)}">${icon('i-deposit', 'ic ic-sm')} Deposit</button>
+                <button type="button" class="btn btn-primary btn-sm" data-deposit-goal="${escapeHtml(g.id)}" ${mon > 0 && inMon < mon - 0.004 ? `data-deposit-amount="${round2(mon - inMon)}"` : ''}>${icon('i-deposit', 'ic ic-sm')} ${mon > 0 && inMon < mon - 0.004 ? `Save ${escapeHtml(formatCompact(mon - inMon, g.currency))}` : 'Deposit'}</button>
                 <button type="button" class="btn btn-secondary btn-sm" data-edit-goal="${escapeHtml(g.id)}">${icon('i-edit', 'ic ic-sm')} Edit</button>
             </div>
         </article>`;
@@ -4650,6 +4674,7 @@ const planGoalsHtml = () => {
         <div class="big-number">${escapeHtml(formatCurrency(saved, cur))}</div>
         <div style="margin-top:var(--sp-3)">${meterHtml(pct, pct >= 100 ? 'done' : null, 'All goals progress')}</div>
         <div class="meter-row" style="margin-top:var(--sp-2)"><span>${Math.round(pct)}% of all targets</span><span>Target <strong>${escapeHtml(formatCurrency(target, cur))}</strong></span></div>
+        ${goalsKeep(viewGoals()) > 0 ? `<div class="budget-source" style="margin-top:var(--sp-3)">${icon('i-calendar', 'ic ic-sm')}<span>Saving ${escapeHtml(formatCurrency(goalsKeep(viewGoals()), cur))} a month for goals, kept aside from your budget</span></div>` : ''}
     </article>
     ${cards}`;
 };
@@ -6132,6 +6157,8 @@ const openAddGoal = () => {
     $('goal-saved-label').textContent = 'Already saved';
     $('btn-delete-goal').hidden = true;
     fillCurrencySelect($('goal-currency'), dcur());
+    $('goal-monthly').value = '';
+    updateGoalMonthlyHint();
     openOrSwap('modal-goal');
 };
 
@@ -6149,9 +6176,25 @@ const openEditGoal = (id) => {
     fillCurrencySelect($('goal-currency'), g.currency);
     $('goal-saved').value = round2(g.saved);
     $('goal-deadline').value = g.deadline || '';
+    $('goal-monthly').value = g.monthly ? round2(g.monthly) : '';
+    updateGoalMonthlyHint();
     openOrSwap('modal-goal');
 };
 
+// Under "Save each month": what reaches the target by the date, as a tap-to-use chip.
+const updateGoalMonthlyHint = () => {
+    const target = toNumber($('goal-target').value, 0);
+    const saved = toNumber($('goal-saved').value, 0);
+    const sug = goalSuggestMonthly(target, saved, $('goal-deadline').value);
+    const cur = normCur($('goal-currency').value);
+    const chip = $('goal-monthly-suggest');
+    chip.hidden = !(sug > 0);
+    if (sug > 0) { chip.textContent = `Use ${formatCurrency(sug, cur)} a month (reaches it by ${shortDate($('goal-deadline').value)})`; chip.dataset.v = sug; }
+    const m = toNumber($('goal-monthly').value, 0);
+    $('goal-monthly-hint').textContent = m > 0 && target > saved
+        ? `Kept aside from your monthly budget. At this pace you reach it in about ${plural(Math.ceil((target - saved) / m), 'month')}.`
+        : 'Kept aside from your monthly budget, so you don\'t spend it. Leave empty for no monthly saving.';
+};
 const submitGoal = () => {
     const id = $('goal-id').value;
     const name = $('goal-name').value.trim();
@@ -6160,6 +6203,7 @@ const submitGoal = () => {
     const savedRaw = $('goal-saved').value.trim();
     const saved = savedRaw === '' ? 0 : toNumber(savedRaw, NaN);
     const deadline = $('goal-deadline').value || null;
+    const monthly = Math.max(0, round2(toNumber($('goal-monthly').value, 0)));
     if (!name) return fieldError($('goal-name'), 'Give your goal a name.');
     if (!(target > 0)) return fieldError($('goal-target'), 'Enter a target greater than zero.');
     if (!(saved >= 0)) return fieldError($('goal-saved'), "The saved amount can't be negative.");
@@ -6167,10 +6211,10 @@ const submitGoal = () => {
     if (id) {
         const idx = state.savings.findIndex((g) => g.id === id);
         if (idx === -1) return false;
-        record = { ...state.savings[idx], name, target, currency, saved, deadline };
+        record = { ...state.savings[idx], name, target, currency, saved, deadline, monthly };
         state.savings[idx] = record;
     } else {
-        record = { id: generateId(), name, target, currency, saved, deadline, accountId: viewId() !== 'all' ? viewId() : null, createdAt: Date.now() };
+        record = { id: generateId(), name, target, currency, saved, deadline, monthly, months: {}, accountId: viewId() !== 'all' ? viewId() : null, createdAt: Date.now() };
         state.savings.push(record);
     }
     saveState();
@@ -6241,6 +6285,8 @@ const submitFunds = () => {
     if (fundsMode === 'withdraw' && delta > goal.saved + 0.005) return fieldError($('funds-amount'), `You can withdraw up to ${formatCurrency(goal.saved, goal.currency)} from this goal.`);
     const wasDone = goal.saved >= goal.target;
     goal.saved = round2(Math.max(0, goal.saved + (fundsMode === 'withdraw' ? -delta : delta)));
+    goal.months = { ...(goal.months || {}) };
+    goal.months[ymKey()] = round2(Math.max(0, (goal.months[ymKey()] || 0) + (fundsMode === 'withdraw' ? -delta : delta)));
     saveState();
     haptic('MEDIUM');
     queueSync('goal', goal.id, 'upsert');
@@ -9528,7 +9574,7 @@ const initEvents = () => {
         if (d.planTab) { planTab = d.planTab; renderPlan(); return; }
         if (d.editTx) { openEditTx(d.editTx); return; }
         if (d.editGoal) { openEditGoal(d.editGoal); return; }
-        if (d.depositGoal) { openDeposit(d.depositGoal); return; }
+        if (d.depositGoal) { openDeposit(d.depositGoal); if (d.depositAmount) { $('funds-amount').value = d.depositAmount; updateFundsHint(); } return; }
         if (d.editBudget) { openBudget(d.editBudget); return; }
         if (d.newBudget) { openBudget(); $('budget-category').value = d.newBudget; return; }
         if (d.editBill) { openEditBill(d.editBill); return; }
@@ -9911,6 +9957,8 @@ const initEvents = () => {
         if ($('sec-split-total')) $('sec-split-total').textContent = formatCurrency(t, dcur());
     });
     ['section-name', 'section-value'].forEach((id) => $(id).addEventListener('input', updateSectionPreview));
+    ['goal-target', 'goal-saved', 'goal-deadline', 'goal-monthly', 'goal-currency'].forEach((id) => $(id).addEventListener(id === 'goal-deadline' || id === 'goal-currency' ? 'change' : 'input', updateGoalMonthlyHint));
+    $('goal-monthly-suggest').addEventListener('click', () => { $('goal-monthly').value = $('goal-monthly-suggest').dataset.v; updateGoalMonthlyHint(); });
     $('section-accounts').addEventListener('change', renderSectionShares);
     $('section-shares').addEventListener('input', updateShareTotal);
     $('section-value').addEventListener('input', updateShareTotal);
