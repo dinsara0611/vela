@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.40.1';
+const APP_VERSION = '4.41.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -109,7 +109,12 @@ const createDefaultState = () => ({
         lock: { enabled: false, hash: null, salt: null, biometric: false },
         reminders: false,
         reminderIds: [],
-        trips: []                  // { id, name, budget, currency, start, end, endedAt } - one at a time is on
+        trips: [],                 // { id, name, budget, currency, start, end, endedAt } - one at a time is on
+        sections: [],              // { id, name, mode: 'percent' | 'amount' | 'rest', value, currency, color, icon }
+        sectionMoves: [],          // money into / out of sections: { id, date, kind, incomeId, from, to, amount, currency }
+        sectionSince: null,        // incomes from this date on are offered for dividing
+        sectionSkipped: [],        // incomes left out of the sections
+        sectionCatMap: {}          // category -> the section its expenses usually come out of
     },
     auth: { user: null, isMock: true, completedOnboarding: false },
     sync: {},            // id -> { kind, op: 'upsert' | 'delete' }
@@ -610,7 +615,8 @@ const normalizeTx = (t, forcedType) => {
         ...(cleanDate(t.dueDate) ? { dueDate: cleanDate(t.dueDate) } : {}),
         ...(typeof t.paidAt === 'string' && !isNaN(Date.parse(t.paidAt)) ? { paidAt: t.paidAt } : {}),
         ...(normalizeBankMeta(t.bank) ? { bank: normalizeBankMeta(t.bank) } : {}),
-        ...(type === 'expense' && t.tripId ? { tripId: String(t.tripId).slice(0, 64) } : {})
+        ...(type === 'expense' && t.tripId ? { tripId: String(t.tripId).slice(0, 64) } : {}),
+        ...(type === 'expense' && t.sectionId ? { sectionId: String(t.sectionId).slice(0, 64) } : {})
     };
 };
 // Bank details on an entry: only known fields, short strings, no message text.
@@ -757,6 +763,28 @@ const mergeCategories = (custom) => {
     return builtIns.concat(extra);
 };
 
+function normalizeSectionConfig(cfg) {
+    const sections = (Array.isArray(cfg.sections) ? cfg.sections : []).map((x) => (x && x.id && x.name ? {
+        id: String(x.id).slice(0, 64), name: String(x.name).slice(0, 40),
+        mode: ['percent', 'amount', 'rest'].includes(x.mode) ? x.mode : 'percent',
+        value: Math.max(0, toNumber(x.value, 0)), currency: normCur(x.currency),
+        color: PALETTE.includes(x.color) ? x.color : 'slate', icon: String(x.icon || 'i-wallet').slice(0, 32)
+    } : null)).filter(Boolean).slice(0, 30);
+    const ids = new Set(sections.map((x) => x.id));
+    const moves = (Array.isArray(cfg.sectionMoves) ? cfg.sectionMoves : []).map((m) => (m && m.id && toNumber(m.amount, -1) >= 0 ? {
+        id: String(m.id).slice(0, 64), date: cleanDate(m.date) || toISODate(), kind: ['income', 'fill', 'move', 'add'].includes(m.kind) ? m.kind : 'move',
+        incomeId: m.incomeId ? String(m.incomeId).slice(0, 64) : null,
+        from: m.from && ids.has(String(m.from)) ? String(m.from) : null, to: m.to && ids.has(String(m.to)) ? String(m.to) : null,
+        amount: round2(toNumber(m.amount, 0)), currency: normCur(m.currency)
+    } : null)).filter(Boolean).slice(-5000);
+    const map = {};
+    Object.entries(cfg.sectionCatMap && typeof cfg.sectionCatMap === 'object' ? cfg.sectionCatMap : {}).forEach(([k, v]) => { if (ids.has(String(v))) map[String(k).slice(0, 64)] = String(v); });
+    return {
+        sections, sectionMoves: moves, sectionCatMap: map,
+        sectionSince: sections.length ? (cleanDate(cfg.sectionSince) || null) : null,
+        sectionSkipped: (Array.isArray(cfg.sectionSkipped) ? cfg.sectionSkipped : []).map(String).slice(-500)
+    };
+}
 function normalizeTrips(list) {
     return (Array.isArray(list) ? list : []).map((t) => (t && t.id && t.name ? {
         id: String(t.id).slice(0, 64),
@@ -803,6 +831,7 @@ const normalizeState = (raw) => {
     }
     base.config.accountBudgets = cleanAccountBudgets(cfg.accountBudgets);
     base.config.trips = normalizeTrips(cfg.trips);
+    Object.assign(base.config, normalizeSectionConfig(cfg));
     if (cfg.lastCategory && typeof cfg.lastCategory === 'object') {
         base.config.lastCategory = { ...base.config.lastCategory, ...cfg.lastCategory };
     } else if (typeof cfg.lastCategory === 'string') {
@@ -892,6 +921,11 @@ const settingsPayload = () => {
         lastAccount: c.lastAccount,
         reminders: !!c.reminders,
         trips: c.trips || [],
+        sections: c.sections || [],
+        sectionMoves: c.sectionMoves || [],
+        sectionSince: c.sectionSince || null,
+        sectionSkipped: c.sectionSkipped || [],
+        sectionCatMap: c.sectionCatMap || {},
         // The PIN goes with the account; fingerprint stays per phone.
         lock: c.lock && c.lock.enabled ? { enabled: true, hash: c.lock.hash, salt: c.lock.salt } : { enabled: false },
         accounts: state.accounts
@@ -916,6 +950,7 @@ const applyCloudSettings = (d) => {
     if (d.budgetSavePct !== undefined) c.budgetSavePct = Math.min(90, Math.max(0, Math.round(toNumber(d.budgetSavePct, 0))));
     if (d.accountBudgets && typeof d.accountBudgets === 'object') c.accountBudgets = cleanAccountBudgets(d.accountBudgets);
     if (Array.isArray(d.trips)) c.trips = normalizeTrips(d.trips);
+    if (Array.isArray(d.sections)) Object.assign(c, normalizeSectionConfig(d));
     if (isCurrency(d.currency)) c.currency = d.currency;
     if (Array.isArray(d.currencies) && d.currencies.some(isCurrency)) c.currencies = [...new Set(d.currencies.filter(isCurrency).concat(dcur()))];
     if (d.rateOverrides && typeof d.rateOverrides === 'object') {
@@ -1802,6 +1837,7 @@ const logBill = (bill, date) => {
         accountId: bill.accountId || state.accounts[0].id,
         receipt: null
     };
+    if (tx.type === 'expense' && sectionForCategory(tx.category)) tx.sectionId = sectionForCategory(tx.category);
     state.transactions.push(tx);
     queueSync('transaction', tx.id, 'upsert', false);
     return tx;
@@ -1838,6 +1874,7 @@ const markBillPaid = (id) => {
     if (!bill) return;
     // Recorded on the day it was really paid; the due date is kept on the entry.
     const tx = logBill(bill, todayISO());
+    if (bill.type === 'income' && secList().length) setTimeout(() => openDivide(tx.id), 600);
     tx.dueDate = bill.nextDate;
     tx.paidAt = new Date().toISOString();
     cancelPaymentReminders(`bill:${bill.id}`);
@@ -1986,7 +2023,8 @@ const txRow = (t, { showDate = true } = {}) => {
     const value = toDisplay(t.amount, t.currency);
     const signed = formatSigned(t.type === 'income' ? value : -value, dcur());
     const orig = t.currency !== dcur() ? `<span class="tx-orig-inline">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>` : '';
-    const label = showDate ? cat.name : (t.note || cat.name);
+    const sec = t.sectionId ? secById(t.sectionId) : null;
+    const label = `${showDate ? cat.name : (t.note || cat.name)}${sec ? ` · ${sec.name}` : ''}`;
     const st = t.pending ? payStatus(t.date) : null;
     const waitingStrip = t.pending ? `<div class="tx-confirm" data-status="${st}"><span>${st === 'overdue' ? `${t.type === 'income' ? 'Expected' : 'Was due'} ${escapeHtml(shortDate(t.date))}` : st === 'due' ? (t.type === 'income' ? 'Expected today' : 'Due today') : `Due ${escapeHtml(shortDate(t.date))}`}</span><button type="button" class="btn btn-xs ${t.type === 'income' ? 'btn-income' : 'btn-primary'}" data-pay="tx:${escapeHtml(t.id)}">${icon('i-check', 'ic ic-sm')} ${t.type === 'income' ? 'Mark as received' : 'Mark as paid'}</button></div>` : '';
     return `<li class="${t.pending ? 'tx-li-pending' : ''}"><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
@@ -3992,6 +4030,7 @@ const renderDashboard = () => {
     const fx = fixedForMonth();
     $('dash-fixed').innerHTML = (fx.income > 0 || fx.total > 0) ? fixedSummaryHtml({ link: true }) : '';
     renderTripHome();
+    renderSectionsHome();
     setMoney($('networth'), netWorth(), cur, 16);
     $('account-strip').innerHTML = state.accounts.map((a) => {
         const bal = accountBalance(a);
@@ -4160,6 +4199,7 @@ const renderPlan = () => {
     if (planTab === 'bills') el.innerHTML = planBillsHtml();
     else if (planTab === 'goals') el.innerHTML = planGoalsHtml();
     else if (planTab === 'debts') el.innerHTML = planDebtsHtml();
+    else if (planTab === 'sections') el.innerHTML = planSectionsHtml();
     else el.innerHTML = planBudgetsHtml();
 };
 
@@ -4344,6 +4384,7 @@ const renderAnalyticsNow = () => {
     $('analytics-range-label').textContent = RANGE_LABELS[analyticsRange];
 
     const list = txInRange(analyticsRange);
+    renderSectionsInsights(list);
     const out = list.filter((t) => t.type === 'expense');
     const inc = list.filter((t) => t.type === 'income');
     const { start, end } = rangeBounds(analyticsRange);
@@ -4673,6 +4714,7 @@ const setTxType = (type, keepCategory) => {
     updateDateHint();
     setTxKind(txKind);
     updateTripRow();
+    renderTxSections();
 };
 // While a trip is on (or the entry already belongs to one), expenses show a "Part of the trip" switch.
 let txTripId = null;
@@ -4733,7 +4775,10 @@ const openAddTx = (type = 'expense') => {
     $('tx-date').value = todayISO();
     txWaiting = false;
     txTripId = tripIdFor(todayISO());
+    txSectionId = null;
+    txSectionTouched = false;
     setTxType(type);
+    syncTxSectionToCategory();
     openOrSwap('modal-tx');
 };
 
@@ -4760,6 +4805,8 @@ const openEditTx = (id) => {
     $('tx-note').value = t.note || '';
     txWaiting = t.pending === true;
     txTripId = t.tripId || null;
+    txSectionId = t.sectionId && secById(t.sectionId) ? t.sectionId : null;
+    txSectionTouched = true;
     setTxType(t.type, t.category);
     $('tx-source').hidden = false;
     $('tx-source').innerHTML = t.bank
@@ -4819,6 +4866,7 @@ const submitTx = async () => {
         const waiting = date > todayISO() || txWaiting;
         record = { ...prev, type: txType, desc, amount, currency, category, date, note, accountId, receipt, fixed: txKind === 'fixed' || !!prev.recurringId, pending: waiting };
         if (txType === 'expense' && txTripId) record.tripId = txTripId; else delete record.tripId;
+        if (txType === 'expense' && txSectionId && secById(txSectionId)) record.sectionId = txSectionId; else delete record.sectionId;
         // Marked done here: same as tapping Received / Paid. Marked not done: it waits again, with reminders.
         if (prev.pending && !waiting) { record.paidAt = new Date().toISOString(); record.dueDate = prev.dueDate || prev.date; cancelPaymentReminders(`tx:${id}`); }
         if (!prev.pending && waiting) delete record.paidAt;
@@ -4827,6 +4875,7 @@ const submitTx = async () => {
     } else {
         record = { id: generateId(), type: txType, desc, amount, currency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txKind === 'fixed', pending: date > todayISO() || txWaiting };
         if (txType === 'expense' && txTripId) record.tripId = txTripId;
+        if (txType === 'expense' && txSectionId && secById(txSectionId)) record.sectionId = txSectionId;
         if (record.pending) setTimeout(scheduleReminders, 0);
         // A new fixed entry that repeats becomes a monthly fixed payment; this entry is its first one.
         // Fixed income is only expected each month: it counts when you tap Received (never on its own, never twice).
@@ -4842,13 +4891,16 @@ const submitTx = async () => {
     }
     state.config.lastCategory[txType] = category;
     state.config.lastAccount = accountId;
+    if (txType === 'expense' && secList().length && txSectionTouched) learnSection(category, record.sectionId || null);
     if (smsEditing && !id) smsEditSaved(record);
     if (!commitState(txType === 'income' ? 'The income' : 'The expense')) return false;
     haptic('MEDIUM');
     queueSync('transaction', record.id, 'upsert');
     if (receipt && !receipt.path) uploadReceipt(record);
     closeSheet('modal-tx');
-    if (txType === 'income') {
+    if (txType === 'income' && !id && secList().length && !isUpcoming(record)) {
+        setTimeout(() => openDivide(record.id), 450);
+    } else if (txType === 'income') {
         const d = parseDate(date);
         const f = fixedForMonth(d.getFullYear(), d.getMonth());
         const c = dcur();
@@ -4876,6 +4928,8 @@ const deleteTx = (id) => {
         message: `"${t.desc}" (${formatCurrency(t.amount, t.currency)}) will be removed.`,
         onConfirm: () => {
             state.transactions = state.transactions.filter((x) => x.id !== id);
+            // A divided income: what it put in the sections goes too (moves between sections stay).
+            if (t.type === 'income' && secMoves().some((m) => m.incomeId === id)) state.config.sectionMoves = secMoves().filter((m) => !(m.incomeId === id && m.kind !== 'move'));
             if (!commitState('Deleting it')) return;
             if (t.receipt) removeReceipt(t.receipt);
             queueSync('transaction', id, 'delete');
@@ -5513,6 +5567,7 @@ const quickSaveTx = (d) => {
     const acc = state.accounts.find((a) => a.id === d.accountId) || state.accounts.find((a) => a.id === state.config.lastAccount) || state.accounts[0];
     const record = { id: generateId(), type: d.type, desc: d.desc, amount: d.amount, currency: d.currency, category: d.category, date: d.date, note: d.note || '', createdAt: Date.now(), recurringId: null, accountId: acc.id, receipt: null, fixed: d.type === 'expense' && !!d.fixed, pending: d.date > todayISO() };
     if (d.type === 'expense' && tripIdFor(d.date)) record.tripId = tripIdFor(d.date);
+    if (d.type === 'expense' && sectionForCategory(d.category)) record.sectionId = sectionForCategory(d.category);
     state.transactions.push(record);
     state.config.lastCategory[d.type] = d.category;
     saveState();
@@ -6276,6 +6331,479 @@ const pickSubscription = (name) => {
     if (before) { $('bill-amount').value = before.amount; fillCurrencySelect($('bill-currency'), before.currency); }
     $('bill-form').dataset.sub = '1';
     setTimeout(() => (name ? $('bill-amount') : $('bill-name')).focus(), 380);
+};
+
+/* =========================================================================
+   Sections (envelopes): your income divided into sections you choose. Expenses come out of a section,
+   balances run on from month to month (never reset), money left over can stay or move, and a section
+   that went below zero is filled back to zero first from the next income.
+   Every change is a "move" kept as history: income split, fill to zero, carry to another section, money added.
+   ========================================================================= */
+const secList = () => state.config.sections || [];
+const secById = (id) => secList().find((x) => x.id === id) || null;
+const secMoves = () => state.config.sectionMoves || [];
+const secBadge = (sec, extra = '') => `<span class="cat-badge sec-badge${extra}" style="--cat:var(--pal-${PALETTE.includes(sec && sec.color) ? sec.color : 'slate'})">${icon(sec && ICON_CHOICES.includes(sec.icon) ? sec.icon : 'i-wallet')}</span>`;
+const secPlanLabel = (sec) => (sec.mode === 'rest' ? 'Gets what’s left' : sec.mode === 'percent' ? `${sec.value}% of income` : `${formatCurrency(sec.value, sec.currency)} from each income`);
+// Balances in the display currency, from the very first move: nothing is reset between months.
+const sectionBalances = () => {
+    const bal = {};
+    secList().forEach((x) => { bal[x.id] = 0; });
+    secMoves().forEach((m) => {
+        const v = toDisplay(m.amount, m.currency);
+        if (m.to && bal[m.to] !== undefined) bal[m.to] += v;
+        if (m.from && bal[m.from] !== undefined) bal[m.from] -= v;
+    });
+    state.transactions.forEach((t) => {
+        if (t.type === 'expense' && t.sectionId && bal[t.sectionId] !== undefined && !isUpcoming(t)) bal[t.sectionId] -= toDisplay(t.amount, t.currency);
+    });
+    Object.keys(bal).forEach((k) => { bal[k] = round2(bal[k]); });
+    return bal;
+};
+// What went in and out of each section in a month.
+const sectionMonth = (y, m) => {
+    const out = {};
+    secList().forEach((x) => { out[x.id] = { in: 0, spent: 0 }; });
+    secMoves().forEach((mv) => {
+        const d = parseDate(mv.date);
+        if (d.getFullYear() !== y || d.getMonth() !== m) return;
+        const v = toDisplay(mv.amount, mv.currency);
+        if (mv.to && out[mv.to]) out[mv.to].in += v;
+        if (mv.from && out[mv.from]) out[mv.from].in -= v;
+    });
+    state.transactions.forEach((t) => { if (t.type === 'expense' && t.sectionId && out[t.sectionId] && !isUpcoming(t) && inMonth(t, y, m)) out[t.sectionId].spent += toDisplay(t.amount, t.currency); });
+    return out;
+};
+const dividedIncomeIds = () => new Set([...secMoves().filter((m) => m.incomeId).map((m) => m.incomeId), ...(state.config.sectionSkipped || [])]);
+// Income that arrived since sections were set up and hasn't been divided (or skipped) yet.
+const undividedIncomes = () => {
+    if (!secList().length) return [];
+    const since = state.config.sectionSince || '0000';
+    const done = dividedIncomeIds();
+    return state.transactions.filter((t) => t.type === 'income' && !isUpcoming(t) && t.date >= since && !done.has(t.id))
+        .sort((a, b) => (a.date < b.date ? -1 : 1));
+};
+// The section an expense of this category usually comes out of (learned from what you pick).
+const sectionForCategory = (cat) => {
+    const id = (state.config.sectionCatMap || {})[cat];
+    return id && secById(id) ? id : null;
+};
+const learnSection = (cat, secId) => {
+    if (!cat) return;
+    const map = state.config.sectionCatMap || (state.config.sectionCatMap = {});
+    if (secId) map[cat] = secId; else delete map[cat];
+};
+
+/* ---- Dividing an income ---- */
+let divideJob = null;
+// The plan for an amount: fixed amounts first (in order), then percentages of the same base, the rest to the
+// "what's left" section. Never more than there is.
+const planSplit = (amount) => {
+    const out = {};
+    let left = amount;
+    secList().forEach((x) => { out[x.id] = 0; });
+    secList().filter((x) => x.mode === 'amount').forEach((x) => { const v = Math.min(left, round2(toDisplay(x.value, x.currency))); out[x.id] = v; left -= v; });
+    const base = left;
+    secList().filter((x) => x.mode === 'percent').forEach((x) => { const v = Math.min(left, round2((base * x.value) / 100)); out[x.id] = v; left -= v; });
+    const rest = secList().find((x) => x.mode === 'rest');
+    if (rest) { out[rest.id] = round2(out[rest.id] + left); left = 0; }
+    return { split: out, left: round2(left) };
+};
+// Carries chosen, then sections still below zero are filled to zero, then the plan splits what remains.
+const divideNumbers = () => {
+    const job = divideJob;
+    const bal = sectionBalances();
+    const after = { ...bal };
+    const carries = [];
+    Object.entries(job.carry).forEach(([from, to]) => {
+        if (!to || to === 'keep' || !(bal[from] > 0) || !secById(to) || to === from) return;
+        carries.push({ from, to, amount: bal[from] });
+        after[from] -= bal[from];
+        after[to] += bal[from];
+    });
+    let pool = job.total;
+    const fills = [];
+    secList().map((x) => ({ id: x.id, need: round2(-after[x.id]) })).filter((x) => x.need > 0).sort((a, b) => b.need - a.need)
+        .forEach((x) => { const v = Math.min(pool, x.need); if (v > 0) { fills.push({ to: x.id, amount: round2(v) }); pool -= v; } });
+    pool = round2(pool);
+    return { bal, after, carries, fills, pool };
+};
+const openDivide = (incomeId) => {
+    const t = state.transactions.find((x) => x.id === incomeId && x.type === 'income');
+    if (!t || !secList().length) return;
+    divideJob = { incomeId, total: round2(toDisplay(t.amount, t.currency)), carry: {}, alloc: null, name: t.desc, date: t.date };
+    const n = divideNumbers();
+    divideJob.alloc = planSplit(n.pool).split;
+    renderDivide();
+    openOrSwap('modal-divide');
+};
+const renderDivide = () => {
+    const job = divideJob;
+    if (!job) return;
+    const cur = dcur();
+    const n = divideNumbers();
+    $('divide-title').textContent = `Divide ${job.name}`;
+    $('divide-total').textContent = formatCurrency(job.total, cur);
+    const leftovers = secList().filter((x) => n.bal[x.id] > 0);
+    $('divide-carry').innerHTML = leftovers.length ? `<div class="section-head"><h2>Left over from before</h2></div><p class="field-hint">Keep it in the same section, or move it to another one.</p>${leftovers.map((x) => `
+        <div class="sec-line">${secBadge(x, ' is-mini')}<span class="sec-line-name"><span>${escapeHtml(x.name)}</span><span class="text-income">${escapeHtml(formatCurrency(n.bal[x.id], cur))} left</span></span>
+            <div class="select sec-carry"><select class="input" data-sec-carry="${escapeHtml(x.id)}" aria-label="Where ${escapeHtml(x.name)}'s leftover goes">
+                <option value="keep">Keep in ${escapeHtml(x.name)}</option>
+                ${secList().filter((o) => o.id !== x.id).map((o) => `<option value="${escapeHtml(o.id)}" ${job.carry[x.id] === o.id ? 'selected' : ''}>Move to ${escapeHtml(o.name)}</option>`).join('')}
+            </select></div></div>`).join('')}` : '';
+    $('divide-fills').innerHTML = n.fills.length ? `<div class="section-head"><h2>Back to zero first</h2></div>${n.fills.map((f) => { const x = secById(f.to); return `
+        <div class="sec-line">${secBadge(x, ' is-mini')}<span class="sec-line-name"><span>${escapeHtml(x.name)}</span><span class="text-expense">was ${escapeHtml(formatCurrency(n.after[x.id], cur))}</span></span><span class="amount">+${escapeHtml(formatCurrency(f.amount, cur))}</span></div>`; }).join('')}` : '';
+    $('divide-split').innerHTML = `<div class="section-head"><h2>${n.fills.length ? 'Then divide the rest' : 'Divide it'}</h2><span class="card-sub">${escapeHtml(formatCurrency(n.pool, cur))}</span></div>${secList().map((x) => `
+        <div class="sec-line">${secBadge(x, ' is-mini')}<span class="sec-line-name"><span>${escapeHtml(x.name)}</span><span>${escapeHtml(secPlanLabel(x))}</span></span>
+            <input type="text" inputmode="decimal" class="input sec-amount" data-sec-alloc="${escapeHtml(x.id)}" value="${job.alloc[x.id] ? round2(job.alloc[x.id]) : ''}" placeholder="0" aria-label="Amount for ${escapeHtml(x.name)}"></div>`).join('')}`;
+    updateDivideLeft();
+};
+const updateDivideLeft = () => {
+    const job = divideJob;
+    if (!job) return;
+    const n = divideNumbers();
+    const used = Object.values(job.alloc).reduce((s, v) => s + (v || 0), 0);
+    const left = round2(n.pool - used);
+    const rest = secList().find((x) => x.mode === 'rest');
+    const el = $('divide-left');
+    el.dataset.state = left < -0.004 ? 'over' : left > 0.004 ? 'left' : 'ok';
+    el.textContent = left < -0.004 ? `${formatCurrency(-left, dcur())} more than the income. Lower an amount.`
+        : left > 0.004 ? `${formatCurrency(left, dcur())} not divided yet${rest ? ` - it goes to ${rest.name}` : ''}.`
+            : 'All of it is divided.';
+    $('btn-divide-ok').disabled = left < -0.004 || (left > 0.004 && !rest);
+};
+const confirmDivide = () => {
+    const job = divideJob;
+    if (!job) return;
+    const n = divideNumbers();
+    const cur = dcur();
+    const used = Object.values(job.alloc).reduce((s, v) => s + (v || 0), 0);
+    let left = round2(n.pool - used);
+    if (left < -0.004) return;
+    const rest = secList().find((x) => x.mode === 'rest');
+    if (left > 0.004 && !rest) return;
+    const moves = [];
+    const mk = (kind, from, to, amount) => moves.push({ id: generateId(), date: job.date, kind, incomeId: job.incomeId, from: from || null, to: to || null, amount: round2(amount), currency: cur });
+    n.carries.forEach((c) => mk('move', c.from, c.to, c.amount));
+    n.fills.forEach((f) => mk('fill', null, f.to, f.amount));
+    Object.entries(job.alloc).forEach(([id, v]) => { if (v > 0 && secById(id)) mk('income', null, id, v); });
+    if (left > 0.004) mk('income', null, rest.id, left);
+    if (!moves.length) mk('income', null, (rest || secList()[0]).id, 0); // marks it divided even if nothing went in
+    state.config.sectionMoves = [...secMoves(), ...moves];
+    if (!commitState('Dividing the income')) return;
+    divideJob = null;
+    haptic('MEDIUM');
+    closeSheet('modal-divide');
+    showToast(`${job.name} divided into your sections`, 'success');
+    renderActive();
+};
+const skipDivide = (incomeId) => {
+    state.config.sectionSkipped = [...(state.config.sectionSkipped || []), incomeId].slice(-500);
+    if (!commitState('That')) return;
+    if (openSheets.includes('modal-divide')) closeSheet('modal-divide');
+    showToast('Left out of your sections', 'info');
+    renderActive();
+};
+// Undo a division (to do it again differently): its moves go, balances go back.
+const undoDivide = (incomeId) => {
+    const t = state.transactions.find((x) => x.id === incomeId);
+    showConfirm({
+        title: 'Undo this division?',
+        message: `${t ? t.desc : 'This income'} goes back to "not divided" and the sections get back what they had. You can divide it again.`,
+        confirmLabel: 'Undo',
+        danger: false,
+        onConfirm: () => {
+            state.config.sectionMoves = secMoves().filter((m) => m.incomeId !== incomeId);
+            state.config.sectionSkipped = (state.config.sectionSkipped || []).filter((id) => id !== incomeId);
+            if (!commitState('Undoing it')) return;
+            showToast('Division undone', 'success');
+            if (openSheets.includes('modal-section-view')) renderSectionView();
+            renderActive();
+        }
+    });
+};
+
+/* ---- Moving money between sections, or adding money (a starting balance) ---- */
+let secMoveFrom = null;
+const openSecMove = (fromId, mode = 'move') => {
+    secMoveFrom = fromId || null;
+    $('sec-move-title').textContent = mode === 'add' ? 'Put money in a section' : 'Move money';
+    $('sec-move-mode').value = mode;
+    const opts = secList().map((x) => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.name)}</option>`).join('');
+    $('sec-move-from').innerHTML = opts;
+    $('sec-move-to').innerHTML = opts;
+    $('sec-move-from-field').hidden = mode === 'add';
+    if (fromId) { if (mode === 'add') $('sec-move-to').value = fromId; else $('sec-move-from').value = fromId; }
+    if (mode !== 'add' && $('sec-move-to').value === $('sec-move-from').value && secList().length > 1) $('sec-move-to').selectedIndex = (($('sec-move-from').selectedIndex) + 1) % secList().length;
+    $('sec-move-amount').value = '';
+    $('sec-move-hint').textContent = mode === 'add' ? 'For money already set aside (a starting balance) or extra money you add by hand.' : '';
+    openOrSwap('modal-sec-move');
+};
+const submitSecMove = () => {
+    const mode = $('sec-move-mode').value;
+    const amount = toNumber($('sec-move-amount').value, NaN);
+    const to = $('sec-move-to').value;
+    const from = mode === 'add' ? null : $('sec-move-from').value;
+    if (!(amount > 0)) return fieldError($('sec-move-amount'), 'Enter an amount greater than zero.');
+    if (from && from === to) return fieldError($('sec-move-to'), 'Pick a different section.');
+    state.config.sectionMoves = [...secMoves(), { id: generateId(), date: todayISO(), kind: mode === 'add' ? 'add' : 'move', incomeId: null, from, to, amount: round2(amount), currency: dcur() }];
+    if (!commitState('The move')) return false;
+    closeSheet('modal-sec-move');
+    showToast(mode === 'add' ? `${formatCurrency(amount, dcur())} put in ${secById(to).name}` : `${formatCurrency(amount, dcur())} moved from ${secById(from).name} to ${secById(to).name}`, 'success');
+    if (openSheets.includes('modal-section-view')) renderSectionView();
+    renderActive();
+    return true;
+};
+
+/* ---- Setting sections up and editing them ---- */
+const SECTION_TEMPLATES = {
+    '503020': [['Needs', 'percent', 50, 'cyan', 'c-Rent'], ['Wants', 'percent', 30, 'magenta', 'c-Entertainment'], ['Savings', 'rest', 0, 'green', 'c-Investment']],
+    'basic': [['Bills', 'percent', 40, 'violet', 'c-Utilities'], ['Food', 'percent', 25, 'pink', 'c-Food'], ['Transport', 'percent', 10, 'cyan', 'c-Travel'], ['Fun', 'percent', 10, 'orange', 'c-Entertainment'], ['Savings', 'rest', 0, 'green', 'c-Investment']]
+};
+const setupSections = (template) => {
+    const list = SECTION_TEMPLATES[template];
+    if (!list) { openSectionEditor(); return; }
+    state.config.sections = list.map(([name, mode, value, color, ic]) => ({ id: generateId(), name, mode, value, color, icon: ic, currency: dcur() }));
+    if (!state.config.sectionSince) state.config.sectionSince = toISODate(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+    if (!commitState('Your sections')) return;
+    showToast('Sections ready. Change names and shares any time.', 'success');
+    renderActive();
+};
+let secEditMode = 'percent';
+let secEditColor = 'violet';
+const openSectionEditor = (id) => {
+    const x = id ? secById(id) : null;
+    $('section-id').value = x ? x.id : '';
+    $('section-edit-title').textContent = x ? `Edit ${x.name}` : 'New section';
+    $('section-name').value = x ? x.name : '';
+    secEditMode = x ? x.mode : (secList().some((o) => o.mode === 'rest') ? 'percent' : 'rest');
+    secEditColor = x ? x.color : PALETTE[secList().length % PALETTE.length];
+    $('section-value').value = x && x.mode !== 'rest' ? x.value : '';
+    $('btn-delete-section').hidden = !x;
+    renderSectionEditor();
+    openOrSwap('modal-section');
+};
+const renderSectionEditor = () => {
+    setPressed('[data-sec-mode]', (b) => b.dataset.secMode === secEditMode);
+    $('section-value-field').hidden = secEditMode === 'rest';
+    $('section-value-label').textContent = secEditMode === 'percent' ? 'Share of each income (%)' : `Amount from each income (${dcur()})`;
+    $('section-value').placeholder = secEditMode === 'percent' ? 'e.g. 30' : '0.00';
+    const restNow = secList().find((o) => o.mode === 'rest' && o.id !== $('section-id').value);
+    $('section-mode-hint').textContent = secEditMode === 'rest'
+        ? (restNow ? `This takes over "what's left" from ${restNow.name} (it becomes 0%).` : 'Gets whatever is left after the other sections.')
+        : secEditMode === 'percent' ? 'Taken after fixed amounts and after filling sections that went below zero.' : 'Taken first, before the percentages.';
+    $('section-colors').innerHTML = PALETTE.map((p) => `<button type="button" class="swatch" data-sec-color="${p}" style="--cat:var(--pal-${p})" aria-label="${p}" aria-pressed="${p === secEditColor}"></button>`).join('');
+};
+const submitSection = () => {
+    const id = $('section-id').value;
+    const name = $('section-name').value.trim();
+    const value = toNumber($('section-value').value, NaN);
+    if (!name) return fieldError($('section-name'), 'Give the section a name, like "Food".');
+    if (secList().some((o) => o.name.toLowerCase() === name.toLowerCase() && o.id !== id)) return fieldError($('section-name'), `You already have "${name}".`);
+    if (secEditMode !== 'rest' && !(value > 0)) return fieldError($('section-value'), secEditMode === 'percent' ? 'Enter a share like 30.' : 'Enter an amount.');
+    if (secEditMode === 'percent') {
+        const others = secList().filter((o) => o.mode === 'percent' && o.id !== id).reduce((s, o) => s + o.value, 0);
+        if (others + value > 100) return fieldError($('section-value'), `Your other sections already take ${others}%. This can be at most ${Math.max(0, 100 - others)}%.`);
+    }
+    if (secEditMode === 'rest') state.config.sections = secList().map((o) => (o.mode === 'rest' && o.id !== id ? { ...o, mode: 'percent', value: 0 } : o));
+    const data = { name, mode: secEditMode, value: secEditMode === 'rest' ? 0 : value, color: secEditColor, currency: dcur() };
+    if (id) state.config.sections = secList().map((o) => (o.id === id ? { ...o, ...data } : o));
+    else {
+        state.config.sections = [...secList(), { id: generateId(), icon: 'i-wallet', ...data }];
+        if (!state.config.sectionSince) state.config.sectionSince = toISODate(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
+    }
+    if (!commitState('The section')) return false;
+    closeSheet('modal-section');
+    showToast(id ? 'Section saved' : `Section "${name}" added`, 'success');
+    renderActive();
+    return true;
+};
+// Deleting a section: its money, history and expenses go to another section (nothing disappears).
+const deleteSection = () => {
+    const id = $('section-id').value;
+    const x = secById(id);
+    if (!x) return;
+    const others = secList().filter((o) => o.id !== id);
+    const bal = sectionBalances()[id] || 0;
+    const used = state.transactions.some((t) => t.sectionId === id) || secMoves().some((m) => m.to === id || m.from === id);
+    if (used && !others.length) { showToast('Add another section first: its money and history need somewhere to go.', 'info'); return; }
+    const target = others.find((o) => o.mode === 'rest') || others[0];
+    showConfirm({
+        title: `Delete "${x.name}"?`,
+        message: used ? `Its balance (${formatCurrency(bal, dcur())}), history and expenses move to "${target.name}". Nothing is lost.` : 'It has no money or history yet.',
+        onConfirm: () => {
+            state.config.sectionMoves = secMoves().map((m) => ({ ...m, to: m.to === id ? target.id : m.to, from: m.from === id ? target.id : m.from })).filter((m) => !(m.from && m.from === m.to));
+            state.transactions.forEach((t) => { if (t.sectionId === id) { t.sectionId = target.id; queueSync('transaction', t.id, 'upsert', false); } });
+            Object.keys(state.config.sectionCatMap || {}).forEach((k) => { if (state.config.sectionCatMap[k] === id) state.config.sectionCatMap[k] = target.id; });
+            state.config.sections = others.map((o) => (x.mode === 'rest' && o.id === target.id ? { ...o, mode: 'rest', value: 0 } : o));
+            if (!state.config.sections.length) { state.config.sectionMoves = []; state.config.sectionSince = null; }
+            if (!commitState('Deleting the section')) return;
+            flushSync();
+            closeSheet('modal-section');
+            if (openSheets.includes('modal-section-view')) closeSheet('modal-section-view');
+            showToast('Section deleted', 'success');
+            renderActive();
+        }
+    });
+};
+
+/* ---- A section's page: balance, this month, history ---- */
+let secViewId = null;
+const openSectionView = (id) => { secViewId = id; renderSectionView(); openOrSwap('modal-section-view'); };
+const renderSectionView = () => {
+    const x = secById(secViewId);
+    if (!x) return;
+    const cur = dcur();
+    const bal = sectionBalances()[x.id] || 0;
+    const now = new Date();
+    const mo = sectionMonth(now.getFullYear(), now.getMonth())[x.id];
+    $('section-view-title').textContent = x.name;
+    const items = [];
+    secMoves().forEach((m) => {
+        if (m.to !== x.id && m.from !== x.id) return;
+        const inc = m.incomeId && state.transactions.find((t) => t.id === m.incomeId);
+        const other = secById(m.to === x.id ? m.from : m.to);
+        const label = m.kind === 'fill' ? `Filled back to zero${inc ? ` · ${inc.desc}` : ''}` : m.kind === 'add' ? 'Money put in'
+            : m.kind === 'move' ? (m.to === x.id ? `Moved in from ${other ? other.name : 'a section'}` : `Moved to ${other ? other.name : 'a section'}`)
+                : `From ${inc ? inc.desc : 'income'}`;
+        items.push({ date: m.date, label, v: (m.to === x.id ? 1 : -1) * toDisplay(m.amount, m.currency), incomeId: m.kind === 'income' || m.kind === 'fill' ? m.incomeId : null });
+    });
+    state.transactions.forEach((t) => { if (t.type === 'expense' && t.sectionId === x.id && !isUpcoming(t)) items.push({ date: t.date, label: t.desc, v: -toDisplay(t.amount, t.currency), tx: t.id }); });
+    items.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
+    const seenIncome = new Set();
+    $('section-view-body').innerHTML = `
+        <div class="sec-hero">${secBadge(x)}<span class="sec-hero-amount amount ${bal < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(bal, cur))}</span><span>${bal < 0 ? 'below zero: the next income fills it first' : 'in this section now'} · ${escapeHtml(secPlanLabel(x))}</span></div>
+        <div class="sec-month"><span>This month in <strong class="text-income">${escapeHtml(formatCurrency(mo.in, cur))}</strong></span><span>spent <strong class="text-expense">${escapeHtml(formatCurrency(mo.spent, cur))}</strong></span></div>
+        <div class="section-head"><h2>History</h2></div>
+        ${items.length ? `<ul class="sec-history">${items.slice(0, 80).map((i) => {
+        const undo = i.incomeId && !seenIncome.has(i.incomeId) ? (seenIncome.add(i.incomeId), `<button type="button" class="link-btn faint" data-sec-undo="${escapeHtml(i.incomeId)}">Undo</button>`) : '';
+        return `<li${i.tx ? ` data-edit-tx="${escapeHtml(i.tx)}" role="button" tabindex="0"` : ''}><span class="sec-h-main"><span>${escapeHtml(i.label)}</span><span>${escapeHtml(shortDate(i.date))}</span></span>${undo}<span class="amount ${i.v < 0 ? 'text-expense' : 'text-income'}">${i.v > 0 ? '+' : '−'}${escapeHtml(formatCurrency(Math.abs(i.v), cur))}</span></li>`;
+    }).join('')}</ul>` : '<p class="field-hint">Nothing yet. Divide an income, or put money in by hand.</p>'}`;
+};
+
+/* ---- Expenses with no section: give them one ---- */
+const unassignedExpenses = () => {
+    const since = state.config.sectionSince || '9999';
+    return state.transactions.filter((t) => t.type === 'expense' && !t.sectionId && !isUpcoming(t) && t.date >= since).sort((a, b) => (a.date < b.date ? 1 : -1));
+};
+const openUnassigned = () => {
+    const list = unassignedExpenses();
+    const opts = (sel) => `<option value="">No section</option>${secList().map((x) => `<option value="${escapeHtml(x.id)}" ${sel === x.id ? 'selected' : ''}>${escapeHtml(x.name)}</option>`).join('')}`;
+    $('sec-unassigned-body').innerHTML = list.length ? list.slice(0, 100).map((t) => `
+        <div class="sec-line">${entryBadge(t.desc, t.category, 'expense')}<span class="sec-line-name"><span>${escapeHtml(t.desc)}</span><span>${escapeHtml(shortDate(t.date))} · ${escapeHtml(formatCurrency(t.amount, t.currency))}</span></span>
+            <div class="select sec-carry"><select class="input" data-assign-tx="${escapeHtml(t.id)}" aria-label="Section for ${escapeHtml(t.desc)}">${opts(sectionForCategory(t.category))}</select></div></div>`).join('')
+        : '<p class="field-hint">Every expense is in a section.</p>';
+    openOrSwap('modal-sec-unassigned');
+};
+const saveUnassigned = () => {
+    let n = 0;
+    document.querySelectorAll('[data-assign-tx]').forEach((sel) => {
+        if (!sel.value) return;
+        const t = state.transactions.find((x) => x.id === sel.dataset.assignTx);
+        if (!t || t.sectionId) return;
+        t.sectionId = sel.value;
+        learnSection(t.category, sel.value);
+        queueSync('transaction', t.id, 'upsert', false);
+        n++;
+    });
+    if (!commitState('The sections')) return;
+    flushSync();
+    closeSheet('modal-sec-unassigned');
+    showToast(n ? `${plural(n, 'expense')} put in sections` : 'Nothing changed', n ? 'success' : 'info');
+    renderActive();
+};
+
+/* ---- Plan > Sections, the Home card, Insights ---- */
+const planSectionsHtml = () => {
+    const cur = dcur();
+    if (!secList().length) {
+        return `<section class="card sec-intro">
+            <h2 class="card-title">Divide your income into sections</h2>
+            <p class="card-sub">Choose sections like Bills, Food, Fun and Savings. Each income is split into them, every expense comes out of one, and each section keeps its own balance from month to month. Money left over can stay or move; a section that goes below zero is filled first from the next income.</p>
+            <div class="sec-templates">
+                <button type="button" class="btn btn-primary btn-block" data-sec-template="503020">Needs 50% · Wants 30% · Savings</button>
+                <button type="button" class="btn btn-secondary btn-block" data-sec-template="basic">Bills · Food · Transport · Fun · Savings</button>
+                <button type="button" class="btn btn-secondary btn-block" data-sec-template="own">Make my own</button>
+            </div></section>`;
+    }
+    const bal = sectionBalances();
+    const now = new Date();
+    const mo = sectionMonth(now.getFullYear(), now.getMonth());
+    const total = Object.values(bal).reduce((s, v) => s + v, 0);
+    const waiting = undividedIncomes();
+    const loose = unassignedExpenses();
+    const pct = secList().filter((x) => x.mode === 'percent').reduce((s, x) => s + x.value, 0);
+    return `
+        ${waiting.map((t) => `<section class="card sec-divide-card"><span class="sec-divide-text"><strong>${escapeHtml(t.desc)}</strong> · ${escapeHtml(formatCurrency(t.amount, t.currency))} on ${escapeHtml(shortDate(t.date))} isn't divided yet</span>
+            <span class="sec-divide-actions"><button type="button" class="btn btn-primary btn-sm" data-sec-divide="${escapeHtml(t.id)}">Divide</button><button type="button" class="btn btn-secondary btn-sm" data-sec-skip="${escapeHtml(t.id)}">Leave out</button></span></section>`).join('')}
+        <section class="card">
+            <div class="card-head"><h2 class="card-title">In your sections</h2><span class="card-sub">${escapeHtml(formatCurrency(total, cur))}</span></div>
+            ${secList().map((x) => {
+        const b = bal[x.id] || 0;
+        const m = mo[x.id];
+        const used = m.in > 0 ? (m.spent / m.in) * 100 : (m.spent > 0 ? 100 : 0);
+        return `<button type="button" class="plan-row" data-sec-view="${escapeHtml(x.id)}">
+                <span class="row-top">${secBadge(x)}<span class="row-main"><span class="row-title">${escapeHtml(x.name)}</span><span class="row-sub">${escapeHtml(secPlanLabel(x))} · spent ${escapeHtml(formatCurrency(m.spent, cur))} this month</span></span>
+                <span class="row-end"><span class="amount ${b < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(b, cur))}</span><span class="row-sub">${b < 0 ? 'below zero' : 'left'}</span></span></span>
+                ${meterHtml(used, b < 0 ? 'over' : budgetState(used), `${x.name} used this month`)}
+            </button>`;
+    }).join('')}
+            <div class="sec-actions">
+                <button type="button" class="btn btn-secondary btn-sm" data-action="sec-move">Move money</button>
+                <button type="button" class="btn btn-secondary btn-sm" data-action="sec-add-money">Put money in</button>
+                <button type="button" class="btn btn-secondary btn-sm" data-action="sec-new">${icon('i-plus')} Section</button>
+            </div>
+            ${pct > 100 ? '<p class="field-hint text-expense">Your percentages add up to more than 100%.</p>' : ''}
+        </section>
+        ${loose.length ? `<button type="button" class="card sec-loose" data-action="sec-unassigned"><span><strong>${plural(loose.length, 'expense')}</strong> not in a section · ${escapeHtml(formatCurrency(sumDisplay(loose), cur))}</span><span class="link-btn">Put them in</span></button>` : ''}`;
+};
+const renderSectionsHome = () => {
+    const el = $('dash-sections');
+    if (!el) return;
+    if (!secList().length) { el.innerHTML = ''; return; }
+    const bal = sectionBalances();
+    const cur = dcur();
+    const waiting = undividedIncomes();
+    el.innerHTML = `<section class="card sec-home">
+        <div class="card-head"><h2 class="card-title">Sections</h2><button type="button" class="link-btn" data-goto-plan="sections">See all</button></div>
+        ${waiting.length ? `<button type="button" class="btn btn-primary btn-block sec-home-divide" data-sec-divide="${escapeHtml(waiting[0].id)}">Divide ${escapeHtml(waiting[0].desc)} · ${escapeHtml(formatCurrency(waiting[0].amount, waiting[0].currency))}</button>` : ''}
+        <div class="sec-chips">${secList().map((x) => `<button type="button" class="sec-chip" data-sec-view="${escapeHtml(x.id)}">${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span class="amount ${bal[x.id] < 0 ? 'text-expense' : ''}">${escapeHtml(formatCompact(bal[x.id] || 0, cur))}</span></span></button>`).join('')}</div>
+    </section>`;
+};
+const renderSectionsInsights = (list) => {
+    const el = $('section-breakdown-card');
+    if (!el) return;
+    el.hidden = !secList().length;
+    if (el.hidden) return;
+    const cur = dcur();
+    const by = {};
+    let none = 0;
+    list.filter((t) => t.type === 'expense').forEach((t) => { const v = toDisplay(t.amount, t.currency); if (t.sectionId && secById(t.sectionId)) by[t.sectionId] = (by[t.sectionId] || 0) + v; else none += v; });
+    const total = Object.values(by).reduce((s, v) => s + v, 0) + none;
+    const rows = secList().map((x) => [x, by[x.id] || 0]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
+    $('section-breakdown').innerHTML = rows.map(([x, v]) => `<li>${secBadge(x, ' is-mini')}<span class="bd-name">${escapeHtml(x.name)}</span><span class="bd-pct">${total ? Math.round((v / total) * 100) : 0}%</span><span class="amount">${escapeHtml(formatCurrency(v, cur))}</span></li>`).join('')
+        + (none > 0 ? `<li><span class="cat-badge is-mini" style="--cat:var(--text-3)">${icon('i-wallet')}</span><span class="bd-name">No section</span><span class="bd-pct">${total ? Math.round((none / total) * 100) : 0}%</span><span class="amount">${escapeHtml(formatCurrency(none, cur))}</span></li>` : '')
+        || '<li class="field-hint">No spending in this period.</li>';
+};
+
+/* ---- The entry form: which section an expense comes out of ---- */
+let txSectionId = null;
+let txSectionTouched = false;
+const renderTxSections = () => {
+    const field = $('tx-section-field');
+    const show = txType === 'expense' && secList().length > 0;
+    field.hidden = !show;
+    if (!show) return;
+    const bal = sectionBalances();
+    const cur = dcur();
+    $('tx-section-picker').innerHTML = secList().map((x) => `<button type="button" class="sec-pick" data-tx-section="${escapeHtml(x.id)}" aria-pressed="${txSectionId === x.id}">${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span class="${bal[x.id] < 0 ? 'text-expense' : ''}">${escapeHtml(formatCompact(bal[x.id] || 0, cur))}</span></span></button>`).join('')
+        + `<button type="button" class="sec-pick is-none" data-tx-section="" aria-pressed="${!txSectionId}"><span><span>No section</span></span></button>`;
+};
+const pickTxSection = (id) => { txSectionId = id || null; txSectionTouched = true; renderTxSections(); haptic(); };
+const syncTxSectionToCategory = () => {
+    if (txSectionTouched || $('tx-id').value) return;
+    const cat = (document.querySelector('input[name="tx-category"]:checked') || {}).value;
+    const s = sectionForCategory(cat);
+    if (s) { txSectionId = s; renderTxSections(); }
 };
 
 /* =========================================================================
@@ -8101,6 +8629,25 @@ const initEvents = () => {
         if (d.brandPick) { pickDescBrand(d.brandPick); return; }
         if (d.namePick) { pickName(d); return; }
         if (d.openTrip) { openTrips(d.openTrip); return; }
+        if (d.secTemplate) { setupSections(d.secTemplate); return; }
+        if (d.secView) { openSectionView(d.secView); return; }
+        if (d.secDivide) { openDivide(d.secDivide); return; }
+        if (d.secSkip) { skipDivide(d.secSkip); return; }
+        if (d.secUndo) { undoDivide(d.secUndo); return; }
+        if (d.secMode) { secEditMode = d.secMode; renderSectionEditor(); return; }
+        if (d.secColor) { secEditColor = d.secColor; renderSectionEditor(); return; }
+        if (d.txSection !== undefined) { pickTxSection(d.txSection); return; }
+        if (d.action === 'sec-new') { openSectionEditor(); return; }
+        if (d.action === 'sec-edit') { openSectionEditor(secViewId); return; }
+        if (d.action === 'sec-move') { openSecMove(secViewId && openSheets.includes('modal-section-view') ? secViewId : null, 'move'); return; }
+        if (d.action === 'sec-add-money') { openSecMove(secViewId && openSheets.includes('modal-section-view') ? secViewId : null, 'add'); return; }
+        if (d.action === 'sec-move-ok') { submitSecMove(); return; }
+        if (d.action === 'sec-save') { submitSection(); return; }
+        if (d.action === 'sec-delete') { deleteSection(); return; }
+        if (d.action === 'sec-unassigned') { openUnassigned(); return; }
+        if (d.action === 'sec-unassigned-ok') { saveUnassigned(); return; }
+        if (d.action === 'divide-ok') { confirmDivide(); return; }
+        if (d.action === 'divide-skip') { if (divideJob) skipDivide(divideJob.incomeId); return; }
         if (d.subPick !== undefined) { pickSubscription(d.subPick); return; }
         if (d.action === 'add-trip') { openTrips(); return; }
         if (d.action === 'add-subscription') { openSubscriptions(); return; }
@@ -8345,6 +8892,19 @@ const initEvents = () => {
     updateNotifBell();
     $('switch-approval').addEventListener('click', toggleApproval);
     $('switch-secure-screen').addEventListener('click', toggleSecureScreen);
+    $('modal-divide').addEventListener('input', (e) => {
+        const a = e.target.dataset.secAlloc;
+        if (a && divideJob) { divideJob.alloc[a] = Math.max(0, toNumber(e.target.value, 0)); updateDivideLeft(); }
+    });
+    $('modal-divide').addEventListener('change', (e) => {
+        const c = e.target.dataset.secCarry;
+        if (c && divideJob) {
+            divideJob.carry[c] = e.target.value;
+            // What's left to divide changed (a section below zero may need less): split again by the plan.
+            divideJob.alloc = planSplit(divideNumbers().pool).split;
+            renderDivide();
+        }
+    });
     $('tx-trip').addEventListener('click', () => { txTripId = txTripId ? null : $('tx-trip').dataset.trip; updateTripRow(); });
     $('tx-date').addEventListener('change', () => { if (!$('tx-id').value && txType === 'expense') { txTripId = tripIdFor($('tx-date').value); updateTripRow(); } });
     $('mfa-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitMfa(); } });
@@ -8368,7 +8928,7 @@ const initEvents = () => {
     $('budget-category').addEventListener('change', syncBudgetModeUi);
     $('tx-date').addEventListener('change', updateDateHint);
     $('tx-amount').addEventListener('input', updatePriceHint);
-    $('tx-category-picker').addEventListener('change', () => { txCatTouched = true; });
+    $('tx-category-picker').addEventListener('change', () => { txCatTouched = true; syncTxSectionToCategory(); });
     $('bot-form').addEventListener('submit', (e) => {
         e.preventDefault();
         const v = $('bot-input').value;

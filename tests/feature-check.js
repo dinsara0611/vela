@@ -1818,6 +1818,82 @@ export async function run() {
         return (logo && form && bill && bill.sub && bill.frequency === 'monthly' && total && kept) || `logo ${logo}, form ${form}, bill ${!!bill}/${bill && bill.sub}, total ${total}, kept ${kept}`;
     });
 
+    await T('Sections: split by plan, below-zero filled first, leftover moved, balances continue, undo, restart, sync', async () => {
+        const st = s();
+        st.config.sectionSkipped = st.transactions.filter((t) => t.type === 'income').map((t) => t.id); // earlier test incomes stay out
+        g('setupSections')('503020'); await wait(200);
+        st.config.sectionSince = today; g('saveState')();
+        const [needs, wants, savings] = s().config.sections;
+        const bal = () => g('sectionBalances')();
+        const r = (o) => [o[needs.id], o[wants.id], o[savings.id]].map((v) => Math.round(v)).join('/');
+        // Salary 1: the divide sheet opens by itself after adding it.
+        await addTx({ type: 'income', amount: 100000, desc: 'Salary Nov', category: 'Salary' }); await wait(600);
+        const opened = g('openSheets').includes('modal-divide');
+        g('confirmDivide')(); await wait(300);
+        const b1 = r(bal());
+        // Spending out of sections (from any account).
+        g('openAddTx')('expense'); await wait(300);
+        const pickerShown = !$('tx-section-field').hidden;
+        document.querySelector(`[data-tx-section="${needs.id}"]`).click();
+        $('tx-amount').value = '60000'; $('tx-desc').value = 'Rent and bills'; g('selectTxCategory')('Rent');
+        await g('submitTx')(); await wait(350);
+        g('openAddTx')('expense'); await wait(300);
+        document.querySelector(`[data-tx-section="${wants.id}"]`).click();
+        $('tx-amount').value = '10000'; $('tx-desc').value = 'Concert'; g('selectTxCategory')('Entertainment');
+        await g('submitTx')(); await wait(350);
+        const b2 = r(bal());
+        // Salary 2: Needs (below zero) filled first, Wants' leftover moved to Savings, the rest split by the plan.
+        await addTx({ type: 'income', amount: 100000, desc: 'Salary Dec', category: 'Salary' }); await wait(600);
+        const sel = document.querySelector(`[data-sec-carry="${wants.id}"]`);
+        sel.value = savings.id; sel.dispatchEvent(new Event('change', { bubbles: true })); await wait(100);
+        const fillShown = /Back to zero first/.test($('divide-fills').textContent);
+        g('confirmDivide')(); await wait(300);
+        const b3 = r(bal());
+        const total = Object.values(bal()).reduce((a, v) => a + v, 0);
+        // Undo the second division, then divide again keeping leftovers where they are.
+        const sal2 = find('Salary Dec');
+        (0, eval)('undoDivide')(sal2.id); await confirmOk(); await wait(300);
+        const b4 = r(bal());
+        g('openDivide')(sal2.id); await wait(350); g('confirmDivide')(); await wait(300);
+        const b5 = r(bal());
+        // Restart and sync keep it all.
+        g('loadState')();
+        const b6 = r(bal());
+        const payload = g('settingsPayload')();
+        const synced = payload.sections.length === 3 && payload.sectionMoves.length >= 6;
+        // A bank SMS expense in the Rent category lands in Needs (learned from what you picked).
+        const smsTx = g('quickSaveTx')({ type: 'expense', desc: 'CEB', amount: 5000, currency: 'LKR', category: 'Rent', date: today });
+        return (opened && b1 === '50000/30000/20000' && pickerShown && b2 === '-10000/20000/20000' && fillShown && b3 === '45000/27000/58000' && Math.round(total) === 130000
+            && b4 === '-10000/20000/20000' && b5 === '45000/47000/38000' && b6 === b5 && synced && smsTx.sectionId === needs.id)
+            || `opened ${opened}, b1 ${b1}, picker ${pickerShown}, b2 ${b2}, fill shown ${fillShown}, b3 ${b3}, total ${Math.round(total)}, undo ${b4}, redo ${b5}, restart ${b6}, synced ${synced}, sms ${smsTx.sectionId === needs.id}`;
+    });
+
+    await T('Sections: move money, put money in, delete a section keeps every rupee, Home / Plan / Insights show it', async () => {
+        const [needs, wants, savings] = s().config.sections;
+        const sum = () => Math.round(Object.values(g('sectionBalances')()).reduce((a, v) => a + v, 0));
+        const before = sum();
+        g('openSecMove')(savings.id, 'move'); await wait(300);
+        $('sec-move-to').value = wants.id; $('sec-move-amount').value = '3000';
+        g('submitSecMove')(); await wait(300);
+        const moved = Math.round(g('sectionBalances')()[wants.id]);
+        g('openSecMove')(needs.id, 'add'); await wait(300);
+        $('sec-move-amount').value = '1000'; g('submitSecMove')(); await wait(300);
+        const added = sum() - before;
+        g('switchTab')('dashboard'); await wait(300);
+        const home = /Sections/.test($('dash-sections').textContent) && /Needs/.test($('dash-sections').textContent);
+        g('goToPlan')('sections'); await wait(300);
+        const plan = /In your sections/.test($('plan-content').textContent);
+        g('switchTab')('analytics'); await wait(400);
+        const insights = !$('section-breakdown-card').hidden && /Needs/.test($('section-breakdown').textContent);
+        const totalBeforeDelete = sum();
+        g('openSectionEditor')(wants.id); await wait(300);
+        g('deleteSection')(); await confirmOk(); await wait(300);
+        const after = sum();
+        const gone = !s().config.sections.some((x) => x.id === wants.id) && !s().transactions.some((t) => t.sectionId === wants.id);
+        return moved === 50000 && added === 1000 && home && plan && insights && after === totalBeforeDelete && gone
+            || `moved ${moved}, added ${added}, home ${home}, plan ${plan}, insights ${insights}, total ${totalBeforeDelete}->${after}, gone ${gone}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };
