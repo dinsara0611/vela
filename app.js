@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.41.1';
+const APP_VERSION = '4.42.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2015,7 +2015,7 @@ const txRow = (t, { showDate = true } = {}) => {
     if (t.type === 'transfer') {
         return `<li><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
             <span class="cat-badge" style="--cat:var(--text-2)">${icon('i-swap')}</span>
-            <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc)}</span><span class="tx-sub"><span>${escapeHtml(transferLine(t))}</span></span></span>
+            <span class="tx-main"><span class="tx-title">${escapeHtml(t.desc === 'ATM withdrawal' ? 'Cash from ATM' : t.desc)}</span><span class="tx-sub"><span>${escapeHtml(transferLine(t))}${t.desc === 'ATM withdrawal' ? ' · not spending' : ''}</span></span></span>
             <span class="tx-amt"><span class="amount is-transfer">${escapeHtml(formatDisplay(t.amount, t.currency))}</span>${origNote(t.amount, t.currency)}${when}</span>
         </button></li>`;
     }
@@ -3210,7 +3210,7 @@ const smsMatchFor = (i) => {
 
 const smsCardHtml = (i) => {
     const match = smsMatchFor(i);
-    const typeText = i.type === 'atm' ? 'ATM withdrawal (moved to Cash)' : i.type === 'reversal' ? 'Reversal (cancels an earlier payment)'
+    const typeText = i.type === 'atm' ? 'Cash taken out at an ATM' : i.type === 'reversal' ? 'Reversal (cancels an earlier payment)'
         : i.type === 'cardpay' ? 'Payment to your card (a transfer, not income)' : `${i.type === 'income' ? 'Income' : 'Expense'} · ${i.kindLabel}`;
     const amountText = `${i.type === 'income' ? '+' : (i.type === 'reversal' || i.type === 'cardpay') ? '' : '−'}${formatCurrency(i.amount, i.currency)}`;
     const bankBrand = brandFor(i.bank, true);
@@ -3231,7 +3231,8 @@ const smsCardHtml = (i) => {
     ];
     const moveBtn = /^transfer_/.test(i.kind) ? `<button type="button" class="link-btn sms-move" data-sms-move="${escapeHtml(i.id)}">Between my own accounts? Record it as a transfer</button>` : '';
     let actions;
-    const refundNote = i.kind === 'refund' && !match ? '<p class="sms-note">No matching purchase found, so this is added as income labelled Refund.</p>' : '';
+    const refundNote = i.kind === 'refund' && !match ? '<p class="sms-note">No matching purchase found, so this is added as income labelled Refund.</p>'
+        : i.type === 'atm' ? `<p class="sms-note atm-note">${icon('i-swap', 'ic ic-sm')}<span>The money moves from your bank account to your <strong>Cash wallet</strong>. It is <strong>not spending</strong>: what you buy with the cash is.</span></p>` : '';
     if (i.type === 'cardpay') {
         actions = `<p class="sms-note">Paying your card moves money between your own accounts, so it isn't income or spending.</p><div class="sms-actions"><button type="button" class="btn btn-secondary btn-sm" data-sms-ignore="${escapeHtml(i.id)}">Ignore</button><button type="button" class="btn btn-primary btn-sm" data-sms-move="${escapeHtml(i.id)}">Record as transfer</button></div>`;
     } else if (i.type === 'reversal') {
@@ -3240,7 +3241,7 @@ const smsCardHtml = (i) => {
             : `<span class="sms-note">No matching payment found to reverse, so nothing is added.</span><button type="button" class="btn btn-secondary btn-sm" data-sms-ignore="${escapeHtml(i.id)}">OK</button>`;
     } else {
         const matchBtn = match ? `<button type="button" class="btn ${i.type === 'income' ? 'btn-income' : 'btn-primary'} btn-sm btn-block" data-sms-match="${escapeHtml(i.id)}">${icon('i-check', 'ic ic-sm')} ${match.how === 'refund' ? `Refund for “${escapeHtml(match.tx.desc)}”: lower that expense` : match.how === 'pay' ? `Mark “${escapeHtml(match.pay.name)}” as ${i.type === 'income' ? 'received' : 'paid'}` : `Link to “${escapeHtml(match.tx.desc)}” (already recorded)`}</button>` : '';
-        actions = `${matchBtn}<div class="sms-actions"><button type="button" class="btn btn-secondary btn-sm" data-sms-ignore="${escapeHtml(i.id)}">Ignore</button><button type="button" class="btn btn-secondary btn-sm" data-sms-edit="${escapeHtml(i.id)}">Edit details</button>${match && match.how !== 'refund' ? '' : `<button type="button" class="btn ${i.type === 'income' ? 'btn-income' : 'btn-primary'} btn-sm" data-sms-add="${escapeHtml(i.id)}">${match ? 'Add as income' : 'Confirm &amp; add'}</button>`}</div>${moveBtn}`;
+        actions = `${matchBtn}<div class="sms-actions"><button type="button" class="btn btn-secondary btn-sm" data-sms-ignore="${escapeHtml(i.id)}">Ignore</button><button type="button" class="btn btn-secondary btn-sm" data-sms-edit="${escapeHtml(i.id)}">Edit details</button>${match && match.how !== 'refund' ? '' : `<button type="button" class="btn ${i.type === 'income' ? 'btn-income' : 'btn-primary'} btn-sm" data-sms-add="${escapeHtml(i.id)}">${match ? 'Add as income' : i.type === 'atm' ? 'Move to my Cash' : 'Confirm &amp; add'}</button>`}</div>${moveBtn}`;
     }
     return `<li class="sms-card" data-confidence="${i.confidence}">
         ${i.confidence === 'medium' ? `<p class="sms-check">${icon('i-alert', 'ic ic-sm')}<span>Please check these details: ${escapeHtml(i.checks.join('; '))}.</span></p>` : ''}
@@ -3251,16 +3252,62 @@ const smsCardHtml = (i) => {
 };
 // Clear enough to add with one tap: read with confidence, not a reversal or card payment, and its account is known.
 const smsAddAllReady = (i) => i.confidence === 'high' && i.type !== 'reversal' && i.type !== 'cardpay' && !!(smsMatchFor(i) || smsAccountFor(i));
+// Banks often send two different messages for one payment (a card alert and an account debit). Those are shown
+// as one card: "Add once" (the usual) or "They're 2 payments". Each message is in at most one pair.
+const smsSplitPairs = new Set();
+const smsPairs = () => {
+    const pairs = [];
+    const used = new Set();
+    smsQueue.forEach((a, n) => {
+        if (used.has(a.id)) return;
+        const b = smsQueue.slice(n + 1).find((x) => !used.has(x.id) && !smsSplitPairs.has(`${a.id}|${x.id}`) && sameDetection(a, x) === 'maybe');
+        if (b) { pairs.push([a, b]); used.add(a.id); used.add(b.id); }
+    });
+    return pairs;
+};
+const smsPairHtml = ([a, b]) => `<li class="sms-pair">
+        <p class="sms-pair-head">${icon('i-alert', 'ic ic-sm')}<span>${escapeHtml(a.bank)} sent <strong>2 messages</strong> for ${escapeHtml(formatCurrency(a.amount, a.currency))} close together. Usually that is <strong>one payment</strong>.</span></p>
+        <div class="sms-pair-actions">
+            <button type="button" class="btn btn-primary btn-sm" data-sms-pair-once="${escapeHtml(`${a.id}|${b.id}`)}">${icon('i-check', 'ic ic-sm')} Add once</button>
+            <button type="button" class="btn btn-secondary btn-sm" data-sms-pair-split="${escapeHtml(`${a.id}|${b.id}`)}">They're 2 payments</button>
+        </div>
+        <ul class="sms-pair-cards">${smsCardHtml(a)}<li class="sms-pair-second"><details><summary>The other message${b.desc && b.desc !== a.desc ? `: ${escapeHtml(b.desc)}` : ''}</summary><p>${escapeHtml(b.masked)}</p></details></li></ul>
+    </li>`;
+const smsPairOnce = (key) => {
+    const [aId, bId] = key.split('|');
+    const a = smsQueue.find((x) => x.id === aId);
+    const b = smsQueue.find((x) => x.id === bId);
+    if (!a) return;
+    if (b) {
+        // One payment, two messages: keep what each says (shop, reference...), drop the second card.
+        mergeDetection(a, b);
+        a.checks = a.checks.filter((c) => !/may be the same/.test(c));
+        a.confidence = a.checks.length ? 'medium' : 'high';
+        smsQueue = smsQueue.filter((x) => x.id !== b.id);
+    }
+    smsAdd(a.id);
+    if (smsQueue.some((x) => x.id === a.id)) renderSmsSheet(); // still waiting (asked which account)
+};
+const smsPairSplit = (key) => {
+    smsSplitPairs.add(key);
+    key.split('|').forEach((id) => { const i = smsQueue.find((x) => x.id === id); if (i) { i.checks = i.checks.filter((c) => !/may be the same/.test(c)); i.confidence = i.checks.length ? 'medium' : 'high'; } });
+    renderSmsSheet();
+    showToast('Shown as 2 payments. Add each one.', 'info');
+};
 const renderSmsSheet = () => {
     const list = $('sms-list');
     if (!smsQueue.length) { list.innerHTML = ''; return; }
-    $('sms-count').textContent = `${plural(smsQueue.length, 'transaction', 'transactions')} to review`;
+    const shown = smsQueue.length - smsPairs().length;
+    $('sms-count').textContent = `${plural(shown, 'transaction', 'transactions')} to review`;
     // "Add all confident" says how many it will add; when none can be added without a check, it says so.
     const confident = smsQueue.filter(smsAddAllReady).length;
     const allBtn = $('btn-sms-all');
     allBtn.disabled = confident === 0;
     allBtn.textContent = confident ? `Add all confident (${confident})` : 'Check each one below';
-    list.innerHTML = smsQueue.map(smsCardHtml).join('');
+    const pairs = smsPairs();
+    const inPair = new Set([].concat(...pairs.map(([a, b]) => [a.id, b.id])));
+    const firstOfPair = new Map(pairs.map((pr) => [pr[0].id, pr]));
+    list.innerHTML = smsQueue.map((i) => (firstOfPair.has(i.id) ? smsPairHtml(firstOfPair.get(i.id)) : inPair.has(i.id) ? '' : smsCardHtml(i))).join('');
 };
 const showSmsSheet = () => {
     if (!smsQueue.length) return;
@@ -3320,7 +3367,7 @@ const smsApply = (i, accountId) => {
         const from = accountById(accountId);
         const hadWallet = !!cashWallet(from.id);
         const cash = ensureCashWallet(from.currency, from.id);
-        if (!hadWallet) showToast('Made a Cash wallet for the money you took out', 'info');
+        if (!hadWallet) showToast('Made a "Cash" wallet: cash you take out is kept there', 'info');
         if (cash) {
             const record = { id: generateId(), type: 'transfer', desc: 'ATM withdrawal', amount: i.amount, currency: i.currency, accountId: from.id, toAccountId: cash.id, toAmount: round2(convertAmount(i.amount, i.currency, cash.currency)), toCurrency: cash.currency, category: 'Transfer', date: i.date, note: `From ${i.bank} (${sourceShort(i.sources)})`, createdAt: Date.now(), recurringId: null, receipt: null, bank: bankMeta(i) };
             state.transactions.push(record);
@@ -3351,7 +3398,7 @@ const smsAdd = (id) => {
     if (!accountId) { askSmsAccount(i, () => smsAdd(id)); return; }
     if (!smsApply(i, accountId)) return;
     smsLearn(i, true); // read correctly: confirmed as it was
-    showToast(`Added from ${i.bank}: ${formatCurrency(i.amount, i.currency)}`, 'success');
+    showToast(i.type === 'atm' ? `${formatCurrency(i.amount, i.currency)} cash taken out: moved from ${(accountById(smsChosenAccount(i) || '') || {}).name || i.bank} to your Cash wallet` : `Added from ${i.bank}: ${formatCurrency(i.amount, i.currency)}`, 'success');
     smsHandled([id]);
 };
 const smsIgnore = (id) => smsHandled([id]);
@@ -4206,7 +4253,7 @@ const renderPlan = () => {
     if (planTab === 'bills') el.innerHTML = planBillsHtml();
     else if (planTab === 'goals') el.innerHTML = planGoalsHtml();
     else if (planTab === 'debts') el.innerHTML = planDebtsHtml();
-    else if (planTab === 'sections') el.innerHTML = planSectionsHtml();
+    else if (planTab === 'sections') { el.innerHTML = planSectionsHtml(); animateIn(el); }
     else el.innerHTML = planBudgetsHtml();
 };
 
@@ -6349,7 +6396,7 @@ const pickSubscription = (name) => {
 const secList = () => state.config.sections || [];
 const secById = (id) => secList().find((x) => x.id === id) || null;
 const secMoves = () => state.config.sectionMoves || [];
-const secBadge = (sec, extra = '') => `<span class="cat-badge sec-badge${extra}" style="--cat:var(--pal-${PALETTE.includes(sec && sec.color) ? sec.color : 'slate'})">${icon(sec && ICON_CHOICES.includes(sec.icon) ? sec.icon : 'i-wallet')}</span>`;
+const secBadge = (sec, extra = '') => `<span class="cat-badge sec-badge${extra}" style="--cat:var(--pal-${PALETTE.includes(sec && sec.color) ? sec.color : 'slate'})">${icon(sec && /^[cxi]-[A-Za-z-]+$/.test(sec.icon || '') ? sec.icon : 'i-wallet')}</span>`;
 const secPlanLabel = (sec) => (sec.mode === 'rest' ? 'Gets what’s left' : sec.mode === 'percent' ? `${sec.value}% of income` : `${formatCurrency(sec.value, sec.currency)} from each income`);
 // Balances in the display currency, from the very first move: nothing is reset between months.
 const sectionBalances = () => {
@@ -6477,6 +6524,8 @@ const updateDivideLeft = () => {
         : left > 0.004 ? `${formatCurrency(left, dcur())} not divided yet${rest ? ` - it goes to ${rest.name}` : ''}.`
             : 'All of it is divided.';
     $('btn-divide-ok').disabled = left < -0.004 || (left > 0.004 && !rest);
+    const parts = secList().map((x) => [x, (job.alloc[x.id] || 0) + (n.fills.find((f) => f.to === x.id) || { amount: 0 }).amount + (x.mode === 'rest' && left > 0 ? left : 0)]);
+    $('divide-bar').innerHTML = secStackBar(parts).replace(/data-grow="([\d.]+)"/g, 'style="width:$1%" data-w="$1"').replace(/style="--cat:([^"]+)" style="width/g, 'style="--cat:$1;width');
 };
 const confirmDivide = () => {
     const job = divideJob;
@@ -6561,6 +6610,34 @@ const submitSecMove = () => {
     return true;
 };
 
+/* ---- Motion: amounts count up, bars grow (nothing moves when the phone asks for less motion) ---- */
+const lessMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const animateIn = (root) => {
+    if (!root) return;
+    const nums = root.querySelectorAll('[data-countup]');
+    if (lessMotion()) { nums.forEach((el) => { el.textContent = formatCurrency(Number(el.dataset.countup), dcur()); }); return; }
+    nums.forEach((el) => {
+        const to = Number(el.dataset.countup);
+        const from = Number(el.dataset.from || 0);
+        const t0 = performance.now();
+        const step = (now) => {
+            const k = Math.min(1, (now - t0) / 650);
+            const e = 1 - Math.pow(1 - k, 3);
+            el.textContent = formatCurrency(from + (to - from) * e, dcur());
+            if (k < 1) requestAnimationFrame(step);
+        };
+        requestAnimationFrame(step);
+    });
+    root.querySelectorAll('[data-grow]').forEach((el) => { el.style.width = '0%'; requestAnimationFrame(() => requestAnimationFrame(() => { el.style.width = `${el.dataset.grow}%`; })); });
+};
+// The share of money each section holds, as one coloured bar.
+const secStackBar = (values) => {
+    const pos = values.filter(([, v]) => v > 0);
+    const total = pos.reduce((a, [, v]) => a + v, 0);
+    if (!total) return '<div class="sec-stack is-empty"></div>';
+    return `<div class="sec-stack" role="img" aria-label="How your money is spread over your sections">${pos.map(([x, v]) => `<span style="--cat:var(--pal-${x.color})" data-grow="${((v / total) * 100).toFixed(2)}" title="${escapeHtml(x.name)}"></span>`).join('')}</div>`;
+};
+
 /* ---- Setting sections up and editing them ---- */
 const SECTION_TEMPLATES = {
     '503020': [['Needs', 'percent', 50, 'cyan', 'c-Rent'], ['Wants', 'percent', 30, 'magenta', 'c-Entertainment'], ['Savings', 'rest', 0, 'green', 'c-Investment']],
@@ -6577,6 +6654,8 @@ const setupSections = (template) => {
 };
 let secEditMode = 'percent';
 let secEditColor = 'violet';
+let secEditIcon = 'i-wallet';
+const SECTION_ICONS = ['i-wallet', 'c-Rent', 'c-Food', 'c-Utilities', 'c-Travel', 'c-Entertainment', 'c-Health', 'c-Shopping', 'c-Investment', 'c-Gift', 'x-school', 'x-book', 'x-coffee', 'x-plane', 'x-gym', 'x-paw', 'x-phone', 'x-fuel', 'x-music', 'x-tools'];
 const openSectionEditor = (id) => {
     const x = id ? secById(id) : null;
     $('section-id').value = x ? x.id : '';
@@ -6584,6 +6663,7 @@ const openSectionEditor = (id) => {
     $('section-name').value = x ? x.name : '';
     secEditMode = x ? x.mode : (secList().some((o) => o.mode === 'rest') ? 'percent' : 'rest');
     secEditColor = x ? x.color : PALETTE[secList().length % PALETTE.length];
+    secEditIcon = x && x.icon ? x.icon : 'i-wallet';
     $('section-value').value = x && x.mode !== 'rest' ? x.value : '';
     $('btn-delete-section').hidden = !x;
     renderSectionEditor();
@@ -6599,6 +6679,13 @@ const renderSectionEditor = () => {
         ? (restNow ? `This takes over "what's left" from ${restNow.name} (it becomes 0%).` : 'Gets whatever is left after the other sections.')
         : secEditMode === 'percent' ? 'Taken after fixed amounts and after filling sections that went below zero.' : 'Taken first, before the percentages.';
     $('section-colors').innerHTML = PALETTE.map((p) => `<button type="button" class="swatch" data-sec-color="${p}" style="--cat:var(--pal-${p})" aria-label="${p}" aria-pressed="${p === secEditColor}"></button>`).join('');
+    $('section-icons').innerHTML = SECTION_ICONS.map((i) => `<button type="button" class="icon-choice" data-sec-icon="${i}" style="--cat:var(--pal-${secEditColor})" aria-label="${i.replace(/^[cxi]-/, '')}" aria-pressed="${i === secEditIcon}">${icon(i)}</button>`).join('');
+    updateSectionPreview();
+};
+const updateSectionPreview = () => {
+    const name = $('section-name').value.trim() || 'Your section';
+    const v = toNumber($('section-value').value, 0);
+    $('section-preview').innerHTML = `${secBadge({ color: secEditColor, icon: secEditIcon })}<span><span>${escapeHtml(name)}</span><span>${escapeHtml(secPlanLabel({ mode: secEditMode, value: v, currency: dcur() }))}</span></span>`;
 };
 const submitSection = () => {
     const id = $('section-id').value;
@@ -6612,10 +6699,10 @@ const submitSection = () => {
         if (others + value > 100) return fieldError($('section-value'), `Your other sections already take ${others}%. This can be at most ${Math.max(0, 100 - others)}%.`);
     }
     if (secEditMode === 'rest') state.config.sections = secList().map((o) => (o.mode === 'rest' && o.id !== id ? { ...o, mode: 'percent', value: 0 } : o));
-    const data = { name, mode: secEditMode, value: secEditMode === 'rest' ? 0 : value, color: secEditColor, currency: dcur() };
+    const data = { name, mode: secEditMode, value: secEditMode === 'rest' ? 0 : value, color: secEditColor, icon: secEditIcon, currency: dcur() };
     if (id) state.config.sections = secList().map((o) => (o.id === id ? { ...o, ...data } : o));
     else {
-        state.config.sections = [...secList(), { id: generateId(), icon: 'i-wallet', ...data }];
+        state.config.sections = [...secList(), { id: generateId(), ...data }];
         if (!state.config.sectionSince) state.config.sectionSince = toISODate(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
     }
     if (!commitState('The section')) return false;
@@ -6655,7 +6742,7 @@ const deleteSection = () => {
 
 /* ---- A section's page: balance, this month, history ---- */
 let secViewId = null;
-const openSectionView = (id) => { secViewId = id; renderSectionView(); openOrSwap('modal-section-view'); };
+const openSectionView = (id) => { secViewId = id; renderSectionView(); openOrSwap('modal-section-view'); animateIn($('section-view-body')); };
 const renderSectionView = () => {
     const x = secById(secViewId);
     if (!x) return;
@@ -6672,18 +6759,18 @@ const renderSectionView = () => {
         const label = m.kind === 'fill' ? `Filled back to zero${inc ? ` · ${inc.desc}` : ''}` : m.kind === 'add' ? 'Money put in'
             : m.kind === 'move' ? (m.to === x.id ? `Moved in from ${other ? other.name : 'a section'}` : `Moved to ${other ? other.name : 'a section'}`)
                 : `From ${inc ? inc.desc : 'income'}`;
-        items.push({ date: m.date, label, v: (m.to === x.id ? 1 : -1) * toDisplay(m.amount, m.currency), incomeId: m.kind === 'income' || m.kind === 'fill' ? m.incomeId : null });
+        items.push({ date: m.date, label, v: (m.to === x.id ? 1 : -1) * toDisplay(m.amount, m.currency), incomeId: m.kind === 'income' || m.kind === 'fill' ? m.incomeId : null, ic: m.kind === 'move' ? 'i-swap' : m.kind === 'fill' ? 'i-check' : m.kind === 'add' ? 'i-plus' : 'i-arrow-down' });
     });
-    state.transactions.forEach((t) => { if (t.type === 'expense' && t.sectionId === x.id && !isUpcoming(t)) items.push({ date: t.date, label: t.desc, v: -toDisplay(t.amount, t.currency), tx: t.id }); });
+    state.transactions.forEach((t) => { if (t.type === 'expense' && t.sectionId === x.id && !isUpcoming(t)) items.push({ date: t.date, label: t.desc, v: -toDisplay(t.amount, t.currency), tx: t.id, badge: entryBadge(t.desc, t.category, 'expense') }); });
     items.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
     const seenIncome = new Set();
     $('section-view-body').innerHTML = `
-        <div class="sec-hero">${secBadge(x)}<span class="sec-hero-amount amount ${bal < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(bal, cur))}</span><span>${bal < 0 ? 'below zero: the next income fills it first' : 'in this section now'} · ${escapeHtml(secPlanLabel(x))}</span></div>
+        <div class="sec-hero" style="--cat:var(--pal-${x.color})">${secBadge(x, ' is-big')}<span class="sec-hero-amount amount ${bal < 0 ? 'text-expense' : ''}" data-countup="${bal}">${escapeHtml(formatCurrency(bal, cur))}</span><span>${bal < 0 ? 'below zero: the next income fills it first' : 'in this section now'} · ${escapeHtml(secPlanLabel(x))}</span></div>
         <div class="sec-month"><span>This month in <strong class="text-income">${escapeHtml(formatCurrency(mo.in, cur))}</strong></span><span>spent <strong class="text-expense">${escapeHtml(formatCurrency(mo.spent, cur))}</strong></span></div>
         <div class="section-head"><h2>History</h2></div>
         ${items.length ? `<ul class="sec-history">${items.slice(0, 80).map((i) => {
         const undo = i.incomeId && !seenIncome.has(i.incomeId) ? (seenIncome.add(i.incomeId), `<button type="button" class="link-btn faint" data-sec-undo="${escapeHtml(i.incomeId)}">Undo</button>`) : '';
-        return `<li${i.tx ? ` data-edit-tx="${escapeHtml(i.tx)}" role="button" tabindex="0"` : ''}><span class="sec-h-main"><span>${escapeHtml(i.label)}</span><span>${escapeHtml(shortDate(i.date))}</span></span>${undo}<span class="amount ${i.v < 0 ? 'text-expense' : 'text-income'}">${i.v > 0 ? '+' : '−'}${escapeHtml(formatCurrency(Math.abs(i.v), cur))}</span></li>`;
+        return `<li${i.tx ? ` data-edit-tx="${escapeHtml(i.tx)}" role="button" tabindex="0"` : ''}>${i.badge || `<span class="cat-badge sec-h-icon" data-in="${i.v >= 0}">${icon(i.ic || 'i-wallet')}</span>`}<span class="sec-h-main"><span>${escapeHtml(i.label)}</span><span>${escapeHtml(shortDate(i.date))}</span></span>${undo}<span class="amount ${i.v < 0 ? 'text-expense' : 'text-income'}">${i.v > 0 ? '+' : '−'}${escapeHtml(formatCurrency(Math.abs(i.v), cur))}</span></li>`;
     }).join('')}</ul>` : '<p class="field-hint">Nothing yet. Divide an income, or put money in by hand.</p>'}`;
 };
 
@@ -6723,45 +6810,55 @@ const saveUnassigned = () => {
 const planSectionsHtml = () => {
     const cur = dcur();
     if (!secList().length) {
+        const tpl = (key, title, desc) => `<button type="button" class="sec-template" data-sec-template="${key}">
+            <span class="sec-template-icons">${SECTION_TEMPLATES[key].map(([n, , , color, ic]) => secBadge({ color, icon: ic }, ' is-mini')).join('')}</span>
+            <span class="sec-template-text"><strong>${title}</strong><span>${desc}</span></span>${icon('i-chevron', 'ic chev')}</button>`;
         return `<section class="card sec-intro">
-            <h2 class="card-title">Divide your income into sections</h2>
-            <p class="card-sub">Choose sections like Bills, Food, Fun and Savings. Each income is split into them, every expense comes out of one, and each section keeps its own balance from month to month. Money left over can stay or move; a section that goes below zero is filled first from the next income.</p>
+            <span class="sec-intro-art">${icon('i-wallet')}</span>
+            <h2 class="card-title">Give every rupee a job</h2>
+            <p class="card-sub">Split each salary into sections like Bills, Food and Savings. Spend from a section and only its balance goes down. Money left at the end of the month stays (or moves where you want), and a section that went below zero is filled first next time.</p>
             <div class="sec-templates">
-                <button type="button" class="btn btn-primary btn-block" data-sec-template="503020">Needs 50% · Wants 30% · Savings</button>
-                <button type="button" class="btn btn-secondary btn-block" data-sec-template="basic">Bills · Food · Transport · Fun · Savings</button>
-                <button type="button" class="btn btn-secondary btn-block" data-sec-template="own">Make my own</button>
+                ${tpl('503020', 'Needs · Wants · Savings', '50% for needs, 30% for wants, the rest saved')}
+                ${tpl('basic', 'Bills · Food · Transport · Fun · Savings', 'Five everyday sections')}
+                <button type="button" class="sec-template is-own" data-sec-template="own"><span class="sec-template-icons"><span class="cat-badge is-mini" style="--cat:var(--primary)">${icon('i-plus')}</span></span><span class="sec-template-text"><strong>Make my own</strong><span>Name, icon, colour and share for each</span></span>${icon('i-chevron', 'ic chev')}</button>
             </div></section>`;
     }
     const bal = sectionBalances();
     const now = new Date();
     const mo = sectionMonth(now.getFullYear(), now.getMonth());
-    const total = Object.values(bal).reduce((s, v) => s + v, 0);
+    const total = Object.values(bal).reduce((a, v) => a + v, 0);
     const waiting = undividedIncomes();
     const loose = unassignedExpenses();
-    const pct = secList().filter((x) => x.mode === 'percent').reduce((s, x) => s + x.value, 0);
+    const pct = secList().filter((x) => x.mode === 'percent').reduce((a, x) => a + x.value, 0);
     return `
-        ${waiting.map((t) => `<section class="card sec-divide-card"><span class="sec-divide-text"><strong>${escapeHtml(t.desc)}</strong> · ${escapeHtml(formatCurrency(t.amount, t.currency))} on ${escapeHtml(shortDate(t.date))} isn't divided yet</span>
-            <span class="sec-divide-actions"><button type="button" class="btn btn-primary btn-sm" data-sec-divide="${escapeHtml(t.id)}">Divide</button><button type="button" class="btn btn-secondary btn-sm" data-sec-skip="${escapeHtml(t.id)}">Leave out</button></span></section>`).join('')}
-        <section class="card">
-            <div class="card-head"><h2 class="card-title">In your sections</h2><span class="card-sub">${escapeHtml(formatCurrency(total, cur))}</span></div>
-            ${secList().map((x) => {
+        ${waiting.map((t) => `<section class="card sec-divide-card">
+            <span class="sec-divide-icon">${icon('i-arrow-down')}</span>
+            <span class="sec-divide-text"><strong>${escapeHtml(formatCurrency(t.amount, t.currency))} ${escapeHtml(t.desc)}</strong><span>Arrived ${escapeHtml(shortDate(t.date))} · not divided yet</span></span>
+            <span class="sec-divide-actions"><button type="button" class="btn btn-primary btn-sm" data-sec-divide="${escapeHtml(t.id)}">Divide now</button><button type="button" class="btn btn-secondary btn-sm" data-sec-skip="${escapeHtml(t.id)}">Not this one</button></span></section>`).join('')}
+        <section class="card sec-summary">
+            <span class="sec-summary-label">In your sections</span>
+            <strong class="sec-summary-total amount" data-countup="${total}">${escapeHtml(formatCurrency(total, cur))}</strong>
+            ${secStackBar(secList().map((x) => [x, bal[x.id] || 0]))}
+            <div class="sec-summary-actions">
+                <button type="button" class="chip-btn" data-action="sec-move">${icon('i-swap', 'ic ic-sm')} Move money</button>
+                <button type="button" class="chip-btn" data-action="sec-add-money">${icon('i-plus', 'ic ic-sm')} Put money in</button>
+                <button type="button" class="chip-btn" data-action="sec-new">${icon('i-plus', 'ic ic-sm')} New section</button>
+            </div>
+            ${pct > 100 ? '<p class="field-hint text-expense">Your shares add up to more than 100%.</p>' : ''}
+        </section>
+        <div class="sec-grid">${secList().map((x, n) => {
         const b = bal[x.id] || 0;
         const m = mo[x.id];
-        const used = m.in > 0 ? (m.spent / m.in) * 100 : (m.spent > 0 ? 100 : 0);
-        return `<button type="button" class="plan-row" data-sec-view="${escapeHtml(x.id)}">
-                <span class="row-top">${secBadge(x)}<span class="row-main"><span class="row-title">${escapeHtml(x.name)}</span><span class="row-sub">${escapeHtml(secPlanLabel(x))} · spent ${escapeHtml(formatCurrency(m.spent, cur))} this month</span></span>
-                <span class="row-end"><span class="amount ${b < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(b, cur))}</span><span class="row-sub">${b < 0 ? 'below zero' : 'left'}</span></span></span>
-                ${meterHtml(used, b < 0 ? 'over' : budgetState(used), `${x.name} used this month`)}
+        const used = m.in > 0 ? Math.min(100, (m.spent / m.in) * 100) : (m.spent > 0 ? 100 : 0);
+        return `<button type="button" class="sec-tile${b < 0 ? ' is-below' : ''}" data-sec-view="${escapeHtml(x.id)}" style="--cat:var(--pal-${x.color});--n:${n}">
+                <span class="sec-tile-top">${secBadge(x)}${b < 0 ? '<span class="sec-pill">Below zero</span>' : ''}</span>
+                <span class="sec-tile-name">${escapeHtml(x.name)}</span>
+                <strong class="sec-tile-amount amount" data-countup="${b}">${escapeHtml(formatCurrency(b, cur))}</strong>
+                <span class="sec-tile-bar"><span data-grow="${used.toFixed(1)}"></span></span>
+                <span class="sec-tile-sub">${m.in || m.spent ? `${escapeHtml(formatCompact(m.spent, cur).replace(/^[^\d-]+/, ''))} of ${escapeHtml(formatCompact(m.in, cur).replace(/^[^\d-]+/, ''))} spent` : escapeHtml(secPlanLabel(x))}</span>
             </button>`;
-    }).join('')}
-            <div class="sec-actions">
-                <button type="button" class="btn btn-secondary btn-sm" data-action="sec-move">Move money</button>
-                <button type="button" class="btn btn-secondary btn-sm" data-action="sec-add-money">Put money in</button>
-                <button type="button" class="btn btn-secondary btn-sm" data-action="sec-new">${icon('i-plus')} Section</button>
-            </div>
-            ${pct > 100 ? '<p class="field-hint text-expense">Your percentages add up to more than 100%.</p>' : ''}
-        </section>
-        ${loose.length ? `<button type="button" class="card sec-loose" data-action="sec-unassigned"><span><strong>${plural(loose.length, 'expense')}</strong> not in a section · ${escapeHtml(formatCurrency(sumDisplay(loose), cur))}</span><span class="link-btn">Put them in</span></button>` : ''}`;
+    }).join('')}</div>
+        ${loose.length ? `<button type="button" class="card sec-loose" data-action="sec-unassigned"><span class="sec-loose-icon">${icon('i-alert')}</span><span><strong>${plural(loose.length, 'expense')} without a section</strong><span>${escapeHtml(formatCurrency(sumDisplay(loose), cur))} · tap to sort them</span></span>${icon('i-chevron', 'ic chev')}</button>` : ''}`;
 };
 const renderSectionsHome = () => {
     const el = $('dash-sections');
@@ -6773,8 +6870,10 @@ const renderSectionsHome = () => {
     el.innerHTML = `<section class="card sec-home">
         <div class="card-head"><h2 class="card-title">Sections</h2><button type="button" class="link-btn" data-goto-plan="sections">See all</button></div>
         ${waiting.length ? `<button type="button" class="btn btn-primary btn-block sec-home-divide" data-sec-divide="${escapeHtml(waiting[0].id)}">Divide ${escapeHtml(waiting[0].desc)} · ${escapeHtml(formatCurrency(waiting[0].amount, waiting[0].currency))}</button>` : ''}
-        <div class="sec-chips">${secList().map((x) => `<button type="button" class="sec-chip" data-sec-view="${escapeHtml(x.id)}">${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span class="amount ${bal[x.id] < 0 ? 'text-expense' : ''}">${escapeHtml(formatCompact(bal[x.id] || 0, cur))}</span></span></button>`).join('')}</div>
+        ${secStackBar(secList().map((x) => [x, bal[x.id] || 0]))}
+        <div class="sec-chips">${secList().map((x) => `<button type="button" class="sec-chip${bal[x.id] < 0 ? ' is-below' : ''}" data-sec-view="${escapeHtml(x.id)}">${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span class="amount ${bal[x.id] < 0 ? 'text-expense' : ''}">${escapeHtml(formatCompact(bal[x.id] || 0, cur))}</span></span></button>`).join('')}</div>
     </section>`;
+    animateIn(el);
 };
 const renderSectionsInsights = (list) => {
     const el = $('section-breakdown-card');
@@ -8635,6 +8734,8 @@ const initEvents = () => {
         if (d.pick) { const p = txPicks[Number(d.pick)]; if (p) applyPick(p); return; }
         if (d.brandPick) { pickDescBrand(d.brandPick); return; }
         if (d.namePick) { pickName(d); return; }
+        if (d.smsPairOnce) { smsPairOnce(d.smsPairOnce); return; }
+        if (d.smsPairSplit) { smsPairSplit(d.smsPairSplit); return; }
         if (d.openTrip) { openTrips(d.openTrip); return; }
         if (d.secTemplate) { setupSections(d.secTemplate); return; }
         if (d.secView) { openSectionView(d.secView); return; }
@@ -8643,6 +8744,7 @@ const initEvents = () => {
         if (d.secUndo) { undoDivide(d.secUndo); return; }
         if (d.secMode) { secEditMode = d.secMode; renderSectionEditor(); return; }
         if (d.secColor) { secEditColor = d.secColor; renderSectionEditor(); return; }
+        if (d.secIcon) { secEditIcon = d.secIcon; renderSectionEditor(); return; }
         if (d.txSection !== undefined) { pickTxSection(d.txSection); return; }
         if (d.action === 'sec-new') { openSectionEditor(); return; }
         if (d.action === 'sec-edit') { openSectionEditor(secViewId); return; }
@@ -8899,6 +9001,7 @@ const initEvents = () => {
     updateNotifBell();
     $('switch-approval').addEventListener('click', toggleApproval);
     $('switch-secure-screen').addEventListener('click', toggleSecureScreen);
+    ['section-name', 'section-value'].forEach((id) => $(id).addEventListener('input', updateSectionPreview));
     $('modal-divide').addEventListener('input', (e) => {
         const a = e.target.dataset.secAlloc;
         if (a && divideJob) { divideJob.alloc[a] = Math.max(0, toNumber(e.target.value, 0)); updateDivideLeft(); }

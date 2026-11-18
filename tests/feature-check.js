@@ -1917,6 +1917,29 @@ export async function run() {
         return (added === 1 && waiting === 1 && twoLater === 2 && recorded) || `first two -> ${added} in the list, hours later -> ${twoLater}, copy of an added one recognised ${recorded}`;
     });
 
+    await T('Bank sends 2 different messages for one payment: one card, "Add once" adds it once; ATM card says it moves to Cash', async () => {
+        const t0 = Date.now() - 5 * 60000;
+        const card = { id: `sms-${t0}-111`, source: 'sms', address: 'COMBANK', body: 'Your ComBank Credit Card ending 1234 was used for a transaction of LKR 3,890.00 at PIZZA HUT COLOMBO 03.', date: t0 };
+        const acct = { id: `sms-${t0 + 40000}-222`, source: 'sms', address: 'COMBANK', body: 'LKR 3,890.00 debited from your A/C xx9876 on 18/11 for a card purchase. Thank you for banking with ComBank.', date: t0 + 40000 };
+        const before = s().transactions.length;
+        g('smsTake')([card]); g('smsTake')([acct]);
+        const queued = g('smsQueue').filter((i) => i.amount === 3890).length;
+        g('showSmsSheet')(); await wait(400);
+        const pairCard = document.querySelectorAll('#sms-list .sms-pair').length === 1 && /2 messages/.test($('sms-list').textContent);
+        const once = document.querySelector('[data-sms-pair-once]');
+        if (once) once.click();
+        await wait(500);
+        const asked = g('openSheets').includes('modal-sms-pick');
+        if (asked) { document.querySelector('#sms-pick-list [data-sms-pick-acc]').click(); await wait(500); }
+        const added = s().transactions.length - before;
+        const left = g('smsQueue').filter((i) => i.amount === 3890).length;
+        const atm = g('parseBankSms')({ id: `sms-${t0}-333`, source: 'sms', address: 'COMBANK', body: 'Cash withdrawal of LKR 10,000.00 from your A/C xx9876 at ATM COMBANK BORELLA on 18/11.', date: t0 });
+        const atmCard = atm ? g('smsCardHtml')(atm) : '';
+        const atmWords = /Cash wallet/.test(atmCard) && /not spending/.test(atmCard) && /Move to my Cash/.test(atmCard);
+        await close('modal-sms');
+        return (queued === 2 && pairCard && added === 1 && left === 0 && atmWords) || `queued ${queued}, one card ${pairCard}, added ${added}, still waiting ${left}, ATM words ${atmWords} (${atm && atm.type})`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

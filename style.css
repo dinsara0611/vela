@@ -4671,3 +4671,79 @@ body.approve-waiting { overflow: hidden; }
 /* Plan has five tabs: they share the width and shrink their text on small phones instead of overflowing */
 .plan-tabs > button { min-width: 0; padding-left: 4px; padding-right: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 380px) { .plan-tabs > button { font-size: 12px; letter-spacing: -0.01em; } }
+
+/* Bank SMS: ATM note, and one card for 2 messages about one payment */
+.atm-note { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--pal-teal) 14%, transparent); }
+.atm-note .ic { flex: none; margin-top: 2px; color: var(--pal-teal); }
+.sms-pair { list-style: none; display: grid; gap: var(--sp-2); padding: 12px; border-radius: 18px; border: 1px solid color-mix(in srgb, var(--warning) 45%, var(--border)); background: color-mix(in srgb, var(--warning) 6%, transparent); }
+.sms-pair-head { display: flex; gap: 8px; align-items: flex-start; margin: 0; font-size: var(--fs-sm); }
+.sms-pair-head .ic { flex: none; margin-top: 2px; color: var(--warning); }
+.sms-pair-actions { display: flex; gap: var(--sp-2); }
+.sms-pair-actions .btn { flex: 1; }
+.sms-pair-cards { list-style: none; margin: 0; padding: 0; display: grid; gap: var(--sp-2); }
+.sms-pair-second details { font-size: var(--fs-sm); color: var(--text-2); padding: 0 4px; }
+.sms-pair-second p { margin: 6px 0 0; }
+
+/* Sections: look and motion */
+.sec-intro { text-align: center; display: grid; justify-items: center; gap: 6px; }
+.sec-intro-art { width: 64px; height: 64px; border-radius: 20px; display: grid; place-items: center; color: #fff; background: linear-gradient(135deg, var(--primary), var(--pal-magenta)); box-shadow: 0 10px 30px -10px var(--primary); margin-bottom: 4px; }
+.sec-intro-art .ic { width: 30px; height: 30px; }
+.sec-intro .sec-templates { width: 100%; text-align: left; margin-top: var(--sp-2); }
+.sec-template { display: flex; align-items: center; gap: var(--sp-3); width: 100%; padding: 12px; border-radius: 16px; border: 1px solid var(--border); background: var(--input-bg); color: var(--text); font: inherit; cursor: pointer; text-align: left; transition: transform 160ms ease, border-color 160ms ease; }
+.sec-template:active { transform: scale(0.98); border-color: var(--primary); }
+.sec-template-icons { display: flex; flex: none; }
+.sec-template-icons .cat-badge { width: 28px; height: 28px; border-radius: 9px; margin-left: -8px; box-shadow: 0 0 0 2px var(--surface); }
+.sec-template-icons .cat-badge:first-child { margin-left: 0; }
+.sec-template-icons .ic { width: 15px; height: 15px; }
+.sec-template-text { flex: 1; min-width: 0; display: grid; }
+.sec-template-text > span { font-size: var(--fs-xs); color: var(--text-3); }
+.sec-divide-card { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: var(--sp-3); }
+.sec-divide-icon { width: 40px; height: 40px; border-radius: 13px; display: grid; place-items: center; color: var(--income); background: color-mix(in srgb, var(--income) 16%, transparent); }
+.sec-divide-text { display: grid; min-width: 0; }
+.sec-divide-text > span { font-size: var(--fs-xs); color: var(--text-3); }
+.sec-divide-card .sec-divide-actions { grid-column: 1 / -1; }
+.sec-summary { display: grid; gap: 8px; }
+.sec-summary-label { font-size: var(--fs-sm); color: var(--text-2); }
+.sec-summary-total { font-size: 2rem; font-weight: 800; letter-spacing: -0.02em; }
+.sec-stack { display: flex; height: 10px; border-radius: 999px; overflow: hidden; background: var(--surface-2); gap: 2px; }
+.sec-stack.is-empty { opacity: 0.6; }
+.sec-stack > span { height: 100%; background: var(--cat); border-radius: 999px; transition: width 700ms cubic-bezier(.2,.8,.2,1); }
+.sec-summary-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.chip-btn { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; font-size: var(--fs-sm); font-weight: 600; cursor: pointer; }
+.chip-btn:active { transform: scale(0.96); }
+.sec-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--sp-3); margin-bottom: var(--sp-3); }
+.sec-tile { display: grid; gap: 6px; padding: 14px; border-radius: 20px; border: 1px solid var(--border); background: linear-gradient(160deg, color-mix(in srgb, var(--cat) 16%, var(--surface)) 0%, var(--surface) 70%); color: var(--text); font: inherit; text-align: left; cursor: pointer; min-width: 0; animation: sec-in 420ms cubic-bezier(.2,.8,.2,1) both; animation-delay: calc(var(--n) * 55ms); transition: transform 160ms ease; }
+.sec-tile:active { transform: scale(0.97); }
+.sec-tile.is-below { border-color: color-mix(in srgb, var(--danger) 60%, var(--border)); background: linear-gradient(160deg, color-mix(in srgb, var(--danger) 14%, var(--surface)) 0%, var(--surface) 70%); }
+.sec-tile-top { display: flex; justify-content: space-between; align-items: flex-start; }
+.sec-pill { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; padding: 3px 7px; border-radius: 999px; color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
+.sec-tile-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sec-tile-amount { font-size: 1.25rem; font-weight: 800; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sec-tile.is-below .sec-tile-amount { color: var(--danger); }
+.sec-tile-bar { height: 6px; border-radius: 999px; background: var(--surface-2); overflow: hidden; }
+.sec-tile-bar > span { display: block; height: 100%; width: 0; border-radius: 999px; background: var(--cat); transition: width 700ms cubic-bezier(.2,.8,.2,1); }
+.sec-tile.is-below .sec-tile-bar > span { background: var(--danger); }
+.sec-tile-sub { font-size: var(--fs-xs); color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sec-loose { display: flex; align-items: center; gap: var(--sp-3); }
+.sec-loose > span:nth-child(2) { flex: 1; display: grid; min-width: 0; }
+.sec-loose > span:nth-child(2) > span { font-size: var(--fs-xs); color: var(--text-3); }
+.sec-loose-icon { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, transparent); flex: none; }
+.sec-home .sec-stack { margin-bottom: var(--sp-3); }
+.sec-chip.is-below { border-color: color-mix(in srgb, var(--danger) 55%, var(--border)); }
+.sec-preview { display: flex; align-items: center; gap: var(--sp-3); padding: 12px; border-radius: 16px; background: var(--surface-2); margin-bottom: var(--sp-3); }
+.sec-preview > span:last-child { display: grid; min-width: 0; }
+.sec-preview > span:last-child > span:first-child { font-weight: 700; }
+.sec-preview > span:last-child > span + span { font-size: var(--fs-xs); color: var(--text-3); }
+.sec-badge.is-big { width: 64px; height: 64px; border-radius: 20px; box-shadow: 0 12px 30px -12px var(--cat); }
+.sec-badge.is-big .ic { width: 30px; height: 30px; }
+.sec-h-icon { width: 34px; height: 34px; border-radius: 11px; --cat: var(--income); flex: none; }
+.sec-h-icon[data-in="false"] { --cat: var(--pal-orange); }
+.sec-h-icon .ic { width: 16px; height: 16px; }
+.sec-history li > .cat-badge { width: 34px; height: 34px; border-radius: 11px; flex: none; }
+.divide-bar { margin: var(--sp-3) 0 var(--sp-2); }
+.divide-bar .sec-stack > span { transition: width 260ms ease; }
+#divide-carry .sec-line, #divide-fills .sec-line, #divide-split .sec-line { animation: sec-in 320ms ease both; }
+#divide-split .sec-line:nth-child(3) { animation-delay: 40ms; } #divide-split .sec-line:nth-child(4) { animation-delay: 80ms; } #divide-split .sec-line:nth-child(5) { animation-delay: 120ms; } #divide-split .sec-line:nth-child(6) { animation-delay: 160ms; }
+@keyframes sec-in { from { opacity: 0; transform: translateY(10px) scale(0.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .sec-tile, #divide-split .sec-line, #divide-carry .sec-line, #divide-fills .sec-line { animation: none; } .sec-stack > span, .sec-tile-bar > span { transition: none; } }
+@media (max-width: 340px) { .sec-grid { grid-template-columns: 1fr; } }

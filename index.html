@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.41.1">
+    <link rel="stylesheet" href="style.css?v=4.42.0">
 </head>
 <body data-view="dashboard">
 
@@ -1290,14 +1290,15 @@
             </div>
             <div class="sheet-body">
                 <div class="divide-total"><span>To divide</span><strong class="amount" id="divide-total">0</strong></div>
+                <div class="divide-bar" id="divide-bar"></div>
                 <div id="divide-carry"></div>
                 <div id="divide-fills"></div>
                 <div id="divide-split"></div>
                 <p class="divide-left" id="divide-left" aria-live="polite"></p>
             </div>
             <div class="sheet-foot">
-                <button type="button" class="btn btn-secondary" data-action="divide-skip">Leave out</button>
-                <button type="button" class="btn btn-primary" id="btn-divide-ok" data-action="divide-ok">Divide</button>
+                <button type="button" class="btn btn-secondary" data-action="divide-skip">Not this one</button>
+                <button type="button" class="btn btn-primary" id="btn-divide-ok" data-action="divide-ok">Divide it</button>
             </div>
         </div>
     </div>
@@ -1329,6 +1330,7 @@
             </div>
             <div class="sheet-body">
                 <input type="hidden" id="section-id">
+                <div class="sec-preview" id="section-preview" aria-hidden="true"></div>
                 <div class="field">
                     <label class="field-label" for="section-name">Name</label>
                     <input type="text" id="section-name" class="input" placeholder="e.g. Food, Bills, Fun, Savings" maxlength="40" autocomplete="off">
@@ -1346,6 +1348,10 @@
                     <label class="field-label" for="section-value" id="section-value-label">Share of each income (%)</label>
                     <input type="text" id="section-value" class="input" inputmode="decimal" autocomplete="off">
                 </div>
+                <fieldset class="field">
+                    <legend class="field-label" style="margin-bottom:6px">Icon</legend>
+                    <div class="icon-grid" id="section-icons"></div>
+                </fieldset>
                 <fieldset class="field">
                     <legend class="field-label" style="margin-bottom:6px">Colour</legend>
                     <div class="swatch-grid" id="section-colors"></div>
@@ -1786,7 +1792,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.41.1"></script>
+    <script src="app.js?v=4.42.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
