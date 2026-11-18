@@ -283,8 +283,8 @@ export async function run() {
         input.focus();
         input.dataset.typing = '1';
         input.value = 'dia'; input.dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
-        const offered = [...document.querySelectorAll('#tx-brand-suggest [data-brand-pick]')].map((b) => b.dataset.brandPick);
-        document.querySelector('#tx-brand-suggest [data-brand-pick="Dialog"]').click(); await wait(80);
+        const offered = [...document.querySelectorAll('#tx-brand-suggest [data-name-pick]')].map((b) => b.dataset.namePick);
+        document.querySelector('#tx-brand-suggest [data-name-pick="Dialog"]').click(); await wait(80);
         const logo = $('tx-desc-logo').querySelector('img');
         const cat = document.querySelector('#tx-category-picker input:checked');
         input.value = 'Keells super'; input.dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
@@ -1735,6 +1735,37 @@ export async function run() {
         const after = s().transactions.length;
         const toast = [...document.querySelectorAll('.toast')].some((t) => /couldn.t be saved/.test(t.textContent));
         return (ok === false && after === before && !find('Should not stay') && toast) || `returned ${ok}, entries ${before}->${after}, error shown ${toast}`;
+    });
+
+    await T('Typing a name suggests: bills (Nw -> Water bill), regular income, goals, people, banks, entries', async () => {
+        const chips = (box) => [...$(box).querySelectorAll('[data-name-pick]')].map((b) => b.dataset.namePick);
+        const type = async (input, text) => { $(input).focus(); $(input).value = text; $(input).dispatchEvent(new Event('input', { bubbles: true })); await wait(60); };
+        g('openAddBill')('expense'); await wait(300);
+        await type('bill-name', 'Nw');
+        const water = chips('bill-name-suggest');
+        document.querySelector('#bill-name-suggest [data-name-pick="Water bill"]').click(); await wait(100);
+        const filled = $('bill-name').value === 'Water bill' && $('bill-category').value === 'Utilities';
+        await type('bill-name', 'ne');
+        const netflix = chips('bill-name-suggest').includes('Netflix');
+        g('setBillType')('income');
+        await type('bill-name', 'sal');
+        const salary = chips('bill-name-suggest').includes('Salary');
+        await close('modal-bill');
+        g('openAddGoal') && g('openAddGoal')(); await wait(300);
+        await type('goal-name', 'lap');
+        const goal = chips('goal-name-suggest').includes('Laptop');
+        await close('modal-goal');
+        g('openAccountEditor')(); await wait(300);
+        await type('account-name', 'samp');
+        const bank = chips('account-name-suggest').includes('Sampath Bank');
+        await close('modal-account');
+        g('openAddTx')('expense'); await wait(300);
+        $('tx-desc').dataset.typing = '1';
+        await type('tx-desc', 'elec');
+        const entry = [...$('tx-brand-suggest').querySelectorAll('[data-name-pick]')].map((b) => b.dataset.namePick).includes('Electricity bill');
+        await close('modal-tx');
+        return (water.includes('Water bill') && filled && netflix && salary && goal && bank && entry)
+            || `Nw: ${water.join('/')}, filled ${filled}, netflix ${netflix}, salary ${salary}, goal ${goal}, bank ${bank}, entry ${entry}`;
     });
 
     // Cloud sync against a fake account.

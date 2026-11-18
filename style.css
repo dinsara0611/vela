@@ -4588,3 +4588,7 @@ body.approve-waiting { overflow: hidden; }
 .brand-choice:active { transform: scale(0.96); border-color: var(--primary); }
 .logo-row { flex-wrap: wrap; row-gap: 4px; }
 @media (max-width: 360px) { .brand-choice-grid { grid-template-columns: repeat(3, 1fr); } }
+
+.brand-pick .cat-badge.is-mini { width: 26px; height: 26px; border-radius: 9px; }
+.brand-pick .cat-badge.is-mini .ic { width: 15px; height: 15px; }
+.brand-pick .chip-dot { width: 8px; height: 8px; margin: 0 4px 0 6px; border-radius: 50%; background: var(--primary); }

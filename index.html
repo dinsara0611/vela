@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.39.0">
+    <link rel="stylesheet" href="style.css?v=4.39.1">
 </head>
 <body data-view="dashboard">
 
@@ -978,6 +978,7 @@
                     <div class="field">
                         <label class="field-label" for="goal-name">Goal name</label>
                         <input type="text" id="goal-name" class="input" placeholder="e.g. Emergency fund" maxlength="60" autocomplete="off" required>
+                        <div class="brand-suggest" id="goal-name-suggest" role="group" aria-label="Goal ideas" hidden></div>
                     </div>
                     <div class="field">
                         <label class="field-label" for="goal-target">Target</label>
@@ -1112,6 +1113,7 @@
                     <div class="field">
                         <label class="field-label" for="bill-name">Name</label>
                         <input type="text" id="bill-name" class="input" placeholder="e.g. Netflix, Rent, Salary" maxlength="60" autocomplete="off" required>
+                        <div class="brand-suggest" id="bill-name-suggest" role="group" aria-label="Names matching what you typed" hidden></div>
                     </div>
                     <div class="field amount-field">
                         <label class="field-label" for="bill-amount">Amount</label>
@@ -1175,6 +1177,7 @@
                     <div class="field">
                         <label class="field-label" for="debt-person" id="debt-person-label">Who has it?</label>
                         <input type="text" id="debt-person" class="input" placeholder="Name" maxlength="60" autocomplete="off" required>
+                        <div class="brand-suggest" id="debt-person-suggest" role="group" aria-label="People you entered before" hidden></div>
                     </div>
                     <div class="field amount-field">
                         <label class="field-label" for="debt-amount">Amount</label>
@@ -1391,6 +1394,7 @@
                             <span class="desc-logo" id="account-name-logo" aria-hidden="true"></span>
                             <input type="text" id="account-name" class="input" placeholder="e.g. Commercial Bank" maxlength="40" autocomplete="off" required>
                         </div>
+                        <div class="brand-suggest" id="account-name-suggest" role="group" aria-label="Banks matching what you typed" hidden></div>
                     </div>
                     <div class="field-row">
                         <div class="field">
@@ -1586,7 +1590,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.39.0"></script>
+    <script src="app.js?v=4.39.1"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

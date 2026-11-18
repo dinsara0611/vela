@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.39.0';
+const APP_VERSION = '4.39.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -4960,23 +4960,104 @@ const selectTxCategory = (id) => {
     if (input) input.checked = true;
 };
 
+// ---- Name suggestions while typing (entries, bills and regular income, goals, people, accounts) ----
+// Everyday names people type, with other words they're known by (typing "nw" finds Water bill via NWSDB).
+const COMMON_NAMES = {
+    expense: [
+        ['Water bill', 'Utilities', 'nwsdb water board national supply'], ['Electricity bill', 'Utilities', 'ceb leco light current power electric'],
+        ['Phone bill', 'Utilities', 'mobile postpaid dialog mobitel hutch airtel'], ['Internet bill', 'Utilities', 'wifi broadband fibre router data'],
+        ['TV subscription', 'Entertainment', 'peo dialog tv cable satellite'], ['Mobile reload', 'Utilities', 'top up recharge data card'],
+        ['Gas cylinder', 'Utilities', 'litro laugfs cooking lp'], ['Garbage collection', 'Utilities', 'waste municipal council'],
+        ['House rent', 'Rent', 'home annex apartment'], ['Boarding fee', 'Rent', 'hostel room boarding'],
+        ['School van', 'Travel', 'kids transport van fee'], ['School fees', 'Other', 'facility fee education'],
+        ['Tuition class', 'Other', 'class tuition education teacher'], ['Loan instalment', 'Other', 'emi loan bank repayment'],
+        ['Vehicle leasing', 'Other', 'lease car bike three wheeler'], ['Vehicle insurance', 'Other', 'insurance car bike motor'],
+        ['Life insurance', 'Other', 'policy assurance premium'], ['Medical insurance', 'Health', 'health policy premium'],
+        ['Credit card bill', 'Other', 'card payment settlement'], ['Gym membership', 'Health', 'fitness gym'],
+        ['Newspaper', 'Other', 'paper daily'], ['Domestic help', 'Other', 'maid helper nanny'],
+        ['Fuel', 'Travel', 'petrol diesel ceypetco ioc'], ['Groceries', 'Food', 'supermarket market vegetables'],
+        ['Medicine', 'Health', 'pharmacy drugs tablets'], ['Doctor channelling', 'Health', 'channel clinic consultation'],
+        ['Bus fare', 'Travel', 'transport ticket'], ['Tuk-tuk ride', 'Travel', 'three wheeler taxi'],
+        ['Vehicle service', 'Travel', 'repair garage oil'], ['Haircut', 'Other', 'salon barber'],
+        ['Donation', 'Other', 'temple church charity dana'], ['Pocket money', 'Other', 'kids allowance']
+    ],
+    income: [
+        ['Salary', 'Salary', 'pay wages monthly'], ['Allowance', 'Salary', 'pocket money monthly'], ['Bonus', 'Salary', 'incentive'],
+        ['Overtime', 'Salary', 'ot extra hours'], ['Rent received', 'OtherIncome', 'rental tenant house'], ['Pension', 'OtherIncome', 'retirement'],
+        ['Interest', 'Investment', 'fd fixed deposit savings'], ['Dividends', 'Investment', 'shares stocks cse'],
+        ['Freelance work', 'Freelance', 'fiverr upwork client project'], ['Business income', 'Business', 'sales shop profit'],
+        ['Commission', 'Business', 'sales agent'], ['Scholarship', 'OtherIncome', 'mahapola bursary'],
+        ['Gift received', 'Gift', 'money from family'], ['Money from abroad', 'OtherIncome', 'remittance foreign']
+    ],
+    goal: [['Emergency fund', '', 'savings rainy day'], ['New phone', '', 'mobile iphone samsung'], ['Laptop', '', 'computer'],
+        ['Bike', '', 'motorbike scooter'], ['Car', '', 'vehicle'], ['House', '', 'home land'], ['Wedding', '', 'marriage'],
+        ['Holiday trip', '', 'vacation travel tour'], ['Education', '', 'degree course studies'], ['Gold jewellery', '', 'necklace ring']]
+};
+// Brands: every word of the name and of the other names it is known by (NWSDB, Ceylon Electricity...).
+const brandWords = (b) => b.words || (b.words = [...new Set(`${b.name} ${b.start.source}`.toLowerCase().match(/[a-z0-9]{2,}/g) || [])]);
+const wordsMatch = (words, q) => q.split(/\s+/).filter(Boolean).every((part) => words.some((w) => w.startsWith(part)));
+// kind: 'expense' | 'income' | 'goal' | 'bank'. past: names you used before (shown first).
+const nameSuggestions = (text, kind, past = []) => {
+    const q = String(text || '').trim().toLowerCase();
+    if (q.length < 2) return [];
+    const out = [];
+    const seen = new Set([q]);
+    const add = (item) => { const k = item.name.toLowerCase(); if (!seen.has(k)) { seen.add(k); out.push(item); } };
+    past.forEach((p) => { if (wordsMatch(p.name.toLowerCase().match(/[a-z0-9]+/g) || [], q)) add({ ...p, brand: brandOfName(p.name) }); });
+    (COMMON_NAMES[kind] || []).forEach(([name, cat, also]) => { if (wordsMatch(`${name} ${also}`.toLowerCase().match(/[a-z0-9]+/g) || [], q)) add({ name, cat }); });
+    if (kind !== 'goal' && kind !== 'people') {
+        BRANDS.filter((b) => (kind === 'bank' ? b.cat === null : kind === 'income' ? b.cat === null : b.cat !== null) && wordsMatch(brandWords(b), q))
+            // Brands whose own name matches first, then ones found by another name; real logos before badges.
+            .map((b) => ({ b, rank: (wordsMatch(b.name.toLowerCase().match(/[a-z0-9]+/g) || [], q) ? 2 : 0) + (logoSlug(b.slug) ? 1 : 0) }))
+            .sort((x, y) => y.rank - x.rank).map((x) => x.b)
+            .forEach((b) => add({ name: b.name, cat: kind === 'expense' ? brandCategory(b) : null, brand: b }));
+    }
+    return out.slice(0, 6);
+};
+const nameChips = (list, target, type) => list.map((x) => `<button type="button" class="brand-pick" data-name-pick="${escapeHtml(x.name)}" data-name-for="${target}" data-name-cat="${escapeHtml(x.cat || '')}"${x.amount ? ` data-name-amount="${x.amount}"` : ''}>${x.brand ? brandBadge(x.brand, ' is-mini') : x.cat ? catBadge(x.cat, type).replace('class="cat-badge', 'class="cat-badge is-mini') : '<span class="chip-dot"></span>'}<span>${escapeHtml(x.name)}</span></button>`).join('');
+const NAME_BOXES = {
+    bill: { input: 'bill-name', box: 'bill-name-suggest', kind: () => billType, type: () => billType,
+        past: () => state.recurring.filter((b) => b.type === billType && b.id !== $('bill-id').value).map((b) => ({ name: b.name, cat: b.category, amount: b.amount }))
+            .concat(state.transactions.filter((t) => t.type === billType && t.fixed).map((t) => ({ name: t.desc, cat: t.category, amount: t.amount }))) },
+    goal: { input: 'goal-name', box: 'goal-name-suggest', kind: () => 'goal', type: () => 'expense', past: () => [] },
+    debt: { input: 'debt-person', box: 'debt-person-suggest', kind: () => 'people', type: () => 'expense',
+        past: () => [...new Set(state.debts.map((d) => d.person))].map((name) => ({ name })) },
+    account: { input: 'account-name', box: 'account-name-suggest', kind: () => 'bank', type: () => 'expense',
+        past: () => [] }
+};
+const renderNameBox = (key) => {
+    const cfg = NAME_BOXES[key];
+    const input = $(cfg.input);
+    const box = $(cfg.box);
+    if (!input || !box) return;
+    const list = document.activeElement === input ? nameSuggestions(input.value, cfg.kind(), cfg.past()) : [];
+    box.hidden = !list.length;
+    box.innerHTML = nameChips(list, key, cfg.type());
+};
+const pickName = (d) => {
+    const target = d.nameFor;
+    haptic();
+    if (target === 'tx') {
+        pickDescBrand(d.namePick);
+        if (d.nameCat && !txCatTouched && catsOfType(txType).some((c) => c.id === d.nameCat)) selectTxCategory(d.nameCat);
+        return;
+    }
+    const cfg = NAME_BOXES[target];
+    if (!cfg) return;
+    $(cfg.input).value = d.namePick;
+    $(cfg.box).hidden = true;
+    if (target === 'bill') {
+        if (d.nameCat && catsOfType(billType).some((c) => c.id === d.nameCat)) $('bill-category').value = d.nameCat;
+        if (d.nameAmount && !(toNumber($('bill-amount').value, 0) > 0)) $('bill-amount').value = d.nameAmount;
+    }
+    if (target === 'account') $(cfg.input).dispatchEvent(new Event('input', { bubbles: true }));
+};
+
 // The name box: the shop's real logo appears inside it as soon as the name matches a known brand, and while
 // typing, brands whose name starts with the letters typed are offered with their logos (tap to fill the name).
 const descBrands = (text) => {
-    const q = String(text || '').trim().toLowerCase();
-    if (q.length < 2) return [];
     const exact = brandFor(text);
-    const seen = new Set();
-    return BRANDS.filter((b) => {
-        if (b.cat === null && txType === 'expense') return false; // banks aren't shops
-        if (txType === 'income' && b.cat !== null) return false;
-        if (exact && exact.name === b.name) return false;
-        const name = b.name.toLowerCase();
-        const hit = name.startsWith(q) || name.split(/[\s\-&.]+/).some((w) => w.length > 1 && w.startsWith(q));
-        if (!hit || seen.has(b.name)) return false;
-        seen.add(b.name);
-        return true;
-    }).sort((a, b) => (logoSlug(b.slug) ? 1 : 0) - (logoSlug(a.slug) ? 1 : 0)).slice(0, 4);
+    return nameSuggestions(text, txType).filter((x) => !(exact && x.brand && x.brand.slug === exact.slug)).slice(0, 5);
 };
 const updateDescLogo = () => {
     const input = $('tx-desc');
@@ -4995,7 +5076,7 @@ const updateDescLogo = () => {
     const list = document.activeElement === input || input.dataset.typing === '1' ? descBrands(input.value) : [];
     const box = $('tx-brand-suggest');
     box.hidden = !list.length;
-    box.innerHTML = list.map((x) => `<button type="button" class="brand-pick" data-brand-pick="${escapeHtml(x.name)}">${brandBadge(x, ' is-mini')}<span>${escapeHtml(x.name)}</span></button>`).join('');
+    box.innerHTML = nameChips(list, 'tx', txType);
 };
 // Choose the right logo from Vela's list (when the name matched the wrong one, or none).
 let brandPickFor = null;
@@ -7776,6 +7857,7 @@ const initEvents = () => {
         if (d.txStatus) { setTxStatus(d.txStatus === 'waiting'); return; }
         if (d.pick) { const p = txPicks[Number(d.pick)]; if (p) applyPick(p); return; }
         if (d.brandPick) { pickDescBrand(d.brandPick); return; }
+        if (d.namePick) { pickName(d); return; }
         if (d.starterPick) { starterPick(d.starterPick); return; }
         if (d.budgetMode) { budgetModeDraft = d.budgetMode; syncBudgetModeUi(); return; }
         if (d.budgetSave !== undefined) { budgetSaveDraft = Number(d.budgetSave); syncBudgetModeUi(); return; }
@@ -8002,6 +8084,12 @@ const initEvents = () => {
     $('tx-currency').addEventListener('change', () => { renderTxSuggest(); updatePriceHint(); });
     $('tx-desc').addEventListener('input', (e) => { if (e.isTrusted) $('tx-desc').dataset.typing = '1'; onTxDescInput(); });
     $('account-name').addEventListener('input', updateAccountNameLogo);
+    Object.keys(NAME_BOXES).forEach((key) => {
+        const input = $(NAME_BOXES[key].input);
+        input.addEventListener('input', () => renderNameBox(key));
+        input.addEventListener('focus', () => renderNameBox(key));
+        input.addEventListener('blur', () => setTimeout(() => { $(NAME_BOXES[key].box).hidden = true; }, 200));
+    });
     initAccountHold();
     updateNotifBell();
     $('switch-approval').addEventListener('click', toggleApproval);
