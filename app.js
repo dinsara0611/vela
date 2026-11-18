@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.42.4';
+const APP_VERSION = '4.43.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -575,6 +575,28 @@ const accountBalance = (acc) => {
     if (balanceMemo) balanceMemo.set(acc, bal);
     return bal;
 };
+/* ---- Paying in another currency: what the bank really takes ----
+   A card or bank account charges more than the market rate for a foreign purchase (its exchange margin plus a
+   foreign transaction fee). Until Vela has seen what your bank charged, it uses a typical charge for the account's
+   country (shown as an estimate); once you enter (or an SMS shows) the real amount, it learns that bank's charge. */
+const FX_FEE_TYPICAL = { LKR: 4, INR: 3.5, PKR: 4, BDT: 3, NPR: 3, AED: 2.5, SAR: 2.5, QAR: 2.5, KWD: 2.5, OMR: 2.5, MYR: 1, SGD: 3.25, GBP: 2.99, EUR: 2, USD: 3, AUD: 3, CAD: 2.5, JPY: 2.2, CNY: 1.5, MVR: 3 };
+const fxApplies = (acc) => !!acc && acc.kind !== 'cash';
+const fxFeeFor = (acc) => (!fxApplies(acc) ? 0 : Number.isFinite(acc.fxFee) ? acc.fxFee : (FX_FEE_TYPICAL[acc.currency] ?? 3));
+const fxFeeLearned = (acc) => !!acc && Number.isFinite(acc.fxFee);
+// What a foreign amount costs from this account: market rate plus the bank's charge.
+const fxCharge = (amount, cur, acc) => round2(convertAmount(amount, cur, acc.currency) * (1 + fxFeeFor(acc) / 100));
+// From a real charge: the bank's charge in % (kept for the next foreign purchase). Ignores impossible values.
+const learnFxFee = (acc, amount, cur, charged) => {
+    if (!fxApplies(acc)) return null;
+    const mid = convertAmount(amount, cur, acc.currency);
+    if (!(mid > 0) || !(charged > 0)) return null;
+    const pct = round2((charged / mid - 1) * 100);
+    if (pct < -3 || pct > 15) return null;
+    acc.fxFee = pct;
+    state.syncSettings = true;
+    return pct;
+};
+const fxNote = (t) => (t.fx ? `${formatCurrency(t.fx.amount, t.fx.currency)}${t.fx.estimated ? ' · estimated charge' : ''}` : '');
 // The day an account's balance was typed in (when it was added, or when its balance was last corrected).
 const balanceDateOf = (acc) => (acc ? acc.balanceDate || (acc.createdAt ? toISODate(new Date(acc.createdAt)) : null) : null);
 // An entry dated before that day is already inside that balance.
@@ -669,7 +691,10 @@ const normalizeTx = (t, forcedType) => {
         ...(type === 'expense' && t.tripId ? { tripId: String(t.tripId).slice(0, 64) } : {}),
         ...(type === 'expense' && t.sectionId ? { sectionId: String(t.sectionId).slice(0, 64) } : {}),
         // Dated before the account's balance was entered: already in that balance, so it doesn't change it again.
-        ...(type !== 'transfer' && t.beforeBalance === true ? { beforeBalance: true } : {})
+        ...(type !== 'transfer' && t.beforeBalance === true ? { beforeBalance: true } : {}),
+        // Paid in another currency: what it was in that currency, the bank's charge used, and whether the account
+        // amount is Vela's estimate or what the bank really took.
+        ...(type !== 'transfer' && t.fx && toNumber(t.fx.amount, 0) > 0 ? { fx: { amount: toNumber(t.fx.amount, 0), currency: normCur(t.fx.currency), fee: Number.isFinite(Number(t.fx.fee)) ? round2(Number(t.fx.fee)) : null, estimated: t.fx.estimated === true } } : {})
     };
 };
 // Bank details on an entry: only known fields, short strings, no message text.
@@ -755,7 +780,8 @@ const normalizeAccount = (a) => {
         currency: normCur(a.currency),
         opening: toNumber(a.opening, 0),
         createdAt: stamp(a.createdAt),
-        ...(cleanDate(a.balanceDate) ? { balanceDate: cleanDate(a.balanceDate) } : {})
+        ...(cleanDate(a.balanceDate) ? { balanceDate: cleanDate(a.balanceDate) } : {}),
+        ...(Number.isFinite(Number(a.fxFee)) && a.fxFee !== null && a.fxFee !== '' ? { fxFee: round2(Number(a.fxFee)) } : {})
     };
 };
 
@@ -2094,7 +2120,7 @@ const txRow = (t, { showDate = true } = {}) => {
     const cat = catById(t.category, t.type);
     const value = toDisplay(t.amount, t.currency);
     const signed = formatSigned(t.type === 'income' ? value : -value, dcur());
-    const orig = t.currency !== dcur() ? `<span class="tx-orig-inline">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>` : '';
+    const orig = t.fx ? `<span class="tx-orig-inline">${escapeHtml(fxNote(t))}</span>` : t.currency !== dcur() ? `<span class="tx-orig-inline">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>` : '';
     const sec = t.sectionId ? secById(t.sectionId) : null;
     const label = `${showDate ? cat.name : (t.note || cat.name)}${sec ? ` · ${sec.name}` : ''}${t.beforeBalance ? ' · before balance date' : ''}`;
     const st = t.pending ? payStatus(t.date) : null;
@@ -3298,6 +3324,13 @@ const smsCardHtml = (i) => {
         ['Description', (() => { const shop = i.merchant || i.desc; const own = customBadge(shop, ' is-mini'); const b = !own && (i.type === 'expense' || i.kind === 'refund') ? brandFor(shop) : null; return `<span class="sms-bank">${own || (b ? brandBadge(b, ' is-mini') : '')}${escapeHtml(i.desc)}</span>`; })()],
         ['Date', escapeHtml(`${relativeDayLabel(i.date)}${i.time ? `, ${i.time}` : ''}`)],
         ...(i.fx ? [['Charged in', escapeHtml(formatCurrency(i.fx.amount, i.fx.currency))]] : []),
+        ...(() => {
+            // The matched account, or until one is picked, the account it most likely is (your last card / bank account).
+            const acc = state.accounts.find((a) => a.id === smsAccountMatch(i).id)
+                || state.accounts.find((a) => a.id === state.config.lastAccount && fxApplies(a)) || state.accounts.find(fxApplies);
+            if (i.fx || i.type !== 'expense' || !acc || !fxApplies(acc) || i.currency === acc.currency) return [];
+            return [['From your account', `≈ ${escapeHtml(formatCurrency(fxCharge(i.amount, i.currency, acc), acc.currency))} <span class="faint">(market rate + ${fxFeeFor(acc)}% ${fxFeeLearned(acc) ? 'your bank\'s charge' : 'typical bank charge'})</span>`]];
+        })(),
         ...(i.ref ? [['Reference', escapeHtml(i.ref)]] : []),
         ['Detected through', `<span class="sms-sources">${sourceList(i).map((s) => `<span class="sms-source" data-source="${s}">${escapeHtml(SOURCE_NAMES[s] || s)}</span>`).join('<span class="faint" aria-hidden="true">+</span>')}</span>`]
     ];
@@ -3454,7 +3487,22 @@ const smsApply = (i, accountId) => {
         queueSync('transaction', rec.id, 'upsert');
         return rec;
     }
-    const rec = quickSaveTx({ type: i.type, desc: i.desc, amount: i.amount, currency: i.currency, category: i.category, date: i.date, accountId, note });
+    const acc = state.accounts.find((a) => a.id === accountId);
+    let amount = i.amount;
+    let currency = i.currency;
+    let fx = null;
+    if (i.type === 'expense' && acc && fxApplies(acc)) {
+        if (i.fx && i.currency === acc.currency) {
+            // The bank wrote both amounts: exact, and it teaches Vela this bank's charge.
+            fx = { amount: i.fx.amount, currency: i.fx.currency, fee: learnFxFee(acc, i.fx.amount, i.fx.currency, i.amount), estimated: false };
+        } else if (i.currency !== acc.currency) {
+            fx = { amount: i.amount, currency: i.currency, fee: fxFeeFor(acc), estimated: true };
+            amount = fxCharge(i.amount, i.currency, acc);
+            currency = acc.currency;
+        }
+    }
+    const rec = quickSaveTx({ type: i.type, desc: i.desc, amount, currency, category: i.category, date: i.date, accountId, note });
+    if (fx) rec.fx = fx;
     rec.pending = false; // it already happened: the bank says so
     rec.bank = bankMeta(i);
     saveState();
@@ -4857,6 +4905,26 @@ const setTxType = (type, keepCategory) => {
     updateTripRow();
     renderTxSections();
     updateBeforeRow();
+    updateChargedRow();
+};
+let txChargedTouched = false;
+const txFxAccount = () => state.accounts.find((a) => a.id === ($('tx-account').value || (state.accounts[0] && state.accounts[0].id)));
+const updateChargedRow = () => {
+    const acc = txFxAccount();
+    const cur = normCur($('tx-currency').value);
+    const amount = toNumber($('tx-amount').value, NaN);
+    const show = txType === 'expense' && !!acc && fxApplies(acc) && cur !== acc.currency;
+    $('tx-charged-field').hidden = !show;
+    if (!show) return;
+    $('tx-charged-label').textContent = `Taken from ${acc.name} (${acc.currency})`;
+    const est = amount > 0 ? fxCharge(amount, cur, acc) : 0;
+    if (!txChargedTouched) $('tx-charged').value = est ? est : '';
+    const typed = toNumber($('tx-charged').value, NaN);
+    const rate = amount > 0 ? convertAmount(1, cur, acc.currency) : 0;
+    const fee = fxFeeFor(acc);
+    $('tx-charged-hint').textContent = !(amount > 0) ? 'Enter the amount first.'
+        : txChargedTouched && typed > 0 ? `That is ${formatCurrency(typed / amount, acc.currency)} per ${cur}. Vela learns ${acc.name}'s charge from it for next time.`
+            : `${formatCurrency(amount, cur)} × ${formatCurrency(rate, acc.currency)} + ${fee}% ${fxFeeLearned(acc) ? `${acc.name}'s charge` : 'typical bank charge (estimate)'}. Change it to what your bank took.`;
 };
 // An entry dated before its account's balance was typed in: "Already in my balance" (on by default), so it's
 // recorded in history and spending without changing the balance again.
@@ -4936,6 +5004,7 @@ const openAddTx = (type = 'expense') => {
     txTripId = tripIdFor(todayISO());
     txBefore = false;
     txBeforeTouched = false;
+    txChargedTouched = false;
     txSectionId = null;
     txSectionTouched = false;
     setTxType(type);
@@ -4959,8 +5028,10 @@ const openEditTx = (id) => {
     setReceiptDraft(t);
     $('tx-id').value = t.id;
     $('btn-delete-tx').hidden = false;
-    $('tx-amount').value = t.amount;
-    fillCurrencySelect($('tx-currency'), t.currency);
+    $('tx-amount').value = t.fx ? t.fx.amount : t.amount;
+    fillCurrencySelect($('tx-currency'), t.fx ? t.fx.currency : t.currency);
+    txChargedTouched = !!t.fx;
+    $('tx-charged').value = t.fx ? t.amount : '';
     $('tx-desc').value = t.desc;
     $('tx-date').value = t.date;
     $('tx-note').value = t.note || '';
@@ -4997,6 +5068,7 @@ const budgetAlert = (categoryId) => {
     else if (s.budgetPct >= 80) showToast(`You've used ${Math.round(s.budgetPct)}% of this month's budget.`, 'warning');
 };
 
+const prevFx = (id) => { const t = id && state.transactions.find((x) => x.id === id); return t ? t.fx || null : null; };
 const submitTx = async () => {
     const id = $('tx-id').value;
     const amount = toNumber($('tx-amount').value, NaN);
@@ -5009,6 +5081,21 @@ const submitTx = async () => {
     const category = catInput ? catInput.value : FALLBACK_CATEGORY[txType];
 
     if (!(amount > 0)) return fieldError($('tx-amount'), 'Enter an amount greater than zero.');
+    // Paid in another currency from a card or bank account: saved as what left the account, with the original kept.
+    let fx = null;
+    let saveAmount = amount;
+    let saveCurrency = currency;
+    if (!$('tx-charged-field').hidden) {
+        const acc = state.accounts.find((a) => a.id === accountId);
+        const charged = toNumber($('tx-charged').value, NaN);
+        if (!(charged > 0)) return fieldError($('tx-charged'), `Enter what ${acc.name} was charged, or leave Vela's estimate.`);
+        const estimate = fxCharge(amount, currency, acc);
+        const real = txChargedTouched && Math.abs(charged - estimate) > 0.009;
+        const fee = real ? learnFxFee(acc, amount, currency, charged) : fxFeeFor(acc);
+        fx = { amount, currency, fee: fee === null ? fxFeeFor(acc) : fee, estimated: !real && !(prevFx(id) && !prevFx(id).estimated && Math.abs(charged - (state.transactions.find((x) => x.id === id) || {}).amount) < 0.01) };
+        saveAmount = round2(charged);
+        saveCurrency = acc.currency;
+    }
     if (!desc) return fieldError($('tx-desc'), txType === 'income' ? 'Add where the money came from, like "Salary".' : 'Add a short description, like "Groceries".');
     if (!isISODate(date)) return fieldError($('tx-date'), 'Pick a date.');
 
@@ -5032,7 +5119,8 @@ const submitTx = async () => {
     if (prev) {
         const idx = state.transactions.findIndex((t) => t.id === id);
         const waiting = date > todayISO() || txWaiting;
-        record = { ...prev, type: txType, desc, amount, currency, category, date, note, accountId, receipt, fixed: txKind === 'fixed' || !!prev.recurringId, pending: waiting };
+        record = { ...prev, type: txType, desc, amount: saveAmount, currency: saveCurrency, category, date, note, accountId, receipt, fixed: txKind === 'fixed' || !!prev.recurringId, pending: waiting };
+        if (fx) record.fx = fx; else delete record.fx;
         if (txType === 'expense' && txTripId) record.tripId = txTripId; else delete record.tripId;
         if (txType === 'expense' && txSectionId && secById(txSectionId)) record.sectionId = txSectionId; else delete record.sectionId;
         if (!$('tx-before-row').hidden && txBefore) record.beforeBalance = true; else delete record.beforeBalance;
@@ -5042,7 +5130,8 @@ const submitTx = async () => {
         if (prev.pending !== waiting) setTimeout(scheduleReminders, 0);
         state.transactions[idx] = record;
     } else {
-        record = { id: generateId(), type: txType, desc, amount, currency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txKind === 'fixed', pending: date > todayISO() || txWaiting };
+        record = { id: generateId(), type: txType, desc, amount: saveAmount, currency: saveCurrency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txKind === 'fixed', pending: date > todayISO() || txWaiting };
+        if (fx) record.fx = fx;
         if (txType === 'expense' && txTripId) record.tripId = txTripId;
         if (txType === 'expense' && txSectionId && secById(txSectionId)) record.sectionId = txSectionId;
         if (!$('tx-before-row').hidden && txBefore) record.beforeBalance = true;
@@ -9142,7 +9231,8 @@ const initEvents = () => {
         renderTxSuggest();
         updatePriceHint();
     });
-    $('tx-currency').addEventListener('change', () => { renderTxSuggest(); updatePriceHint(); });
+    $('tx-currency').addEventListener('change', () => { renderTxSuggest(); updatePriceHint(); updateChargedRow(); });
+    $('tx-charged').addEventListener('input', () => { txChargedTouched = true; updateChargedRow(); });
     $('tx-desc').addEventListener('input', (e) => { if (e.isTrusted) $('tx-desc').dataset.typing = '1'; onTxDescInput(); });
     $('account-name').addEventListener('input', updateAccountNameLogo);
     Object.keys(NAME_BOXES).forEach((key) => {
@@ -9173,7 +9263,7 @@ const initEvents = () => {
     $('tx-trip').addEventListener('click', () => { txTripId = txTripId ? null : $('tx-trip').dataset.trip; updateTripRow(); });
     $('tx-before').addEventListener('click', () => { txBefore = !txBefore; txBeforeTouched = true; updateBeforeRow(); });
     $('tx-date').addEventListener('change', updateBeforeRow);
-    $('tx-account').addEventListener('change', updateBeforeRow);
+    $('tx-account').addEventListener('change', () => { updateBeforeRow(); txChargedTouched = false; updateChargedRow(); });
     $('tx-date').addEventListener('change', () => { if (!$('tx-id').value && txType === 'expense') { txTripId = tripIdFor($('tx-date').value); updateTripRow(); } });
     $('mfa-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitMfa(); } });
     setInterval(pollSignInRequests, 8000);
@@ -9195,7 +9285,7 @@ const initEvents = () => {
     $('tx-repeat').addEventListener('click', (e) => setSwitch(e.currentTarget, !isOn(e.currentTarget)));
     $('budget-category').addEventListener('change', syncBudgetModeUi);
     $('tx-date').addEventListener('change', updateDateHint);
-    $('tx-amount').addEventListener('input', updatePriceHint);
+    $('tx-amount').addEventListener('input', () => { updatePriceHint(); updateChargedRow(); });
     $('tx-category-picker').addEventListener('change', () => { txCatTouched = true; syncTxSectionToCategory(); });
     $('bot-form').addEventListener('submit', (e) => {
         e.preventDefault();

@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.42.4">
+    <link rel="stylesheet" href="style.css?v=4.43.0">
 </head>
 <body data-view="dashboard">
 
@@ -739,6 +739,11 @@
                             <select id="tx-currency" class="addon"></select>
                         </div>
                         <p class="price-hint" id="tx-price-hint" role="status" hidden></p>
+                    </div>
+                    <div class="field fx-charged-field" id="tx-charged-field" hidden>
+                        <label class="field-label" for="tx-charged" id="tx-charged-label">Taken from your account</label>
+                        <input type="text" id="tx-charged" class="input money-input" inputmode="decimal" autocomplete="off" placeholder="0.00">
+                        <span class="field-hint" id="tx-charged-hint"></span>
                     </div>
                     <div class="field" id="tx-account-field">
                         <label class="field-label" for="tx-account">Account</label>
@@ -1801,7 +1806,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.42.4"></script>
+    <script src="app.js?v=4.43.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

@@ -4760,3 +4760,5 @@ body.approve-waiting { overflow: hidden; }
 .hero-minus[hidden] { display: none; }
 /* The account bar's grey text style must not hide a minus balance */
 .view-bar .amount.text-expense, .view-bar-text .text-expense { color: var(--expense); }
+
+.fx-charged-field { padding: 12px; border-radius: 14px; background: color-mix(in srgb, var(--pal-cyan) 10%, transparent); }

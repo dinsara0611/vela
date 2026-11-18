@@ -131,6 +131,40 @@ try {
     // ---- Dollar account shown in rupees
     await page.evaluate("setViewAccount('D'); go('dashboard')"); await settle();
     check('Home: Wise balance in LKR', await v('#dash-balance'), 180 * 300);
+    // ---- Newer money rules, in their own account (E) so the numbers above stay the same
+    const extra = await page.evaluate(`(() => {
+        const now = new Date();
+        const d = toISODate(now);
+        state.accounts.push({ id: 'E', name: 'HNB Bank', kind: 'bank', currency: 'LKR', opening: 50000, createdAt: Date.now(), balanceDate: d });
+        const base = { note: '', recurringId: null, receipt: null, fixed: false, pending: false, accountId: 'E', createdAt: Date.now() };
+        // Cents: 0.10 + 0.20 + 1234.56 spent must leave exactly 48765.14
+        state.transactions.push({ ...base, id: 'c1', type: 'expense', desc: 'A', amount: 0.1, currency: 'LKR', category: 'Food', date: d },
+            { ...base, id: 'c2', type: 'expense', desc: 'B', amount: 0.2, currency: 'LKR', category: 'Food', date: d },
+            { ...base, id: 'c3', type: 'expense', desc: 'C', amount: 1234.56, currency: 'LKR', category: 'Food', date: d });
+        const afterCents = accountBalance(state.accounts.find((a) => a.id === 'E'));
+        // Foreign purchase: USD 10 at 300 + 4% typical charge = 3120 taken from the account
+        const acc = state.accounts.find((a) => a.id === 'E');
+        const charged = fxCharge(10, 'USD', acc);
+        state.transactions.push({ ...base, id: 'f1', type: 'expense', desc: 'Netflix', amount: charged, currency: 'LKR', fx: { amount: 10, currency: 'USD', fee: 4, estimated: true }, category: 'Entertainment', date: d });
+        const afterFx = accountBalance(acc);
+        // Dated before the balance date: in history, not taken off the balance again
+        state.transactions.push({ ...base, id: 'b1', type: 'expense', desc: 'Old', amount: 999, currency: 'LKR', category: 'Food', date: toISODate(addDays(now, -3)), beforeBalance: true });
+        const afterOld = accountBalance(acc);
+        // Funds: allocated minus spent, never more or less
+        state.config.sections = [{ id: 'f', name: 'Food', mode: 'rest', value: 0, currency: 'LKR', color: 'pink', icon: 'c-Food' }];
+        state.config.sectionMoves = [{ id: 'm', date: d, kind: 'income', incomeId: null, from: null, to: 'f', amount: 10000, currency: 'LKR' }];
+        state.transactions.find((t) => t.id === 'c3').sectionId = 'f';
+        const fund = sectionBalances().f;
+        state.config.sections = []; state.config.sectionMoves = [];
+        state.transactions = state.transactions.filter((t) => !['c1', 'c2', 'c3', 'f1', 'b1'].includes(t.id));
+        state.accounts = state.accounts.filter((a) => a.id !== 'E');
+        return { afterCents, charged, afterFx, afterOld, fund };
+    })()`);
+    check('Cents add up exactly (0.10 + 0.20 + 1,234.56)', extra.afterCents, 48765.14);
+    check('Foreign purchase: USD 10 at 300 + 4% bank charge', extra.charged, 3120);
+    check('Account after the foreign purchase', extra.afterFx, 48765.14 - 3120);
+    check('Entry before the balance date leaves the balance alone', extra.afterOld, 48765.14 - 3120);
+    check('Fund: allocated 10,000 - spent 1,234.56', extra.fund, 8765.44);
     if (firstOfMonth) console.log('(early in the month: some entries were moved to the 1st)');
     if (page.pageErrors.length) problems.push('Errors in the page: ' + page.pageErrors.slice(0, 3).join(' | '));
 } catch (e) {

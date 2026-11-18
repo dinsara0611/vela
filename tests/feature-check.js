@@ -2019,6 +2019,39 @@ export async function run() {
         return (hero && barRed && chipRed && back) || `hero ${hero}, bar ${barRed}, card ${chipRed}, normal again ${back}`;
     });
 
+    await T('Foreign card purchase: account charged market rate + bank charge (estimate), learns the real charge', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-cb', name: 'Commercial Bank Card', kind: 'bank', currency: 'LKR', opening: 100000, createdAt: 0 });
+        g('saveState')();
+        const acc = () => s().accounts.find((a) => a.id === 'acc-cb');
+        const bal = () => Math.round(g('accountBalance')(acc()) * 100) / 100;
+        const t0 = Date.now();
+        const claude = g('parseBankSms')({ id: `sms-${t0}-901`, source: 'sms', address: 'COMBANK', body: 'Dear Cardholder, Purchase at ANTHROPIC* CLAUDE SUB +14152360599 US for USD 20.00 on 05/11/26 07:37 PM has been authorised on your debit card ending #5174.', date: t0 });
+        const card = g('smsCardHtml')(claude);
+        const shownEstimate = /From your account/.test(card) && /6,240/.test(card);
+        const rec = g('smsApply')(claude, 'acc-cb');
+        const est = rec.currency === 'LKR' && rec.amount === 6240 && rec.fx && rec.fx.amount === 20 && rec.fx.estimated === true && bal() === 100000 - 6240;
+        // You enter what the bank really took: 6,300 -> Vela learns 5%.
+        g('openEditTx')(rec.id); await wait(300);
+        const formShows = !$('tx-charged-field').hidden && $('tx-amount').value === '20' && $('tx-currency').value === 'USD' && g('toNumber')($('tx-charged').value) === 6240;
+        $('tx-charged').value = '6300'; $('tx-charged').dispatchEvent(new Event('input', { bubbles: true }));
+        await g('submitTx')(); await wait(350);
+        const saved = s().transactions.find((t) => t.id === rec.id);
+        const learned = acc().fxFee === 5 && saved.amount === 6300 && saved.fx.estimated === false && bal() === 100000 - 6300;
+        // Next foreign purchase uses the learned charge.
+        g('openAddTx')('expense'); await wait(300);
+        $('tx-account').value = 'acc-cb'; $('tx-account').dispatchEvent(new Event('change', { bubbles: true }));
+        g('fillCurrencySelect')($('tx-currency'), 'USD'); $('tx-currency').dispatchEvent(new Event('change', { bubbles: true }));
+        $('tx-amount').value = '10'; $('tx-amount').dispatchEvent(new Event('input', { bubbles: true }));
+        const next = g('toNumber')($('tx-charged').value) === 3150;
+        await close('modal-tx');
+        // A bank SMS that shows both amounts is exact and teaches the charge too.
+        const both = g('parseBankSms')({ id: `sms-${t0}-902`, source: 'sms', address: 'COMBANK', body: 'Your ComBank Debit Card ending 5174 was used for USD 10.00 (LKR 3,120.00) at NETFLIX.COM on 06/11/26.', date: t0 });
+        const r2 = both && g('smsApply')(both, 'acc-cb');
+        const exact = !!r2 && r2.amount === 3120 && r2.fx && r2.fx.estimated === false && acc().fxFee === 4;
+        return (shownEstimate && est && formShows && learned && next && exact) || `card ${shownEstimate}, estimate ${est} (${rec.amount}), form ${formShows}, learned ${learned} (${acc().fxFee}), next ${next} (${$('tx-charged').value}), exact SMS ${exact} (${r2 && r2.amount}, fee ${acc().fxFee})`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };
