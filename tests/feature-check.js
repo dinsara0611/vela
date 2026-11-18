@@ -1846,7 +1846,7 @@ export async function run() {
         await addTx({ type: 'income', amount: 100000, desc: 'Salary Dec', category: 'Salary' }); await wait(600);
         const sel = document.querySelector(`[data-sec-carry="${wants.id}"]`);
         sel.value = savings.id; sel.dispatchEvent(new Event('change', { bubbles: true })); await wait(100);
-        const fillShown = /Back to zero first/.test($('divide-fills').textContent);
+        const fillShown = /Cover deficits first/.test($('divide-fills').textContent);
         g('confirmDivide')(); await wait(300);
         const b3 = r(bal());
         const total = Object.values(bal()).reduce((a, v) => a + v, 0);
@@ -1880,9 +1880,9 @@ export async function run() {
         $('sec-move-amount').value = '1000'; g('submitSecMove')(); await wait(300);
         const added = sum() - before;
         g('switchTab')('dashboard'); await wait(300);
-        const home = /Sections/.test($('dash-sections').textContent) && /Needs/.test($('dash-sections').textContent);
+        const home = /Funds/.test($('dash-sections').textContent) && /Needs/.test($('dash-sections').textContent);
         g('goToPlan')('sections'); await wait(300);
-        const plan = /In your sections/.test($('plan-content').textContent);
+        const plan = /Total in funds/.test($('plan-content').textContent);
         g('switchTab')('analytics'); await wait(400);
         const insights = !$('section-breakdown-card').hidden && /Needs/.test($('section-breakdown').textContent);
         const totalBeforeDelete = sum();

@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.42.1">
+    <link rel="stylesheet" href="style.css?v=4.42.2">
 </head>
 <body data-view="dashboard">
 
@@ -353,7 +353,7 @@
                         <button type="button" data-plan-tab="bills" aria-pressed="false">Fixed</button>
                         <button type="button" data-plan-tab="goals" aria-pressed="false">Goals</button>
                         <button type="button" data-plan-tab="debts" aria-pressed="false">Debts</button>
-                        <button type="button" data-plan-tab="sections" aria-pressed="false">Sections</button>
+                        <button type="button" data-plan-tab="sections" aria-pressed="false">Funds</button>
                     </div>
                     <div class="plan-panel" id="plan-content"></div>
                 </section>
@@ -398,7 +398,7 @@
                         </section>
                     </div>
                     <section class="card" id="section-breakdown-card" hidden>
-                        <div class="card-head"><h2 class="card-title">Spent from each section</h2></div>
+                        <div class="card-head"><h2 class="card-title">Spending by fund</h2></div>
                         <ul class="breakdown" id="section-breakdown" style="margin-top:0"></ul>
                     </section>
                     <section class="card">
@@ -780,8 +780,8 @@
                         </div>
                     </div>
                     <div class="field" id="tx-section-field" hidden>
-                        <span class="field-label">Comes out of section</span>
-                        <div class="sec-picker" id="tx-section-picker" role="group" aria-label="Section"></div>
+                        <span class="field-label">Paid from fund</span>
+                        <div class="sec-picker" id="tx-section-picker" role="group" aria-label="Fund"></div>
                     </div>
                     <div class="setting-row tx-trip-row" id="tx-trip-row" hidden>
                         <div class="setting-text"><span class="setting-title" id="tx-trip-name">Part of the trip</span><span class="setting-desc">Counts in the trip's total.</span></div>
@@ -1280,16 +1280,16 @@
         </div>
     </div>
 
-    <!-- Sections: divide an income -->
+    <!-- Funds: allocate an income -->
     <div class="sheet-overlay" id="modal-divide" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="divide-title">
             <div class="sheet-grabber" aria-hidden="true"></div>
             <div class="sheet-head">
-                <h2 class="sheet-title" id="divide-title">Divide income</h2>
+                <h2 class="sheet-title" id="divide-title">Allocate income</h2>
                 <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
             </div>
             <div class="sheet-body">
-                <div class="divide-total"><span>To divide</span><strong class="amount" id="divide-total">0</strong></div>
+                <div class="divide-total"><span>To allocate</span><strong class="amount" id="divide-total">0</strong></div>
                 <div class="divide-bar" id="divide-bar"></div>
                 <div id="divide-carry"></div>
                 <div id="divide-fills"></div>
@@ -1297,35 +1297,35 @@
                 <p class="divide-left" id="divide-left" aria-live="polite"></p>
             </div>
             <div class="sheet-foot">
-                <button type="button" class="btn btn-secondary" data-action="divide-skip">Not this one</button>
-                <button type="button" class="btn btn-primary" id="btn-divide-ok" data-action="divide-ok">Divide it</button>
+                <button type="button" class="btn btn-secondary" data-action="divide-skip">Don't allocate</button>
+                <button type="button" class="btn btn-primary" id="btn-divide-ok" data-action="divide-ok">Allocate</button>
             </div>
         </div>
     </div>
 
-    <!-- Sections: one section -->
+    <!-- Funds: one fund -->
     <div class="sheet-overlay" id="modal-section-view" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="section-view-title">
             <div class="sheet-grabber" aria-hidden="true"></div>
             <div class="sheet-head">
-                <h2 class="sheet-title" id="section-view-title">Section</h2>
+                <h2 class="sheet-title" id="section-view-title">Fund</h2>
                 <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
             </div>
             <div class="sheet-body" id="section-view-body"></div>
             <div class="sheet-foot">
                 <button type="button" class="btn btn-secondary" data-action="sec-edit">Edit</button>
-                <button type="button" class="btn btn-secondary" data-action="sec-add-money">Put in</button>
-                <button type="button" class="btn btn-primary" data-action="sec-move">Move</button>
+                <button type="button" class="btn btn-secondary" data-action="sec-add-money">Add funds</button>
+                <button type="button" class="btn btn-primary" data-action="sec-move">Transfer</button>
             </div>
         </div>
     </div>
 
-    <!-- Sections: add or edit -->
+    <!-- Funds: add or edit -->
     <div class="sheet-overlay" id="modal-section" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="section-edit-title">
             <div class="sheet-grabber" aria-hidden="true"></div>
             <div class="sheet-head">
-                <h2 class="sheet-title" id="section-edit-title">New section</h2>
+                <h2 class="sheet-title" id="section-edit-title">New fund</h2>
                 <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
             </div>
             <div class="sheet-body">
@@ -1333,19 +1333,19 @@
                 <div class="sec-preview" id="section-preview" aria-hidden="true"></div>
                 <div class="field">
                     <label class="field-label" for="section-name">Name</label>
-                    <input type="text" id="section-name" class="input" placeholder="e.g. Food, Bills, Fun, Savings" maxlength="40" autocomplete="off">
+                    <input type="text" id="section-name" class="input" placeholder="e.g. Food, Bills, Emergency, Savings" maxlength="40" autocomplete="off">
                 </div>
                 <div class="field">
-                    <span class="field-label">From each income it gets</span>
-                    <div class="segmented segmented-full" role="group" aria-label="How much it gets">
-                        <button type="button" data-sec-mode="percent" aria-pressed="true">A share %</button>
-                        <button type="button" data-sec-mode="amount" aria-pressed="false">An amount</button>
-                        <button type="button" data-sec-mode="rest" aria-pressed="false">What's left</button>
+                    <span class="field-label">Allocation from each income</span>
+                    <div class="segmented segmented-full" role="group" aria-label="Allocation from each income">
+                        <button type="button" data-sec-mode="percent" aria-pressed="true">% of income</button>
+                        <button type="button" data-sec-mode="amount" aria-pressed="false">Fixed amount</button>
+                        <button type="button" data-sec-mode="rest" aria-pressed="false">Remainder</button>
                     </div>
                     <span class="field-hint" id="section-mode-hint"></span>
                 </div>
                 <div class="field" id="section-value-field">
-                    <label class="field-label" for="section-value" id="section-value-label">Share of each income (%)</label>
+                    <label class="field-label" for="section-value" id="section-value-label">Percentage of each income (%)</label>
                     <input type="text" id="section-value" class="input" inputmode="decimal" autocomplete="off">
                 </div>
                 <fieldset class="field">
@@ -1358,19 +1358,19 @@
                 </fieldset>
             </div>
             <div class="sheet-foot">
-                <button type="button" class="btn btn-danger" id="btn-delete-section" data-action="sec-delete" aria-label="Delete section" hidden><svg class="ic"><use href="#i-trash"/></svg></button>
+                <button type="button" class="btn btn-danger" id="btn-delete-section" data-action="sec-delete" aria-label="Delete fund" hidden><svg class="ic"><use href="#i-trash"/></svg></button>
                 <button type="button" class="btn btn-secondary" data-close-sheet>Cancel</button>
                 <button type="button" class="btn btn-primary" data-action="sec-save">Save</button>
             </div>
         </div>
     </div>
 
-    <!-- Sections: move money / put money in -->
+    <!-- Funds: transfer / add funds -->
     <div class="sheet-overlay" id="modal-sec-move" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sec-move-title">
             <div class="sheet-grabber" aria-hidden="true"></div>
             <div class="sheet-head">
-                <h2 class="sheet-title" id="sec-move-title">Move money</h2>
+                <h2 class="sheet-title" id="sec-move-title">Transfer between funds</h2>
                 <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
             </div>
             <div class="sheet-body">
@@ -1387,12 +1387,12 @@
         </div>
     </div>
 
-    <!-- Sections: expenses without a section -->
+    <!-- Funds: unallocated expenses -->
     <div class="sheet-overlay" id="modal-sec-unassigned" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sec-unassigned-title">
             <div class="sheet-grabber" aria-hidden="true"></div>
             <div class="sheet-head">
-                <h2 class="sheet-title" id="sec-unassigned-title">Put expenses in sections</h2>
+                <h2 class="sheet-title" id="sec-unassigned-title">Assign expenses to funds</h2>
                 <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
             </div>
             <div class="sheet-body" id="sec-unassigned-body"></div>
@@ -1792,7 +1792,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.42.1"></script>
+    <script src="app.js?v=4.42.2"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.42.1';
+const APP_VERSION = '4.42.2';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -6450,7 +6450,7 @@ const secList = () => state.config.sections || [];
 const secById = (id) => secList().find((x) => x.id === id) || null;
 const secMoves = () => state.config.sectionMoves || [];
 const secBadge = (sec, extra = '') => `<span class="cat-badge sec-badge${extra}" style="--cat:var(--pal-${PALETTE.includes(sec && sec.color) ? sec.color : 'slate'})">${icon(sec && /^[cxi]-[A-Za-z-]+$/.test(sec.icon || '') ? sec.icon : 'i-wallet')}</span>`;
-const secPlanLabel = (sec) => (sec.mode === 'rest' ? 'Gets what’s left' : sec.mode === 'percent' ? `${sec.value}% of income` : `${formatCurrency(sec.value, sec.currency)} from each income`);
+const secPlanLabel = (sec) => (sec.mode === 'rest' ? 'Remainder of income' : sec.mode === 'percent' ? `${sec.value}% of income` : `${formatCurrency(sec.value, sec.currency)} fixed per income`);
 // Balances in the display currency, from the very first move: nothing is reset between months.
 const sectionBalances = () => {
     const bal = {};
@@ -6548,18 +6548,18 @@ const renderDivide = () => {
     if (!job) return;
     const cur = dcur();
     const n = divideNumbers();
-    $('divide-title').textContent = `Divide ${job.name}`;
+    $('divide-title').textContent = `Allocate ${job.name}`;
     $('divide-total').textContent = formatCurrency(job.total, cur);
     const leftovers = secList().filter((x) => n.bal[x.id] > 0);
-    $('divide-carry').innerHTML = leftovers.length ? `<div class="section-head"><h2>Left over from before</h2></div><p class="field-hint">Keep it in the same section, or move it to another one.</p>${leftovers.map((x) => `
-        <div class="sec-line">${secBadge(x, ' is-mini')}<span class="sec-line-name"><span>${escapeHtml(x.name)}</span><span class="text-income">${escapeHtml(formatCurrency(n.bal[x.id], cur))} left</span></span>
-            <div class="select sec-carry"><select class="input" data-sec-carry="${escapeHtml(x.id)}" aria-label="Where ${escapeHtml(x.name)}'s leftover goes">
-                <option value="keep">Keep in ${escapeHtml(x.name)}</option>
-                ${secList().filter((o) => o.id !== x.id).map((o) => `<option value="${escapeHtml(o.id)}" ${job.carry[x.id] === o.id ? 'selected' : ''}>Move to ${escapeHtml(o.name)}</option>`).join('')}
+    $('divide-carry').innerHTML = leftovers.length ? `<div class="section-head"><h2>Unspent balances</h2></div><p class="field-hint">Carry each one forward in the same fund, or transfer it to another fund.</p>${leftovers.map((x) => `
+        <div class="sec-line">${secBadge(x, ' is-mini')}<span class="sec-line-name"><span>${escapeHtml(x.name)}</span><span class="text-income">${escapeHtml(formatCurrency(n.bal[x.id], cur))} unspent</span></span>
+            <div class="select sec-carry"><select class="input" data-sec-carry="${escapeHtml(x.id)}" aria-label="Where ${escapeHtml(x.name)}'s unspent balance goes">
+                <option value="keep">Carry forward in ${escapeHtml(x.name)}</option>
+                ${secList().filter((o) => o.id !== x.id).map((o) => `<option value="${escapeHtml(o.id)}" ${job.carry[x.id] === o.id ? 'selected' : ''}>Transfer to ${escapeHtml(o.name)}</option>`).join('')}
             </select></div></div>`).join('')}` : '';
-    $('divide-fills').innerHTML = n.fills.length ? `<div class="section-head"><h2>Back to zero first</h2></div>${n.fills.map((f) => { const x = secById(f.to); return `
-        <div class="sec-line">${secBadge(x, ' is-mini')}<span class="sec-line-name"><span>${escapeHtml(x.name)}</span><span class="text-expense">was ${escapeHtml(formatCurrency(n.after[x.id], cur))}</span></span><span class="amount">+${escapeHtml(formatCurrency(f.amount, cur))}</span></div>`; }).join('')}` : '';
-    $('divide-split').innerHTML = `<div class="section-head"><h2>${n.fills.length ? 'Then divide the rest' : 'Divide it'}</h2><span class="card-sub">${escapeHtml(formatCurrency(n.pool, cur))}</span></div>${secList().map((x) => `
+    $('divide-fills').innerHTML = n.fills.length ? `<div class="section-head"><h2>Cover deficits first</h2></div>${n.fills.map((f) => { const x = secById(f.to); return `
+        <div class="sec-line">${secBadge(x, ' is-mini')}<span class="sec-line-name"><span>${escapeHtml(x.name)}</span><span class="text-expense">deficit ${escapeHtml(formatCurrency(-n.after[x.id], cur))}</span></span><span class="amount">+${escapeHtml(formatCurrency(f.amount, cur))}</span></div>`; }).join('')}` : '';
+    $('divide-split').innerHTML = `<div class="section-head"><h2>${n.fills.length ? 'Allocate the rest' : 'Allocation'}</h2><span class="card-sub">${escapeHtml(formatCurrency(n.pool, cur))}</span></div>${secList().map((x) => `
         <div class="sec-line">${secBadge(x, ' is-mini')}<span class="sec-line-name"><span>${escapeHtml(x.name)}</span><span>${escapeHtml(secPlanLabel(x))}</span></span>
             <input type="text" inputmode="decimal" class="input sec-amount" data-sec-alloc="${escapeHtml(x.id)}" value="${job.alloc[x.id] ? round2(job.alloc[x.id]) : ''}" placeholder="0" aria-label="Amount for ${escapeHtml(x.name)}"></div>`).join('')}`;
     updateDivideLeft();
@@ -6573,9 +6573,9 @@ const updateDivideLeft = () => {
     const rest = secList().find((x) => x.mode === 'rest');
     const el = $('divide-left');
     el.dataset.state = left < -0.004 ? 'over' : left > 0.004 ? 'left' : 'ok';
-    el.textContent = left < -0.004 ? `${formatCurrency(-left, dcur())} more than the income. Lower an amount.`
-        : left > 0.004 ? `${formatCurrency(left, dcur())} not divided yet${rest ? ` - it goes to ${rest.name}` : ''}.`
-            : 'All of it is divided.';
+    el.textContent = left < -0.004 ? `Over-allocated by ${formatCurrency(-left, dcur())}. Lower an amount.`
+        : left > 0.004 ? `${formatCurrency(left, dcur())} unallocated${rest ? `: it goes to ${rest.name} as the remainder` : ''}.`
+            : 'Fully allocated.';
     $('btn-divide-ok').disabled = left < -0.004 || (left > 0.004 && !rest);
     const parts = secList().map((x) => [x, (job.alloc[x.id] || 0) + (n.fills.find((f) => f.to === x.id) || { amount: 0 }).amount + (x.mode === 'rest' && left > 0 ? left : 0)]);
     $('divide-bar').innerHTML = secStackBar(parts).replace(/data-grow="([\d.]+)"/g, 'style="width:$1%" data-w="$1"').replace(/style="--cat:([^"]+)" style="width/g, 'style="--cat:$1;width');
@@ -6598,33 +6598,33 @@ const confirmDivide = () => {
     if (left > 0.004) mk('income', null, rest.id, left);
     if (!moves.length) mk('income', null, (rest || secList()[0]).id, 0); // marks it divided even if nothing went in
     state.config.sectionMoves = [...secMoves(), ...moves];
-    if (!commitState('Dividing the income')) return;
+    if (!commitState('The allocation')) return;
     divideJob = null;
     haptic('MEDIUM');
     closeSheet('modal-divide');
-    showToast(`${job.name} divided into your sections`, 'success');
+    showToast(`${job.name} allocated to your funds`, 'success');
     renderActive();
 };
 const skipDivide = (incomeId) => {
     state.config.sectionSkipped = [...(state.config.sectionSkipped || []), incomeId].slice(-500);
     if (!commitState('That')) return;
     if (openSheets.includes('modal-divide')) closeSheet('modal-divide');
-    showToast('Left out of your sections', 'info');
+    showToast('Not allocated to your funds', 'info');
     renderActive();
 };
 // Undo a division (to do it again differently): its moves go, balances go back.
 const undoDivide = (incomeId) => {
     const t = state.transactions.find((x) => x.id === incomeId);
     showConfirm({
-        title: 'Undo this division?',
-        message: `${t ? t.desc : 'This income'} goes back to "not divided" and the sections get back what they had. You can divide it again.`,
-        confirmLabel: 'Undo',
+        title: 'Reverse this allocation?',
+        message: `${t ? t.desc : 'This income'} becomes unallocated again and every fund goes back to its earlier balance. You can allocate it again.`,
+        confirmLabel: 'Reverse',
         danger: false,
         onConfirm: () => {
             state.config.sectionMoves = secMoves().filter((m) => m.incomeId !== incomeId);
             state.config.sectionSkipped = (state.config.sectionSkipped || []).filter((id) => id !== incomeId);
-            if (!commitState('Undoing it')) return;
-            showToast('Division undone', 'success');
+            if (!commitState('Reversing it')) return;
+            showToast('Allocation reversed', 'success');
             if (openSheets.includes('modal-section-view')) renderSectionView();
             renderActive();
         }
@@ -6635,7 +6635,7 @@ const undoDivide = (incomeId) => {
 let secMoveFrom = null;
 const openSecMove = (fromId, mode = 'move') => {
     secMoveFrom = fromId || null;
-    $('sec-move-title').textContent = mode === 'add' ? 'Put money in a section' : 'Move money';
+    $('sec-move-title').textContent = mode === 'add' ? 'Add funds' : 'Transfer between funds';
     $('sec-move-mode').value = mode;
     const opts = secList().map((x) => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.name)}</option>`).join('');
     $('sec-move-from').innerHTML = opts;
@@ -6644,7 +6644,7 @@ const openSecMove = (fromId, mode = 'move') => {
     if (fromId) { if (mode === 'add') $('sec-move-to').value = fromId; else $('sec-move-from').value = fromId; }
     if (mode !== 'add' && $('sec-move-to').value === $('sec-move-from').value && secList().length > 1) $('sec-move-to').selectedIndex = (($('sec-move-from').selectedIndex) + 1) % secList().length;
     $('sec-move-amount').value = '';
-    $('sec-move-hint').textContent = mode === 'add' ? 'For money already set aside (a starting balance) or extra money you add by hand.' : '';
+    $('sec-move-hint').textContent = mode === 'add' ? 'For an opening balance (money already set aside) or extra money you add yourself.' : 'Reallocates money from one fund to another. Your accounts don’t change.';
     openOrSwap('modal-sec-move');
 };
 const submitSecMove = () => {
@@ -6653,11 +6653,11 @@ const submitSecMove = () => {
     const to = $('sec-move-to').value;
     const from = mode === 'add' ? null : $('sec-move-from').value;
     if (!(amount > 0)) return fieldError($('sec-move-amount'), 'Enter an amount greater than zero.');
-    if (from && from === to) return fieldError($('sec-move-to'), 'Pick a different section.');
+    if (from && from === to) return fieldError($('sec-move-to'), 'Pick a different fund.');
     state.config.sectionMoves = [...secMoves(), { id: generateId(), date: todayISO(), kind: mode === 'add' ? 'add' : 'move', incomeId: null, from, to, amount: round2(amount), currency: dcur() }];
-    if (!commitState('The move')) return false;
+    if (!commitState('The transfer')) return false;
     closeSheet('modal-sec-move');
-    showToast(mode === 'add' ? `${formatCurrency(amount, dcur())} put in ${secById(to).name}` : `${formatCurrency(amount, dcur())} moved from ${secById(from).name} to ${secById(to).name}`, 'success');
+    showToast(mode === 'add' ? `${formatCurrency(amount, dcur())} added to ${secById(to).name}` : `${formatCurrency(amount, dcur())} transferred from ${secById(from).name} to ${secById(to).name}`, 'success');
     if (openSheets.includes('modal-section-view')) renderSectionView();
     renderActive();
     return true;
@@ -6688,7 +6688,7 @@ const secStackBar = (values) => {
     const pos = values.filter(([, v]) => v > 0);
     const total = pos.reduce((a, [, v]) => a + v, 0);
     if (!total) return '<div class="sec-stack is-empty"></div>';
-    return `<div class="sec-stack" role="img" aria-label="How your money is spread over your sections">${pos.map(([x, v]) => `<span style="--cat:var(--pal-${x.color})" data-grow="${((v / total) * 100).toFixed(2)}" title="${escapeHtml(x.name)}"></span>`).join('')}</div>`;
+    return `<div class="sec-stack" role="img" aria-label="How your money is spread over your funds">${pos.map(([x, v]) => `<span style="--cat:var(--pal-${x.color})" data-grow="${((v / total) * 100).toFixed(2)}" title="${escapeHtml(x.name)}"></span>`).join('')}</div>`;
 };
 
 /* ---- Setting sections up and editing them ---- */
@@ -6701,8 +6701,8 @@ const setupSections = (template) => {
     if (!list) { openSectionEditor(); return; }
     state.config.sections = list.map(([name, mode, value, color, ic]) => ({ id: generateId(), name, mode, value, color, icon: ic, currency: dcur() }));
     if (!state.config.sectionSince) state.config.sectionSince = toISODate(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
-    if (!commitState('Your sections')) return;
-    showToast('Sections ready. Change names and shares any time.', 'success');
+    if (!commitState('Your funds')) return;
+    showToast('Funds created. Change names and allocations any time.', 'success');
     renderActive();
 };
 let secEditMode = 'percent';
@@ -6712,7 +6712,7 @@ const SECTION_ICONS = ['i-wallet', 'c-Rent', 'c-Food', 'c-Utilities', 'c-Travel'
 const openSectionEditor = (id) => {
     const x = id ? secById(id) : null;
     $('section-id').value = x ? x.id : '';
-    $('section-edit-title').textContent = x ? `Edit ${x.name}` : 'New section';
+    $('section-edit-title').textContent = x ? `Edit ${x.name}` : 'New fund';
     $('section-name').value = x ? x.name : '';
     secEditMode = x ? x.mode : (secList().some((o) => o.mode === 'rest') ? 'percent' : 'rest');
     secEditColor = x ? x.color : PALETTE[secList().length % PALETTE.length];
@@ -6725,18 +6725,18 @@ const openSectionEditor = (id) => {
 const renderSectionEditor = () => {
     setPressed('[data-sec-mode]', (b) => b.dataset.secMode === secEditMode);
     $('section-value-field').hidden = secEditMode === 'rest';
-    $('section-value-label').textContent = secEditMode === 'percent' ? 'Share of each income (%)' : `Amount from each income (${dcur()})`;
+    $('section-value-label').textContent = secEditMode === 'percent' ? 'Percentage of each income (%)' : `Fixed amount from each income (${dcur()})`;
     $('section-value').placeholder = secEditMode === 'percent' ? 'e.g. 30' : '0.00';
     const restNow = secList().find((o) => o.mode === 'rest' && o.id !== $('section-id').value);
     $('section-mode-hint').textContent = secEditMode === 'rest'
-        ? (restNow ? `This takes over "what's left" from ${restNow.name} (it becomes 0%).` : 'Gets whatever is left after the other sections.')
-        : secEditMode === 'percent' ? 'Taken after fixed amounts and after filling sections that went below zero.' : 'Taken first, before the percentages.';
+        ? (restNow ? `This becomes the remainder fund instead of ${restNow.name} (it becomes 0%).` : 'Receives whatever is left after the other funds are allocated.')
+        : secEditMode === 'percent' ? 'Allocated after fixed amounts and after covering any fund in deficit.' : 'Allocated first, before the percentages.';
     $('section-colors').innerHTML = PALETTE.map((p) => `<button type="button" class="swatch" data-sec-color="${p}" style="--cat:var(--pal-${p})" aria-label="${p}" aria-pressed="${p === secEditColor}"></button>`).join('');
     $('section-icons').innerHTML = SECTION_ICONS.map((i) => `<button type="button" class="icon-choice" data-sec-icon="${i}" style="--cat:var(--pal-${secEditColor})" aria-label="${i.replace(/^[cxi]-/, '')}" aria-pressed="${i === secEditIcon}">${icon(i)}</button>`).join('');
     updateSectionPreview();
 };
 const updateSectionPreview = () => {
-    const name = $('section-name').value.trim() || 'Your section';
+    const name = $('section-name').value.trim() || 'Your fund';
     const v = toNumber($('section-value').value, 0);
     $('section-preview').innerHTML = `${secBadge({ color: secEditColor, icon: secEditIcon })}<span><span>${escapeHtml(name)}</span><span>${escapeHtml(secPlanLabel({ mode: secEditMode, value: v, currency: dcur() }))}</span></span>`;
 };
@@ -6744,12 +6744,12 @@ const submitSection = () => {
     const id = $('section-id').value;
     const name = $('section-name').value.trim();
     const value = toNumber($('section-value').value, NaN);
-    if (!name) return fieldError($('section-name'), 'Give the section a name, like "Food".');
+    if (!name) return fieldError($('section-name'), 'Give the fund a name, like "Food".');
     if (secList().some((o) => o.name.toLowerCase() === name.toLowerCase() && o.id !== id)) return fieldError($('section-name'), `You already have "${name}".`);
-    if (secEditMode !== 'rest' && !(value > 0)) return fieldError($('section-value'), secEditMode === 'percent' ? 'Enter a share like 30.' : 'Enter an amount.');
+    if (secEditMode !== 'rest' && !(value > 0)) return fieldError($('section-value'), secEditMode === 'percent' ? 'Enter a percentage like 30.' : 'Enter an amount.');
     if (secEditMode === 'percent') {
         const others = secList().filter((o) => o.mode === 'percent' && o.id !== id).reduce((s, o) => s + o.value, 0);
-        if (others + value > 100) return fieldError($('section-value'), `Your other sections already take ${others}%. This can be at most ${Math.max(0, 100 - others)}%.`);
+        if (others + value > 100) return fieldError($('section-value'), `Your other funds already take ${others}%. This can be at most ${Math.max(0, 100 - others)}%.`);
     }
     if (secEditMode === 'rest') state.config.sections = secList().map((o) => (o.mode === 'rest' && o.id !== id ? { ...o, mode: 'percent', value: 0 } : o));
     const data = { name, mode: secEditMode, value: secEditMode === 'rest' ? 0 : value, color: secEditColor, icon: secEditIcon, currency: dcur() };
@@ -6758,9 +6758,9 @@ const submitSection = () => {
         state.config.sections = [...secList(), { id: generateId(), ...data }];
         if (!state.config.sectionSince) state.config.sectionSince = toISODate(new Date(new Date().getFullYear(), new Date().getMonth(), 1));
     }
-    if (!commitState('The section')) return false;
+    if (!commitState('The fund')) return false;
     closeSheet('modal-section');
-    showToast(id ? 'Section saved' : `Section "${name}" added`, 'success');
+    showToast(id ? 'Fund saved' : `Fund "${name}" added`, 'success');
     renderActive();
     return true;
 };
@@ -6772,22 +6772,22 @@ const deleteSection = () => {
     const others = secList().filter((o) => o.id !== id);
     const bal = sectionBalances()[id] || 0;
     const used = state.transactions.some((t) => t.sectionId === id) || secMoves().some((m) => m.to === id || m.from === id);
-    if (used && !others.length) { showToast('Add another section first: its money and history need somewhere to go.', 'info'); return; }
+    if (used && !others.length) { showToast('Add another fund first: its balance and history need somewhere to go.', 'info'); return; }
     const target = others.find((o) => o.mode === 'rest') || others[0];
     showConfirm({
         title: `Delete "${x.name}"?`,
-        message: used ? `Its balance (${formatCurrency(bal, dcur())}), history and expenses move to "${target.name}". Nothing is lost.` : 'It has no money or history yet.',
+        message: used ? `Its balance (${formatCurrency(bal, dcur())}), history and expenses are transferred to "${target.name}". Nothing is lost.` : 'It has no balance or history yet.',
         onConfirm: () => {
             state.config.sectionMoves = secMoves().map((m) => ({ ...m, to: m.to === id ? target.id : m.to, from: m.from === id ? target.id : m.from })).filter((m) => !(m.from && m.from === m.to));
             state.transactions.forEach((t) => { if (t.sectionId === id) { t.sectionId = target.id; queueSync('transaction', t.id, 'upsert', false); } });
             Object.keys(state.config.sectionCatMap || {}).forEach((k) => { if (state.config.sectionCatMap[k] === id) state.config.sectionCatMap[k] = target.id; });
             state.config.sections = others.map((o) => (x.mode === 'rest' && o.id === target.id ? { ...o, mode: 'rest', value: 0 } : o));
             if (!state.config.sections.length) { state.config.sectionMoves = []; state.config.sectionSince = null; }
-            if (!commitState('Deleting the section')) return;
+            if (!commitState('Deleting the fund')) return;
             flushSync();
             closeSheet('modal-section');
             if (openSheets.includes('modal-section-view')) closeSheet('modal-section-view');
-            showToast('Section deleted', 'success');
+            showToast('Fund deleted', 'success');
             renderActive();
         }
     });
@@ -6809,22 +6809,22 @@ const renderSectionView = () => {
         if (m.to !== x.id && m.from !== x.id) return;
         const inc = m.incomeId && state.transactions.find((t) => t.id === m.incomeId);
         const other = secById(m.to === x.id ? m.from : m.to);
-        const label = m.kind === 'fill' ? `Filled back to zero${inc ? ` · ${inc.desc}` : ''}` : m.kind === 'add' ? 'Money put in'
-            : m.kind === 'move' ? (m.to === x.id ? `Moved in from ${other ? other.name : 'a section'}` : `Moved to ${other ? other.name : 'a section'}`)
-                : `From ${inc ? inc.desc : 'income'}`;
+        const label = m.kind === 'fill' ? `Deficit covered${inc ? ` · ${inc.desc}` : ''}` : m.kind === 'add' ? 'Funds added'
+            : m.kind === 'move' ? (m.to === x.id ? `Transfer from ${other ? other.name : 'a fund'}` : `Transfer to ${other ? other.name : 'a fund'}`)
+                : `Allocated from ${inc ? inc.desc : 'income'}`;
         items.push({ date: m.date, label, v: (m.to === x.id ? 1 : -1) * toDisplay(m.amount, m.currency), incomeId: m.kind === 'income' || m.kind === 'fill' ? m.incomeId : null, ic: m.kind === 'move' ? 'i-swap' : m.kind === 'fill' ? 'i-check' : m.kind === 'add' ? 'i-plus' : 'i-arrow-down' });
     });
     state.transactions.forEach((t) => { if (t.type === 'expense' && t.sectionId === x.id && !isUpcoming(t)) items.push({ date: t.date, label: t.desc, v: -toDisplay(t.amount, t.currency), tx: t.id, badge: entryBadge(t.desc, t.category, 'expense') }); });
     items.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
     const seenIncome = new Set();
     $('section-view-body').innerHTML = `
-        <div class="sec-hero" style="--cat:var(--pal-${x.color})">${secBadge(x, ' is-big')}<span class="sec-hero-amount amount ${bal < 0 ? 'text-expense' : ''}" data-countup="${bal}">${escapeHtml(formatCurrency(bal, cur))}</span><span>${bal < 0 ? 'below zero: the next income fills it first' : 'in this section now'} · ${escapeHtml(secPlanLabel(x))}</span></div>
-        <div class="sec-month"><span>This month in <strong class="text-income">${escapeHtml(formatCurrency(mo.in, cur))}</strong></span><span>spent <strong class="text-expense">${escapeHtml(formatCurrency(mo.spent, cur))}</strong></span></div>
-        <div class="section-head"><h2>History</h2></div>
+        <div class="sec-hero" style="--cat:var(--pal-${x.color})">${secBadge(x, ' is-big')}<span class="sec-hero-amount amount ${bal < 0 ? 'text-expense' : ''}" data-countup="${bal}">${escapeHtml(formatCurrency(bal, cur))}</span><span>${bal < 0 ? 'deficit: covered first from the next income' : 'available balance'} · ${escapeHtml(secPlanLabel(x))}</span></div>
+        <div class="sec-month"><span>Allocated this month <strong class="text-income">${escapeHtml(formatCurrency(mo.in, cur))}</strong></span><span>Spent <strong class="text-expense">${escapeHtml(formatCurrency(mo.spent, cur))}</strong></span></div>
+        <div class="section-head"><h2>Transactions</h2></div>
         ${items.length ? `<ul class="sec-history">${items.slice(0, 80).map((i) => {
-        const undo = i.incomeId && !seenIncome.has(i.incomeId) ? (seenIncome.add(i.incomeId), `<button type="button" class="link-btn faint" data-sec-undo="${escapeHtml(i.incomeId)}">Undo</button>`) : '';
+        const undo = i.incomeId && !seenIncome.has(i.incomeId) ? (seenIncome.add(i.incomeId), `<button type="button" class="link-btn faint" data-sec-undo="${escapeHtml(i.incomeId)}">Reverse</button>`) : '';
         return `<li${i.tx ? ` data-edit-tx="${escapeHtml(i.tx)}" role="button" tabindex="0"` : ''}>${i.badge || `<span class="cat-badge sec-h-icon" data-in="${i.v >= 0}">${icon(i.ic || 'i-wallet')}</span>`}<span class="sec-h-main"><span>${escapeHtml(i.label)}</span><span>${escapeHtml(shortDate(i.date))}</span></span>${undo}<span class="amount ${i.v < 0 ? 'text-expense' : 'text-income'}">${i.v > 0 ? '+' : '−'}${escapeHtml(formatCurrency(Math.abs(i.v), cur))}</span></li>`;
-    }).join('')}</ul>` : '<p class="field-hint">Nothing yet. Divide an income, or put money in by hand.</p>'}`;
+    }).join('')}</ul>` : '<p class="field-hint">No transactions yet. Allocate an income, or add funds yourself.</p>'}`;
 };
 
 /* ---- Expenses with no section: give them one ---- */
@@ -6834,11 +6834,11 @@ const unassignedExpenses = () => {
 };
 const openUnassigned = () => {
     const list = unassignedExpenses();
-    const opts = (sel) => `<option value="">No section</option>${secList().map((x) => `<option value="${escapeHtml(x.id)}" ${sel === x.id ? 'selected' : ''}>${escapeHtml(x.name)}</option>`).join('')}`;
+    const opts = (sel) => `<option value="">Unallocated</option>${secList().map((x) => `<option value="${escapeHtml(x.id)}" ${sel === x.id ? 'selected' : ''}>${escapeHtml(x.name)}</option>`).join('')}`;
     $('sec-unassigned-body').innerHTML = list.length ? list.slice(0, 100).map((t) => `
         <div class="sec-line">${entryBadge(t.desc, t.category, 'expense')}<span class="sec-line-name"><span>${escapeHtml(t.desc)}</span><span>${escapeHtml(shortDate(t.date))} · ${escapeHtml(formatCurrency(t.amount, t.currency))}</span></span>
-            <div class="select sec-carry"><select class="input" data-assign-tx="${escapeHtml(t.id)}" aria-label="Section for ${escapeHtml(t.desc)}">${opts(sectionForCategory(t.category))}</select></div></div>`).join('')
-        : '<p class="field-hint">Every expense is in a section.</p>';
+            <div class="select sec-carry"><select class="input" data-assign-tx="${escapeHtml(t.id)}" aria-label="Fund for ${escapeHtml(t.desc)}">${opts(sectionForCategory(t.category))}</select></div></div>`).join('')
+        : '<p class="field-hint">Every expense is assigned to a fund.</p>';
     openOrSwap('modal-sec-unassigned');
 };
 const saveUnassigned = () => {
@@ -6852,10 +6852,10 @@ const saveUnassigned = () => {
         queueSync('transaction', t.id, 'upsert', false);
         n++;
     });
-    if (!commitState('The sections')) return;
+    if (!commitState('The funds')) return;
     flushSync();
     closeSheet('modal-sec-unassigned');
-    showToast(n ? `${plural(n, 'expense')} put in sections` : 'Nothing changed', n ? 'success' : 'info');
+    showToast(n ? `${plural(n, 'expense')} assigned to funds` : 'Nothing changed', n ? 'success' : 'info');
     renderActive();
 };
 
@@ -6868,12 +6868,12 @@ const planSectionsHtml = () => {
             <span class="sec-template-text"><strong>${title}</strong><span>${desc}</span></span>${icon('i-chevron', 'ic chev')}</button>`;
         return `<section class="card sec-intro">
             <span class="sec-intro-art">${icon('i-wallet')}</span>
-            <h2 class="card-title">Give every rupee a job</h2>
-            <p class="card-sub">Split each salary into sections like Bills, Food and Savings. Spend from a section and only its balance goes down. Money left at the end of the month stays (or moves where you want), and a section that went below zero is filled first next time.</p>
+            <h2 class="card-title">Allocate your income into funds</h2>
+            <p class="card-sub">Allocate each salary into funds such as Bills, Food and Savings. Every expense is paid from a fund and reduces only that fund's balance. Unspent balances carry forward (or are transferred where you choose), and a fund in deficit is covered first from the next income.</p>
             <div class="sec-templates">
-                ${tpl('503020', 'Needs · Wants · Savings', '50% for needs, 30% for wants, the rest saved')}
-                ${tpl('basic', 'Bills · Food · Transport · Fun · Savings', 'Five everyday sections')}
-                <button type="button" class="sec-template is-own" data-sec-template="own"><span class="sec-template-icons"><span class="cat-badge is-mini" style="--cat:var(--primary)">${icon('i-plus')}</span></span><span class="sec-template-text"><strong>Make my own</strong><span>Name, icon, colour and share for each</span></span>${icon('i-chevron', 'ic chev')}</button>
+                ${tpl('503020', 'Needs · Wants · Savings', '50/30/20 rule: needs, wants, and the remainder saved')}
+                ${tpl('basic', 'Bills · Food · Transport · Fun · Savings', 'Five everyday funds')}
+                <button type="button" class="sec-template is-own" data-sec-template="own"><span class="sec-template-icons"><span class="cat-badge is-mini" style="--cat:var(--primary)">${icon('i-plus')}</span></span><span class="sec-template-text"><strong>Create my own</strong><span>Name, icon, colour and allocation for each fund</span></span>${icon('i-chevron', 'ic chev')}</button>
             </div></section>`;
     }
     const bal = sectionBalances();
@@ -6886,32 +6886,32 @@ const planSectionsHtml = () => {
     return `
         ${waiting.map((t) => `<section class="card sec-divide-card">
             <span class="sec-divide-icon">${icon('i-arrow-down')}</span>
-            <span class="sec-divide-text"><strong>${escapeHtml(formatCurrency(t.amount, t.currency))} ${escapeHtml(t.desc)}</strong><span>Arrived ${escapeHtml(shortDate(t.date))} · not divided yet</span></span>
-            <span class="sec-divide-actions"><button type="button" class="btn btn-primary btn-sm" data-sec-divide="${escapeHtml(t.id)}">Divide now</button><button type="button" class="btn btn-secondary btn-sm" data-sec-skip="${escapeHtml(t.id)}">Not this one</button></span></section>`).join('')}
+            <span class="sec-divide-text"><strong>${escapeHtml(formatCurrency(t.amount, t.currency))} ${escapeHtml(t.desc)}</strong><span>Received ${escapeHtml(shortDate(t.date))} · unallocated</span></span>
+            <span class="sec-divide-actions"><button type="button" class="btn btn-primary btn-sm" data-sec-divide="${escapeHtml(t.id)}">Allocate now</button><button type="button" class="btn btn-secondary btn-sm" data-sec-skip="${escapeHtml(t.id)}">Don't allocate</button></span></section>`).join('')}
         <section class="card sec-summary">
-            <span class="sec-summary-label">In your sections</span>
+            <span class="sec-summary-label">Total in funds</span>
             <strong class="sec-summary-total amount" data-countup="${total}">${escapeHtml(formatCurrency(total, cur))}</strong>
             ${secStackBar(secList().map((x) => [x, bal[x.id] || 0]))}
             <div class="sec-summary-actions">
-                <button type="button" class="chip-btn" data-action="sec-move">${icon('i-swap', 'ic ic-sm')} Move money</button>
-                <button type="button" class="chip-btn" data-action="sec-add-money">${icon('i-plus', 'ic ic-sm')} Put money in</button>
-                <button type="button" class="chip-btn" data-action="sec-new">${icon('i-plus', 'ic ic-sm')} New section</button>
+                <button type="button" class="chip-btn" data-action="sec-move">${icon('i-swap', 'ic ic-sm')} Transfer</button>
+                <button type="button" class="chip-btn" data-action="sec-add-money">${icon('i-plus', 'ic ic-sm')} Add funds</button>
+                <button type="button" class="chip-btn" data-action="sec-new">${icon('i-plus', 'ic ic-sm')} New fund</button>
             </div>
-            ${pct > 100 ? '<p class="field-hint text-expense">Your shares add up to more than 100%.</p>' : ''}
+            ${pct > 100 ? '<p class="field-hint text-expense">Your percentages add up to more than 100%.</p>' : ''}
         </section>
         <div class="sec-grid">${secList().map((x, n) => {
         const b = bal[x.id] || 0;
         const m = mo[x.id];
         const used = m.in > 0 ? Math.min(100, (m.spent / m.in) * 100) : (m.spent > 0 ? 100 : 0);
         return `<button type="button" class="sec-tile${b < 0 ? ' is-below' : ''}" data-sec-view="${escapeHtml(x.id)}" style="--cat:var(--pal-${x.color});--n:${n}">
-                <span class="sec-tile-top">${secBadge(x)}${b < 0 ? '<span class="sec-pill">Below zero</span>' : ''}</span>
+                <span class="sec-tile-top">${secBadge(x)}${b < 0 ? '<span class="sec-pill">Deficit</span>' : ''}</span>
                 <span class="sec-tile-name">${escapeHtml(x.name)}</span>
                 <strong class="sec-tile-amount amount" data-countup="${b}">${escapeHtml(formatCurrency(b, cur))}</strong>
                 <span class="sec-tile-bar"><span data-grow="${used.toFixed(1)}"></span></span>
                 <span class="sec-tile-sub">${m.in || m.spent ? `${escapeHtml(formatCompact(m.spent, cur).replace(/^[^\d-]+/, ''))} of ${escapeHtml(formatCompact(m.in, cur).replace(/^[^\d-]+/, ''))} spent` : escapeHtml(secPlanLabel(x))}</span>
             </button>`;
     }).join('')}</div>
-        ${loose.length ? `<button type="button" class="card sec-loose" data-action="sec-unassigned"><span class="sec-loose-icon">${icon('i-alert')}</span><span><strong>${plural(loose.length, 'expense')} without a section</strong><span>${escapeHtml(formatCurrency(sumDisplay(loose), cur))} · tap to sort them</span></span>${icon('i-chevron', 'ic chev')}</button>` : ''}`;
+        ${loose.length ? `<button type="button" class="card sec-loose" data-action="sec-unassigned"><span class="sec-loose-icon">${icon('i-alert')}</span><span><strong>${plural(loose.length, 'unallocated expense')}</strong><span>${escapeHtml(formatCurrency(sumDisplay(loose), cur))} · tap to assign them to funds</span></span>${icon('i-chevron', 'ic chev')}</button>` : ''}`;
 };
 const renderSectionsHome = () => {
     const el = $('dash-sections');
@@ -6921,8 +6921,8 @@ const renderSectionsHome = () => {
     const cur = dcur();
     const waiting = undividedIncomes();
     el.innerHTML = `<section class="card sec-home">
-        <div class="card-head"><h2 class="card-title">Sections</h2><button type="button" class="link-btn" data-goto-plan="sections">See all</button></div>
-        ${waiting.length ? `<button type="button" class="btn btn-primary btn-block sec-home-divide" data-sec-divide="${escapeHtml(waiting[0].id)}">Divide ${escapeHtml(waiting[0].desc)} · ${escapeHtml(formatCurrency(waiting[0].amount, waiting[0].currency))}</button>` : ''}
+        <div class="card-head"><h2 class="card-title">Funds</h2><button type="button" class="link-btn" data-goto-plan="sections">See all</button></div>
+        ${waiting.length ? `<button type="button" class="btn btn-primary btn-block sec-home-divide" data-sec-divide="${escapeHtml(waiting[0].id)}">Allocate ${escapeHtml(waiting[0].desc)} · ${escapeHtml(formatCurrency(waiting[0].amount, waiting[0].currency))}</button>` : ''}
         ${secStackBar(secList().map((x) => [x, bal[x.id] || 0]))}
         <div class="sec-chips">${secList().map((x) => `<button type="button" class="sec-chip${bal[x.id] < 0 ? ' is-below' : ''}" data-sec-view="${escapeHtml(x.id)}">${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span class="amount ${bal[x.id] < 0 ? 'text-expense' : ''}">${escapeHtml(formatCompact(bal[x.id] || 0, cur))}</span></span></button>`).join('')}</div>
     </section>`;
@@ -6940,7 +6940,7 @@ const renderSectionsInsights = (list) => {
     const total = Object.values(by).reduce((s, v) => s + v, 0) + none;
     const rows = secList().map((x) => [x, by[x.id] || 0]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
     $('section-breakdown').innerHTML = rows.map(([x, v]) => `<li>${secBadge(x, ' is-mini')}<span class="bd-name">${escapeHtml(x.name)}</span><span class="bd-pct">${total ? Math.round((v / total) * 100) : 0}%</span><span class="amount">${escapeHtml(formatCurrency(v, cur))}</span></li>`).join('')
-        + (none > 0 ? `<li><span class="cat-badge is-mini" style="--cat:var(--text-3)">${icon('i-wallet')}</span><span class="bd-name">No section</span><span class="bd-pct">${total ? Math.round((none / total) * 100) : 0}%</span><span class="amount">${escapeHtml(formatCurrency(none, cur))}</span></li>` : '')
+        + (none > 0 ? `<li><span class="cat-badge is-mini" style="--cat:var(--text-3)">${icon('i-wallet')}</span><span class="bd-name">Unallocated</span><span class="bd-pct">${total ? Math.round((none / total) * 100) : 0}%</span><span class="amount">${escapeHtml(formatCurrency(none, cur))}</span></li>` : '')
         || '<li class="field-hint">No spending in this period.</li>';
 };
 
@@ -6955,7 +6955,7 @@ const renderTxSections = () => {
     const bal = sectionBalances();
     const cur = dcur();
     $('tx-section-picker').innerHTML = secList().map((x) => `<button type="button" class="sec-pick" data-tx-section="${escapeHtml(x.id)}" aria-pressed="${txSectionId === x.id}">${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span class="${bal[x.id] < 0 ? 'text-expense' : ''}">${escapeHtml(formatCompact(bal[x.id] || 0, cur))}</span></span></button>`).join('')
-        + `<button type="button" class="sec-pick is-none" data-tx-section="" aria-pressed="${!txSectionId}"><span><span>No section</span></span></button>`;
+        + `<button type="button" class="sec-pick is-none" data-tx-section="" aria-pressed="${!txSectionId}"><span><span>Unallocated</span></span></button>`;
 };
 const pickTxSection = (id) => { txSectionId = id || null; txSectionTouched = true; renderTxSections(); haptic(); };
 const syncTxSectionToCategory = () => {
