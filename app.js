@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.49.0';
+const APP_VERSION = '4.50.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -868,6 +868,7 @@ function normalizeSectionConfig(cfg) {
         value: Math.max(0, toNumber(x.value, 0)), currency: normCur(x.currency),
         once: x.once === true,
         accountIds: (Array.isArray(x.accountIds) ? x.accountIds : x.accountId ? [x.accountId] : []).map((a) => String(a).slice(0, 64)).filter((a, i, l) => l.indexOf(a) === i).slice(0, 20),
+        ...(x.accountShares && typeof x.accountShares === 'object' ? { accountShares: Object.fromEntries(Object.entries(x.accountShares).map(([k, v]) => [String(k).slice(0, 64), Math.max(0, Math.min(100, round2(toNumber(v, 0))))]).slice(0, 20)) } : {}),
         target: toNumber(x.target, 0) > 0 ? round2(toNumber(x.target, 0)) : 0,
         color: PALETTE.includes(x.color) ? x.color : 'slate', icon: String(x.icon || 'i-wallet').slice(0, 32)
     } : null)).filter(Boolean).slice(0, 30);
@@ -6763,6 +6764,24 @@ const secBadge = (sec, extra = '') => `<span class="cat-badge sec-badge${extra}"
 // of the account it arrived in; an expense can only be paid from the funds of its account.
 // The accounts a fund uses (none = every account). Older funds had one accountId.
 const fundAccs = (x) => (!x ? [] : Array.isArray(x.accountIds) ? x.accountIds : x.accountId ? [x.accountId] : []);
+// How a fund is shared between its accounts, in % (equal when not set).
+const fundShares = (x) => {
+    const ids = fundAccs(x);
+    if (ids.length < 2) return {};
+    const set = x.accountShares || {};
+    const given = ids.every((id) => typeof set[id] === 'number') && Math.abs(ids.reduce((a, id) => a + set[id], 0) - 100) < 0.6;
+    if (given) return Object.fromEntries(ids.map((id) => [id, set[id]]));
+    const each = Math.floor(10000 / ids.length) / 100;
+    return Object.fromEntries(ids.map((id, i) => [id, i === 0 ? round2(100 - each * (ids.length - 1)) : each]));
+};
+// Splits an amount by the shares; the first account takes the rounding.
+const splitByShares = (x, amount) => {
+    const sh = fundShares(x);
+    const ids = Object.keys(sh);
+    const parts = ids.map((id) => round2((amount * sh[id]) / 100));
+    if (ids.length) parts[0] = round2(parts[0] + amount - parts.reduce((a, v) => a + v, 0));
+    return Object.fromEntries(ids.map((id, i) => [id, parts[i]]));
+};
 const fundsFor = (accountId) => secList().filter((x) => !fundAccs(x).length || !accountId || fundAccs(x).includes(accountId));
 // How much of each fund sits in each account: moves carry their account; spending comes out of its account.
 // '' = money not tied to one account (older entries of funds that use every account).
@@ -7068,7 +7087,9 @@ const renderSecSplit = () => {
     if (accs.length < 2) return;
     const por = fundPortions()[fund.id] || {};
     const cur = dcur();
-    $('sec-move-split').innerHTML = `<span class="field-label">How much from each account</span>${accs.map((a) => {
+    const sh = fundShares(fund);
+    $('sec-move-split').innerHTML = `<label class="field-label" for="sec-split-all">Total amount</label><input type="text" id="sec-split-all" class="input money-input" inputmode="decimal" placeholder="0.00" autocomplete="off">
+        <span class="field-label">From each account <span class="split-shares-note">(split ${accs.map((a) => `${sh[a.id]}%`).join(' / ')}, change any)</span></span>${accs.map((a) => {
         const avail = mode === 'add' ? accountFreeMoney(a.id) : Math.max(0, por[a.id] || 0);
         return `<div class="split-row">${accountBadge(a, 'is-row', 'row-icon tint')}<span class="split-name"><span>${escapeHtml(a.name)}</span><span>${mode === 'add' ? 'free' : 'in this fund'}: ${escapeHtml(formatCurrency(avail, cur))}</span></span>
             <input type="text" inputmode="decimal" class="input split-amount" data-split-acc="${escapeHtml(a.id)}" placeholder="0" aria-label="Amount from ${escapeHtml(a.name)}"></div>`;
@@ -7154,7 +7175,7 @@ const openFundActions = (id) => {
 const initFundHold = () => {
     const cancel = () => { if (fundHold) { clearTimeout(fundHold.timer); fundHold = null; } };
     document.addEventListener('pointerdown', (e) => {
-        const tile = e.target.closest('.sec-tile[data-sec-view], .sec-chip[data-sec-view]');
+        const tile = e.target.closest('.sec-tile[data-sec-view], .sec-open[data-sec-view], .sec-chip[data-sec-view]');
         fundHeld = false;
         if (!tile) return;
         fundHold = { x: e.clientX, y: e.clientY, timer: setTimeout(() => {
@@ -7168,8 +7189,8 @@ const initFundHold = () => {
     });
     document.addEventListener('pointermove', (e) => { if (fundHold && Math.hypot(e.clientX - fundHold.x, e.clientY - fundHold.y) > 8) cancel(); });
     ['pointerup', 'pointercancel'].forEach((ev) => document.addEventListener(ev, () => { cancel(); if (fundHeld) setTimeout(() => { fundHeld = false; }, 80); }));
-    document.addEventListener('click', (e) => { if (fundHeld && e.target.closest('.sec-tile, .sec-chip')) { e.preventDefault(); e.stopPropagation(); fundHeld = false; } }, true);
-    document.addEventListener('contextmenu', (e) => { if (e.target.closest('.sec-tile, .sec-chip')) e.preventDefault(); });
+    document.addEventListener('click', (e) => { if (fundHeld && e.target.closest('.sec-tile, .sec-open, .sec-chip')) { e.preventDefault(); e.stopPropagation(); fundHeld = false; } }, true);
+    document.addEventListener('contextmenu', (e) => { if (e.target.closest('.sec-tile, .sec-open, .sec-chip')) e.preventDefault(); });
 };
 
 /* ---- Motion: amounts count up, bars grow (nothing moves when the phone asks for less motion) ---- */
@@ -7233,6 +7254,8 @@ const openSectionEditor = (id) => {
     const view = viewAccountObj();
     const chosen = x ? fundAccs(x) : (view ? [view.id] : []);
     $('section-accounts').innerHTML = state.accounts.map((a) => `<label class="acc-check"><input type="checkbox" value="${escapeHtml(a.id)}" ${chosen.includes(a.id) ? 'checked' : ''}>${accountBadge(a, 'is-row', 'row-icon tint')}<span>${escapeHtml(a.name)}</span></label>`).join('');
+    secEditShares = x ? { ...fundShares(x) } : {};
+    renderSectionShares();
     $('btn-delete-section').hidden = !x;
     renderSectionEditor();
     openOrSwap('modal-section');
@@ -7258,12 +7281,45 @@ const updateSectionPreview = () => {
     const v = toNumber($('section-value').value, 0);
     $('section-preview').innerHTML = `${secBadge({ color: secEditColor, icon: secEditIcon })}<span><span>${escapeHtml(name)}</span><span>${escapeHtml(secPlanLabelBase({ mode: secEditMode, value: v, currency: dcur(), once: secEditOnce }))}</span></span>`;
 };
+let secEditShares = {};
+// With 2+ accounts ticked: how much of this fund comes from each (%), with a live total.
+const renderSectionShares = () => {
+    const ids = [...document.querySelectorAll('#section-accounts input:checked')].map((i) => i.value);
+    const box = $('section-shares');
+    box.hidden = ids.length < 2;
+    if (ids.length < 2) { box.innerHTML = ''; return; }
+    const known = ids.every((id) => typeof secEditShares[id] === 'number') && Math.abs(ids.reduce((a, id) => a + secEditShares[id], 0) - 100) < 0.6;
+    const vals = known ? secEditShares : fundShares({ accountIds: ids });
+    box.innerHTML = `<span class="field-label">How this fund is shared</span>${ids.map((id) => {
+        const a = state.accounts.find((y) => y.id === id);
+        return `<div class="split-row">${accountBadge(a, 'is-row', 'row-icon tint')}<span class="split-name"><span>${escapeHtml(a.name)}</span><span data-share-rs="${escapeHtml(id)}"></span></span><span class="share-input"><input type="text" inputmode="decimal" class="input" data-share-acc="${escapeHtml(id)}" value="${vals[id]}" aria-label="Share from ${escapeHtml(a.name)} in percent"><span>%</span></span></div>`;
+    }).join('')}<div class="split-total"><span>Total</span><strong id="section-share-total"></strong></div><span class="field-hint">When you add money, Vela splits it this way. You can still change each amount.</span>`;
+    updateShareTotal();
+};
+const updateShareTotal = () => {
+    const ins = [...document.querySelectorAll('[data-share-acc]')];
+    ins.forEach((i) => { secEditShares[i.dataset.shareAcc] = round2(Math.max(0, toNumber(i.value, 0))); });
+    const t = round2(ins.reduce((a, i) => a + Math.max(0, toNumber(i.value, 0)), 0));
+    const el = $('section-share-total');
+    if (!el) return;
+    el.textContent = `${t}%`;
+    el.classList.toggle('text-expense', Math.abs(t - 100) >= 0.6);
+    el.classList.toggle('text-income', Math.abs(t - 100) < 0.6);
+    const ex = toNumber($('section-value').value, 0);
+    ins.forEach((i) => {
+        const rs = document.querySelector(`[data-share-rs="${i.dataset.shareAcc}"]`);
+        if (rs) rs.textContent = secEditMode === 'amount' && ex > 0 ? `${formatCompact((ex * Math.max(0, toNumber(i.value, 0))) / 100, dcur())} of ${formatCompact(ex, dcur())}` : `${formatCompact(100 * Math.max(0, toNumber(i.value, 0)), dcur())} of every ${formatCompact(10000, dcur())}`;
+    });
+};
 const submitSection = () => {
     const id = $('section-id').value;
     const name = $('section-name').value.trim();
     const value = toNumber($('section-value').value, NaN);
     if (!name) return fieldError($('section-name'), 'Give the fund a name, like "Food".');
     if (secList().some((o) => o.name.toLowerCase() === name.toLowerCase() && o.id !== id)) return fieldError($('section-name'), `You already have "${name}".`);
+    const shareIns = [...document.querySelectorAll('[data-share-acc]')];
+    const shareSum = round2(shareIns.reduce((a, i) => a + Math.max(0, toNumber(i.value, 0)), 0));
+    if (shareIns.length > 1 && Math.abs(shareSum - 100) >= 0.6) return fieldError(shareIns[0], `The shares add up to ${shareSum}%. Make them 100%.`);
     if (secEditMode !== 'rest' && secEditMode !== 'manual' && !(value > 0)) return fieldError($('section-value'), secEditMode === 'percent' ? 'Enter a percentage like 30.' : 'Enter an amount.');
     if (secEditMode === 'percent') {
         const others = secList().filter((o) => o.mode === 'percent' && o.id !== id).reduce((s, o) => s + o.value, 0);
@@ -7272,6 +7328,7 @@ const submitSection = () => {
     if (secEditMode === 'rest') state.config.sections = secList().map((o) => (o.mode === 'rest' && o.id !== id ? { ...o, mode: 'percent', value: 0 } : o));
     const data = { name, mode: secEditMode, value: secEditMode === 'rest' || secEditMode === 'manual' ? 0 : value, color: secEditColor, icon: secEditIcon, currency: dcur(),
         once: secEditOnce && (secEditMode === 'percent' || secEditMode === 'amount'), accountIds: [...document.querySelectorAll('#section-accounts input:checked')].map((i) => i.value),
+        accountShares: shareIns.length > 1 ? Object.fromEntries(shareIns.map((i) => [i.dataset.shareAcc, round2(Math.max(0, toNumber(i.value, 0)))])) : undefined,
         target: Math.max(0, round2(toNumber($('section-target').value, 0))) };
     if (id) state.config.sections = secList().map((o) => (o.id === id ? { ...o, ...data } : o));
     else {
@@ -7353,7 +7410,7 @@ const renderSectionView = () => {
         if (!rows.length) return '';
         return `<div class="section-head"><h2>Where the money is</h2></div><div class="fund-where">${rows.map(([acc, v]) => {
             const a = state.accounts.find((y) => y.id === acc);
-            return `<div class="split-row">${a ? accountBadge(a, 'is-row', 'row-icon tint') : `<span class="row-icon tint">${icon('i-wallet')}</span>`}<span class="split-name"><span>${escapeHtml(a ? a.name : 'Not tied to one account')}</span></span><strong class="amount ${v < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(v, cur))}</strong></div>`;
+            return `<div class="split-row">${a ? accountBadge(a, 'is-row', 'row-icon tint') : `<span class="row-icon tint">${icon('i-wallet')}</span>`}<span class="split-name"><span>${escapeHtml(a ? a.name : 'Not tied to one account')}</span>${a && fundShares(x)[acc] !== undefined ? `<span>Planned share ${fundShares(x)[acc]}%</span>` : ''}</span><strong class="amount ${v < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(v, cur))}</strong></div>`;
         }).join('')}</div>`;
     })()}
         <div class="sec-month"><span>Allocated this month <strong class="text-income">${escapeHtml(formatCurrency(mo.in, cur))}</strong></span><span>Spent <strong class="text-expense">${escapeHtml(formatCurrency(mo.spent, cur))}</strong></span></div>
@@ -7427,10 +7484,10 @@ const planSectionsHtml = () => {
             <span class="sec-divide-icon">${icon('i-arrow-down')}</span>
             <span class="sec-divide-text"><strong>${escapeHtml(formatCurrency(t.amount, t.currency))} ${escapeHtml(t.desc)}</strong><span>Received ${escapeHtml(shortDate(t.date))} · unallocated</span></span>
             <span class="sec-divide-actions"><button type="button" class="btn btn-primary btn-sm" data-sec-divide="${escapeHtml(t.id)}">Allocate now</button><button type="button" class="btn btn-secondary btn-sm" data-sec-skip="${escapeHtml(t.id)}">Don't allocate</button></span></section>`).join('')}
-        <section class="card sec-summary">
-            <div class="sec-sum-head"><span class="sec-summary-label">Total in funds${viewing ? ` · ${escapeHtml(viewing.name)}` : ''}</span><span class="sec-sum-count">${plural(shown.length, 'fund')}</span></div>
-            <strong class="sec-summary-total amount" data-countup="${total}">${escapeHtml(formatCurrency(total, cur))}</strong>
-            ${secStackBar(shown.map((x) => [x, bal[x.id] || 0]))}
+        <article class="card glow sec-summary" style="--glow:var(--primary)">
+            <div class="card-head" style="margin-bottom:var(--sp-1)"><span class="card-sub">Total in funds${viewing ? ` · ${escapeHtml(viewing.name)}` : ''}</span><button type="button" class="btn btn-primary btn-xs" data-action="sec-new">${icon('i-plus', 'ic ic-sm')} New fund</button></div>
+            <div class="big-number amount" data-countup="${total}">${escapeHtml(formatCurrency(total, cur))}</div>
+            <div style="margin-top:var(--sp-3)">${secStackBar(shown.map((x) => [x, bal[x.id] || 0]))}</div>
             ${total > 0 ? `<div class="sec-legend">${shown.filter((x) => (bal[x.id] || 0) > 0).map((x) => `<span style="--cat:var(--pal-${x.color})"><i></i>${escapeHtml(x.name)} <b>${Math.round(((bal[x.id] || 0) / total) * 100)}%</b></span>`).join('')}</div>` : ''}
             ${(() => {
         // Do the funds hold exactly the money in the accounts?
@@ -7456,30 +7513,41 @@ const planSectionsHtml = () => {
                 ${row(`In ${escapeHtml(viewing.name)}`, inAcc)}${row('In its funds', held)}${row('Not in a fund', free, free < 0 ? 'text-expense' : '')}
                 ${free < -0.004 ? `<p class="field-hint text-expense">Its funds hold ${escapeHtml(formatCurrency(-free, cur))} more than the account has. Take some out, or record the missing income.</p>` : '<p class="field-hint">Funds are part of this account\'s money set aside for a purpose, not extra money.</p>'}</div>`;
     })()}
-            <div class="sec-actions">
-                <button type="button" class="sec-act" data-action="sec-add-money"><span class="sec-act-icon is-in">${icon('i-plus')}</span><span>Add</span></button>
-                <button type="button" class="sec-act" data-action="sec-take-out"><span class="sec-act-icon is-out">${icon('i-arrow-up')}</span><span>Take out</span></button>
-                <button type="button" class="sec-act" data-action="sec-move"><span class="sec-act-icon">${icon('i-swap')}</span><span>Transfer</span></button>
-                <button type="button" class="sec-act" data-action="sec-new"><span class="sec-act-icon">${icon('i-wallet')}</span><span>New fund</span></button>
+            <div class="row-actions" style="margin-top:var(--sp-3)">
+                <button type="button" class="btn btn-primary btn-sm" data-action="sec-add-money">${icon('i-plus', 'ic ic-sm')} Add</button>
+                <button type="button" class="btn btn-secondary btn-sm" data-action="sec-take-out">${icon('i-arrow-up', 'ic ic-sm')} Take out</button>
+                <button type="button" class="btn btn-secondary btn-sm" data-action="sec-move">${icon('i-swap', 'ic ic-sm')} Transfer</button>
             </div>
             ${pct > 100 ? '<p class="field-hint text-expense">Your percentages add up to more than 100%.</p>' : ''}
-        </section>
+        </article>
         ${shown.length ? '' : `<section class="card"><p class="card-sub">No funds for ${escapeHtml(viewing ? viewing.name : 'this account')} yet. Add one, or switch account at the top.</p></section>`}
-        <div class="sec-grid">${shown.map((x, n) => {
+        ${shown.map((x) => {
         const b = bal[x.id] || 0;
         const m = mo[x.id];
         const tgt = x.target ? toDisplay(x.target, x.currency) : 0;
-        const used = tgt ? Math.min(100, Math.max(0, (b / tgt) * 100)) : m.in > 0 ? Math.min(100, (m.spent / m.in) * 100) : (m.spent > 0 ? 100 : 0);
-        return `<button type="button" class="sec-tile${b < 0 ? ' is-below' : ''}" data-sec-view="${escapeHtml(x.id)}" style="--cat:var(--pal-${x.color});--n:${n}">
-                <span class="sec-tile-top">${secBadge(x)}${b < 0 ? '<span class="sec-pill">Deficit</span>' : fundAccs(x).length > 1 ? `<span class="sec-pill is-all">${fundAccs(x).length} accounts</span>` : fundAccs(x).length === 1 && !viewing ? `<span class="sec-pill is-all">${escapeHtml((state.accounts.find((a) => a.id === fundAccs(x)[0]) || {}).name || '')}</span>` : ''}</span>
-                <span class="sec-tile-name">${escapeHtml(x.name)}</span>
-                <span class="sec-tile-rule">${escapeHtml(x.mode === 'amount' ? `${formatCompact(toDisplay(x.value, x.currency), cur)} ${x.once ? 'once' : 'per income'}` : secPlanLabelBase(x))}</span>
-                <strong class="sec-tile-amount amount" data-countup="${b}">${escapeHtml(formatCurrency(b, cur))}</strong>
-                <span class="sec-tile-bar"><span data-grow="${used.toFixed(1)}"></span></span>
-                <span class="sec-tile-sub">${tgt ? `${Math.round(used)}% of ${escapeHtml(formatCompact(tgt, cur).replace(/^[^\d-]+/, ''))} target` : m.in || m.spent ? `Spent ${escapeHtml(formatCompact(m.spent, cur).replace(/^[^\d-]+/, ''))} of ${escapeHtml(formatCompact(m.in, cur).replace(/^[^\d-]+/, ''))}` : 'Nothing spent yet'}</span>
-            </button>`;
-    }).join('')}</div>
-        ${shown.length ? '<p class="field-hint sec-hold-hint">Tap a fund to see its history. Hold it to add, take out, move, edit or delete.</p>' : ''}
+        const p = tgt ? Math.max(0, (b / tgt) * 100) : m.in > 0 ? (m.spent / m.in) * 100 : (m.spent > 0 ? 100 : 0);
+        const accs = fundAccs(x).map((id) => state.accounts.find((a) => a.id === id)).filter(Boolean);
+        const where = accs.length === 1 ? accs[0].name : accs.length > 1 ? `${accs.length} accounts` : '';
+        const rule = x.mode === 'amount' ? `${formatCompact(toDisplay(x.value, x.currency), cur)} ${x.once ? 'once' : 'per income'}` : secPlanLabelBase(x);
+        const hint = b < 0 ? `${icon('i-alert')} ${escapeHtml(formatCurrency(-b, cur))} short. The next income covers it first.`
+            : tgt ? (b >= tgt ? `${icon('i-check')} Target reached` : `${icon('i-target')} ${escapeHtml(formatCurrency(tgt - Math.max(0, b), cur))} to go`)
+                : m.in || m.spent ? `${icon('i-calendar')} This month: ${escapeHtml(formatCompact(m.in, cur))} in · ${escapeHtml(formatCompact(m.spent, cur))} spent`
+                    : `${icon('i-info')} Nothing in or out this month`;
+        return `<article class="card row-card plan-half fund-card${b < 0 ? ' is-below' : ''}">
+            <button type="button" class="sec-open" data-sec-view="${escapeHtml(x.id)}" aria-label="${escapeHtml(x.name)}: ${escapeHtml(formatCurrency(b, cur))}">
+                <span class="row-top">${secBadge(x)}<span class="row-main"><span class="row-title">${escapeHtml(x.name)}</span><span class="row-sub">${escapeHtml([rule, where].filter(Boolean).join(' · '))}</span></span>${b < 0 ? '<span class="goal-pct is-short">Short</span>' : total > 0 ? `<span class="goal-pct">${Math.round((Math.max(0, b) / total) * 100)}%</span>` : ''}</span>
+                <span class="goal-figures"><span class="amount ${b < 0 ? 'text-expense' : ''}" data-countup="${b}">${escapeHtml(formatCurrency(b, cur))}</span><span>${tgt ? `of ${escapeHtml(formatCurrency(tgt, cur))}` : m.in && m.spent ? `${Math.round(Math.min(999, p))}% spent` : ''}</span></span>
+                ${meterHtml(Math.min(100, p), b < 0 ? 'over' : tgt && p >= 100 ? 'done' : !tgt ? budgetState(p) : null, `${x.name} progress`)}
+                <span class="goal-hint">${hint}</span>
+            </button>
+            <div class="row-actions">
+                <button type="button" class="btn btn-primary btn-sm" data-fund-add="${escapeHtml(x.id)}">${icon('i-plus', 'ic ic-sm')} Add money</button>
+                <button type="button" class="btn btn-secondary btn-sm" data-fund-out="${escapeHtml(x.id)}">${icon('i-arrow-up', 'ic ic-sm')} Take out</button>
+                <button type="button" class="btn btn-secondary btn-sm btn-icon-only" data-fund-more="${escapeHtml(x.id)}" aria-label="More for ${escapeHtml(x.name)}">${icon('i-more', 'ic ic-sm')}</button>
+            </div>
+        </article>`;
+    }).join('')}
+        ${shown.length ? '<p class="field-hint sec-hold-hint">Tap a fund to see its history and where its money is.</p>' : ''}
         ${fundIncomeChooserHtml()}
         ${loose.length ? `<button type="button" class="card sec-loose" data-action="sec-unassigned"><span class="sec-loose-icon">${icon('i-alert')}</span><span><strong>${plural(loose.length, 'unallocated expense')}</strong><span>${escapeHtml(formatCurrency(sumDisplay(loose), cur))} · tap to assign them to funds</span></span>${icon('i-chevron', 'ic chev')}</button>` : ''}`;
 };
@@ -9481,6 +9549,9 @@ const initEvents = () => {
             return;
         }
         if (d.secView) { openSectionView(d.secView); return; }
+        if (d.fundAdd) { openSecMove(d.fundAdd, 'add'); return; }
+        if (d.fundOut) { openSecMove(d.fundOut, 'out'); return; }
+        if (d.fundMore) { openFundActions(d.fundMore); return; }
         if (d.secDivide) { openDivide(d.secDivide); return; }
         if (d.secSkip) { skipDivide(d.secSkip); return; }
         if (d.secUndo) { undoDivide(d.secUndo); return; }
@@ -9778,11 +9849,18 @@ const initEvents = () => {
     $('switch-secure-screen').addEventListener('click', toggleSecureScreen);
     initFundHold();
     ['sec-move-from', 'sec-move-to'].forEach((id) => $(id).addEventListener('change', () => { updateSecMoveHint(); renderSecSplit(); }));
-    $('sec-move-split').addEventListener('input', () => {
+    $('sec-move-split').addEventListener('input', (e) => {
+        if (e.target && e.target.id === 'sec-split-all') {
+            const parts = splitByShares(secMoveFund(), round2(Math.max(0, toNumber(e.target.value, 0))));
+            document.querySelectorAll('[data-split-acc]').forEach((i) => { const v = parts[i.dataset.splitAcc]; i.value = v > 0 ? v : ''; });
+        }
         const t = [...document.querySelectorAll('[data-split-acc]')].reduce((a, i) => a + Math.max(0, toNumber(i.value, 0)), 0);
         if ($('sec-split-total')) $('sec-split-total').textContent = formatCurrency(t, dcur());
     });
     ['section-name', 'section-value'].forEach((id) => $(id).addEventListener('input', updateSectionPreview));
+    $('section-accounts').addEventListener('change', renderSectionShares);
+    $('section-shares').addEventListener('input', updateShareTotal);
+    $('section-value').addEventListener('input', updateShareTotal);
     $('modal-divide').addEventListener('input', (e) => {
         const a = e.target.dataset.secAlloc;
         if (a && divideJob) { divideJob.alloc[a] = Math.max(0, toNumber(e.target.value, 0)); updateDivideLeft(); }

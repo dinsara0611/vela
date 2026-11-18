@@ -2444,6 +2444,32 @@ export async function run() {
         return (choices === 'finger,face,both' && finger && face && both && onlyFinger) || `choices ${choices}, fingerprint ${finger}, face ${face}, both ${both}, fingerprint-only phone ${onlyFinger}`;
     });
 
+    await T('Fund shared between two accounts: set 70% / 30% in the editor, total Rs. 10,000 fills 7,000 + 3,000; shares must make 100%', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-sh1', name: 'Share One', kind: 'bank', currency: 'LKR', opening: 20000, createdAt: 0 }, { id: 'acc-sh2', name: 'Share Two', kind: 'bank', currency: 'LKR', opening: 20000, createdAt: 0 });
+        const keep = { sections: st.config.sections, sectionMoves: st.config.sectionMoves };
+        st.config.sections = [{ id: 'shf', name: 'Shared', mode: 'manual', value: 0, currency: 'LKR', color: 'teal', icon: 'i-wallet', accountIds: ['acc-sh1', 'acc-sh2'] }];
+        st.config.sectionMoves = [];
+        g('saveState')();
+        g('openSectionEditor')('shf'); await wait(300);
+        const equal = [...document.querySelectorAll('[data-share-acc]')].map((i) => i.value).join('/') === '50/50';
+        const setShare = (id, v) => { const i = document.querySelector(`[data-share-acc="${id}"]`); i.value = v; i.dispatchEvent(new Event('input', { bubbles: true })); };
+        setShare('acc-sh1', '70'); setShare('acc-sh2', '20');
+        g('submitSection')(); await wait(300);
+        const refused = !g('secById')('shf').accountShares && g('isSheetOpen')('modal-section');
+        setShare('acc-sh2', '30');
+        g('submitSection')(); await wait(400);
+        const saved = JSON.stringify(g('secById')('shf').accountShares) === '{"acc-sh1":70,"acc-sh2":30}';
+        g('openSecMove')('shf', 'add'); await wait(300);
+        const all = $('sec-split-all'); all.value = '10000'; all.dispatchEvent(new Event('input', { bubbles: true }));
+        const filled = [...document.querySelectorAll('[data-split-acc]')].map((i) => i.value).join('/');
+        g('submitSecMove')(); await wait(400);
+        const por = g('fundPortions')().shf;
+        Object.assign(st.config, keep); g('saveState')();
+        return (equal && refused && saved && filled === '7000/3000' && por['acc-sh1'] === 7000 && por['acc-sh2'] === 3000)
+            || `equal ${equal}, 90% refused ${refused}, saved ${saved}, filled ${filled}, portions ${JSON.stringify(por)}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };
