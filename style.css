@@ -4825,3 +4825,6 @@ body.approve-waiting { overflow: hidden; }
 .split-amount { width: 120px; flex: none; text-align: right; }
 .split-total { display: flex; justify-content: space-between; padding-top: 6px; border-top: 1px solid var(--border); font-size: var(--fs-sm); }
 .fund-where { display: grid; gap: 8px; margin-bottom: var(--sp-2); }
+
+.mark-paid-options { margin-bottom: var(--sp-3); }
+.mark-paid-options .row-btn .amount { margin-left: auto; font-weight: 700; white-space: nowrap; }

@@ -1032,12 +1032,12 @@ export async function run() {
         await g('showPaymentsPopup')(); await wait(400);
         const popup = g('isSheetOpen')('modal-payments') && /Boarding fee/.test($('pay-popup-list').innerText);
         // "Not yet" keeps it unpaid.
-        document.querySelector('#pay-popup-list [data-pay="bill:pay-bill"]').click(); await wait(200);
-        $('btn-confirm-cancel').click(); await wait(200);
+        document.querySelector('#pay-popup-list [data-pay="bill:pay-bill"]').click(); await wait(300);
+        document.querySelector('#modal-mark-paid .btn[data-close-sheet]').click(); await wait(350);
         const stillUnpaid = s().recurring.find((b) => b.id === 'pay-bill').nextDate === y;
         // "Yes" pays it today, keeps the due date, moves the bill to next month.
-        document.querySelector('#pay-popup-list [data-pay="bill:pay-bill"]').click(); await wait(200);
-        await confirmOk();
+        document.querySelector('#pay-popup-list [data-pay="bill:pay-bill"]').click(); await wait(300);
+        document.querySelector('[data-mark-times="1"]').click(); await wait(350);
         const bill = s().recurring.find((b) => b.id === 'pay-bill');
         const tx = s().transactions.find((t) => t.recurringId === 'pay-bill');
         const ok = shows && popup && stillUnpaid && tx && tx.date === today && tx.dueDate === y && bill.nextDate > today && !g('isSheetOpen')('modal-payments');
@@ -2395,6 +2395,27 @@ export async function run() {
         Object.assign(st.config, keep); g('saveState')();
         return (tickedFirst && both && twoRows && totalShown && p1['acc-2fa'] === 3000 && p1['acc-2fb'] === 2000 && total1 === 5000 && p2['acc-2fb'] === 1500 && blocked && where)
             || `ticked ${tickedFirst}, both ${both}, two rows ${twoRows}, total shown ${totalShown}, portions ${JSON.stringify(p1)} total ${total1}, after spend ${JSON.stringify(p2)}, blocked ${blocked}, where ${where}; ${dbg}`;
+    });
+
+    await T('Sister pays Rs. 2,000 now for this month and next: one entry, nothing expected next month', async () => {
+        const st = s();
+        const due = iso(addDays(new Date(), -1));
+        const day = addDays(new Date(), -1).getDate();
+        st.recurring.push({ id: 'ahead', type: 'income', name: 'Netflix money', amount: 1000, currency: 'LKR', category: 'OtherIncome', frequency: 'monthly', nextDate: due, anchorDay: day, autoLog: false, accountId: 'acc-cash', createdAt: 1 });
+        g('saveState')();
+        g('askMarkPaid')('bill:ahead'); await wait(350);
+        const opts = [...document.querySelectorAll('[data-mark-times]')].map((b) => b.dataset.markTimes).join(',');
+        const shows2000 = /2,000/.test(document.querySelector('[data-mark-times="2"]').textContent);
+        const before = s().transactions.length;
+        document.querySelector('[data-mark-times="2"]').click(); await wait(400);
+        const tx = s().transactions.slice(before).find((t) => t.recurringId === 'ahead');
+        const bill = s().recurring.find((b) => b.id === 'ahead');
+        const twoAhead = g('advanceDate')(g('advanceDate')(due, 'monthly', day), 'monthly', day);
+        const ok = opts === '1,2,3,6,12' && shows2000 && tx && tx.amount === 2000 && /Paid ahead/.test(tx.note) && bill.nextDate === twoAhead && !g('isSheetOpen')('modal-mark-paid');
+        s().recurring = s().recurring.filter((b) => b.id !== 'ahead');
+        s().transactions = s().transactions.filter((t) => t.recurringId !== 'ahead');
+        g('saveState')();
+        return ok || `options ${opts}, shows 2,000 ${shows2000}, entry ${tx && tx.amount} "${tx && tx.note}", next ${bill.nextDate} (want ${twoAhead})`;
     });
 
     // Cloud sync against a fake account.

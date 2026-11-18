@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.47.0">
+    <link rel="stylesheet" href="style.css?v=4.47.1">
 </head>
 <body data-view="dashboard">
 
@@ -1299,6 +1299,22 @@
         </div>
     </div>
 
+    <!-- Mark a repeating payment received / paid: this time, or ahead -->
+    <div class="sheet-overlay" id="modal-mark-paid" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="mark-paid-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <h2 class="sheet-title" id="mark-paid-title">Mark received</h2>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body">
+                <p class="card-sub" id="mark-paid-sub"></p>
+                <div class="fund-actions mark-paid-options" id="mark-paid-options"></div>
+                <button type="button" class="btn btn-secondary btn-block" data-close-sheet>Not yet</button>
+            </div>
+        </div>
+    </div>
+
     <!-- A payment that doesn't happen this time -->
     <div class="sheet-overlay" id="modal-pay-later" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pay-later-title">
@@ -1913,7 +1929,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.47.0"></script>
+    <script src="app.js?v=4.47.1"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

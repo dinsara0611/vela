@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.47.0';
+const APP_VERSION = '4.47.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1962,13 +1962,13 @@ const advanceDate = (dateStr, frequency, anchorDay) => {
 };
 
 const billDue = (bill) => round2(bill.amount + (bill.carry || 0)); // this time's amount, with anything carried over
-const logBill = (bill, date) => {
+const logBill = (bill, date, times = 1) => {
     const carried = bill.carry || 0;
     const tx = {
         id: generateId(),
         type: bill.type,
         desc: bill.name,
-        amount: billDue(bill),
+        amount: round2(billDue(bill) + bill.amount * (times - 1)),
         currency: bill.currency,
         category: bill.category,
         date,
@@ -1982,6 +1982,12 @@ const logBill = (bill, date) => {
     if (tx.type === 'expense' && sectionForCategory(tx.category)) tx.sectionId = sectionForCategory(tx.category);
     if (beforeBalanceFor(tx.accountId, tx.date)) tx.beforeBalance = true;
     if (carried) { tx.note = `Includes ${formatCurrency(carried, bill.currency)} carried from ${bill.carryFrom ? shortDate(bill.carryFrom) : 'last time'}`; delete bill.carry; delete bill.carryFrom; }
+    if (times > 1) {
+        const dates = [bill.nextDate];
+        for (let k = 1; k < times; k++) dates.push(advanceDate(dates[k - 1], bill.frequency, bill.anchorDay));
+        tx.note = [tx.note, `Paid ahead: covers ${dates.map(shortDate).join(', ')}`].filter(Boolean).join('. ');
+        tx.covers = times;
+    }
     state.transactions.push(tx);
     queueSync('transaction', tx.id, 'upsert', false);
     return tx;
@@ -2013,22 +2019,23 @@ const processRecurring = () => {
     return created;
 };
 
-const markBillPaid = (id) => {
+const markBillPaid = (id, times = 1) => {
     const bill = state.recurring.find((b) => b.id === id);
     if (!bill) return;
+    times = Math.max(1, Math.min(24, Math.round(times) || 1));
     // Recorded on the day it was really paid; the due date is kept on the entry.
-    const tx = logBill(bill, todayISO());
+    const tx = logBill(bill, todayISO(), times);
     if (bill.type === 'income' && secList().length && allocatesIncome(tx)) setTimeout(() => openDivide(tx.id), 600);
     tx.dueDate = bill.nextDate;
     tx.paidAt = new Date().toISOString();
     cancelPaymentReminders(`bill:${bill.id}`);
-    bill.nextDate = advanceDate(bill.nextDate, bill.frequency, bill.anchorDay);
+    for (let k = 0; k < times; k++) bill.nextDate = advanceDate(bill.nextDate, bill.frequency, bill.anchorDay);
     queueSync('recurring', bill.id, 'upsert', false);
     saveState();
     flushSync();
     haptic('MEDIUM');
     scheduleReminders();
-    showToast(`${bill.name} ${bill.type === 'income' ? 'received' : 'paid'}: ${formatCurrency(tx.amount, bill.currency)}. Next ${shortDate(bill.nextDate)}.`, 'success');
+    showToast(`${bill.name} ${bill.type === 'income' ? 'received' : 'paid'}: ${formatCurrency(tx.amount, bill.currency)}${times > 1 ? ` for ${times} times` : ''}. Next ${shortDate(bill.nextDate)}.`, 'success');
     renderActive();
     if (isSheetOpen('modal-payments')) refreshPaymentsPopup();
 };
@@ -4013,10 +4020,27 @@ const cancelPaymentReminders = (key) => {
     if (!ln) return;
     try { Promise.resolve(ln.cancel({ notifications: reminderIdsFor(key).concat(key.startsWith('tx:') ? [pendingNotifId(key.slice(3))] : []).map((id) => ({ id })) })).catch(() => {}); } catch (e) { /* ignore */ }
 };
+let markPaidKey = null;
 const askMarkPaid = (key) => {
     const i = paymentByKey(key);
     if (!i) return;
     const income = i.type === 'income';
+    const bill = i.kind === 'bill' ? state.recurring.find((b) => b.id === i.id) : null;
+    if (bill) {
+        markPaidKey = key;
+        $('mark-paid-title').textContent = income ? `Has ${i.name} arrived?` : `Have you paid ${i.name}?`;
+        $('mark-paid-sub').textContent = `${formatDisplay(i.amount, i.currency)} ${income ? 'expected' : 'due'} ${shortDate(i.due)}. It is recorded today and counted in your balance.`;
+        const opts = [1, 2, 3, 6, 12].filter((n) => n === 1 || bill.frequency !== 'yearly' || n <= 3);
+        $('mark-paid-options').innerHTML = opts.map((n) => {
+            let next = bill.nextDate;
+            for (let k = 0; k < n; k++) next = advanceDate(next, bill.frequency, bill.anchorDay);
+            const total = round2(billDue(bill) + bill.amount * (n - 1));
+            const label = n === 1 ? 'This time only' : n === 2 ? 'This time and next time' : `${n} times ahead`;
+            return `<button type="button" class="row-btn" data-mark-times="${n}"><span class="row-icon tint">${icon(n === 1 ? 'i-check' : 'i-repeat')}</span><span class="row-label"><span>${label}</span><span>${n === 1 ? `Next one ${shortDate(next)}` : `Nothing more until ${shortDate(next)}`}</span></span><span class="amount ${income ? 'text-income' : ''}">${escapeHtml(formatDisplay(total, i.currency))}</span></button>`;
+        }).join('');
+        openOrSwap('modal-mark-paid');
+        return;
+    }
     showConfirm({
         title: income ? 'Has this money arrived?' : 'Have you completed this payment?',
         message: `${i.name} · ${formatDisplay(i.amount, i.currency)} · ${i.status === 'overdue' ? 'was due' : 'due'} ${shortDate(i.due)}. It will be recorded as ${income ? 'received' : 'paid'} today and counted in your balance.`,
@@ -9339,6 +9363,13 @@ const initEvents = () => {
         if (d.action === 'pay-later-carry') { payLater('carry'); return; }
         if (d.action === 'pay-later-skip') { payLater('skip'); return; }
         if (d.action === 'pay-later-move') { payLater('move'); return; }
+        if (d.markTimes) {
+            const key = markPaidKey;
+            markPaidKey = null;
+            closeSheet('modal-mark-paid');
+            if (key && key.startsWith('bill:')) { markBillPaid(key.slice(5), Number(d.markTimes)); scheduleReminders(); }
+            return;
+        }
         if (d.editDebt) { openEditDebt(d.editDebt); return; }
         if (d.repayDebt) { openRepay(d.repayDebt); return; }
         if (d.editCategory) { catReturnToTx = false; catReturnToManager = true; openCategoryEditor(d.editCategory); return; }
