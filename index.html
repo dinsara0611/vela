@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.43.0">
+    <link rel="stylesheet" href="style.css?v=4.43.1">
 </head>
 <body data-view="dashboard">
 
@@ -1633,6 +1633,11 @@
                         <input type="text" id="account-opening" class="input money-input" data-negative="true" autocomplete="off" step="0.01" placeholder="0.00" inputmode="decimal">
                         <span class="field-hint" id="account-opening-hint">What is in this account today. Use a minus sign for a card you owe on.</span>
                     </div>
+                    <div class="field">
+                        <label class="field-label" for="account-balance-date">Balance correct on</label>
+                        <input type="date" id="account-balance-date" class="input">
+                        <span class="field-hint">Entries dated before this day are already in the balance, so they aren't counted again.</span>
+                    </div>
                 </div>
                 <div class="sheet-foot">
                     <button type="button" class="btn btn-danger" id="btn-delete-account" aria-label="Delete account" hidden><svg class="ic"><use href="#i-trash"/></svg></button>
@@ -1806,7 +1811,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.43.0"></script>
+    <script src="app.js?v=4.43.1"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

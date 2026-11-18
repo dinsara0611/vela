@@ -2052,6 +2052,33 @@ export async function run() {
         return (shownEstimate && est && formShows && learned && next && exact) || `card ${shownEstimate}, estimate ${est} (${rec.amount}), form ${formShows}, learned ${learned} (${acc().fxFee}), next ${next} (${$('tx-charged').value}), exact SMS ${exact} (${r2 && r2.amount}, fee ${acc().fxFee})`;
     });
 
+    await T('"Already in my balance" shows for any past date, also on older accounts; balance date set in the account', async () => {
+        s().accounts.push({ id: 'acc-old', name: 'Old Wallet Bank', kind: 'bank', currency: 'LKR', opening: 20000, createdAt: 0 });
+        g('saveState')();
+        const fiveAgo = iso(addDays(new Date(), -5));
+        const open = async () => {
+            g('openAddTx')('expense'); await wait(300);
+            $('tx-account').value = 'acc-old'; $('tx-account').dispatchEvent(new Event('change', { bubbles: true }));
+            $('tx-date').value = fiveAgo; $('tx-date').dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        await open();
+        const shownOff = !$('tx-before-row').hidden && $('tx-before').getAttribute('aria-checked') === 'false';
+        $('tx-date').value = today; $('tx-date').dispatchEvent(new Event('change', { bubbles: true }));
+        const hiddenToday = $('tx-before-row').hidden;
+        await close('modal-tx');
+        // Say the balance was right 2 days ago: older entries are then already in it.
+        g('openAccountEditor')('acc-old'); await wait(300);
+        $('account-balance-date').value = iso(addDays(new Date(), -2));
+        g('submitAccount')(); await wait(400);
+        await open();
+        const onNow = !$('tx-before-row').hidden && $('tx-before').getAttribute('aria-checked') === 'true';
+        $('tx-amount').value = '500'; $('tx-desc').value = 'Old snack';
+        const before = g('accountBalance')(s().accounts.find((a) => a.id === 'acc-old'));
+        await g('submitTx')(); await wait(350);
+        const after = g('accountBalance')(s().accounts.find((a) => a.id === 'acc-old'));
+        return (shownOff && hiddenToday && onNow && before === after) || `past date shown (off) ${shownOff}, hidden for today ${hiddenToday}, on after balance date ${onNow}, balance ${before} -> ${after}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

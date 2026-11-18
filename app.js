@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.43.0';
+const APP_VERSION = '4.43.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -4935,12 +4935,16 @@ const updateBeforeRow = () => {
     const acc = state.accounts.find((a) => a.id === accId);
     const bd = balanceDateOf(acc);
     const date = $('tx-date').value;
-    const show = !!(bd && isISODate(date) && date <= bd && (txType === 'expense' || txType === 'income'));
+    // Any entry dated in the past can be "already in my balance"; it's on by itself before the account's balance date.
+    const show = !!(acc && isISODate(date) && (date < todayISO() || (bd && date <= bd)) && (txType === 'expense' || txType === 'income'));
     $('tx-before-row').hidden = !show;
     if (!show) { if (!txBeforeTouched) txBefore = false; return; }
-    if (!txBeforeTouched) txBefore = date < bd;
+    if (!txBeforeTouched) txBefore = !!(bd && date < bd);
     setSwitch($('tx-before'), txBefore);
-    $('tx-before-desc').textContent = `${acc.name}'s balance was entered on ${shortDate(bd)}. ${txBefore ? `This ${txType} is already inside it, so it's kept in your history and spending without changing the balance again.` : `This ${txType} will be ${txType === 'income' ? 'added to' : 'taken off'} the balance.`}`;
+    const what = txBefore ? `It's kept in your history and spending without changing ${acc.name}'s balance again.` : `It will be ${txType === 'income' ? 'added to' : 'taken off'} ${acc.name}'s balance.`;
+    $('tx-before-desc').textContent = bd
+        ? `${acc.name}'s balance is correct as of ${shortDate(bd)}. ${what}`
+        : `Turn on if the balance you typed for ${acc.name} already includes this ${txType}. ${what}`;
 };
 // While a trip is on (or the entry already belongs to one), expenses show a "Part of the trip" switch.
 let txTripId = null;
@@ -9715,6 +9719,8 @@ const openAccountEditor = (id) => {
     updateAccountNameLogo();
     fillCurrencySelect($('account-currency'), a ? a.currency : dcur());
     $('account-opening').value = a ? round2(accountBalance(a)) : '';
+    $('account-balance-date').value = a ? (balanceDateOf(a) || todayISO()) : todayISO();
+    $('account-balance-date').max = todayISO();
     $('account-opening-label').textContent = 'Balance right now';
     $('account-opening-hint').textContent = a
         ? 'Change this to match your real balance. Vela adjusts the starting amount; your entries stay as they are.'
@@ -9758,10 +9764,14 @@ const submitAccount = () => {
         // Keep entries untouched: move the starting amount so today's balance matches.
         const before = accountBalance(a);
         a.opening = round2(a.opening + (balance - before));
-        if (Math.abs(balance - before) > 0.004) a.balanceDate = todayISO(); // a corrected balance is today's
+        const chosen = $('account-balance-date').value;
+        // The day this balance is correct on: what you picked, or today when you corrected the amount.
+        if (isISODate(chosen) && chosen <= todayISO() && chosen !== balanceDateOf(a)) a.balanceDate = chosen;
+        else if (Math.abs(balance - before) > 0.004) a.balanceDate = todayISO();
         showToast('Account saved', 'success');
     } else {
-        state.accounts.push({ id: generateId(), name, kind, currency, opening: round2(balance), createdAt: Date.now(), balanceDate: todayISO() });
+        const chosen = $('account-balance-date').value;
+        state.accounts.push({ id: generateId(), name, kind, currency, opening: round2(balance), createdAt: Date.now(), balanceDate: isISODate(chosen) && chosen <= todayISO() ? chosen : todayISO() });
         showToast(`${name} added`, 'success');
     }
     afterAccountChange();
