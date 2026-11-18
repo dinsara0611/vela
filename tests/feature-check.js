@@ -2079,6 +2079,83 @@ export async function run() {
         return (shownOff && hiddenToday && onNow && before === after) || `past date shown (off) ${shownOff}, hidden for today ${hiddenToday}, on after balance date ${onNow}, balance ${before} -> ${after}`;
     });
 
+    await T('Funds: "only what I add" (Food 7,500 this month, nothing next month), "only once", funds per account', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-f1', name: 'Fund Bank One', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 0 }, { id: 'acc-f2', name: 'Fund Bank Two', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 0 });
+        const keep = { sections: st.config.sections, sectionMoves: st.config.sectionMoves, sectionSince: st.config.sectionSince, fundIncomeCats: st.config.fundIncomeCats };
+        st.config.sections = [
+            { id: 'food', name: 'Food', mode: 'manual', value: 0, currency: 'LKR', color: 'pink', icon: 'c-Food', accountId: 'acc-f1' },
+            { id: 'trip', name: 'Trip', mode: 'amount', value: 5000, currency: 'LKR', color: 'cyan', icon: 'x-plane', accountId: 'acc-f1', once: true },
+            { id: 'save', name: 'Savings', mode: 'rest', value: 0, currency: 'LKR', color: 'green', icon: 'c-Investment', accountId: 'acc-f1' },
+            { id: 'two', name: 'Two only', mode: 'rest', value: 0, currency: 'LKR', color: 'violet', icon: 'i-wallet', accountId: 'acc-f2' }];
+        st.config.sectionMoves = []; st.config.sectionSince = today; st.config.fundIncomeCats = ['Salary'];
+        st.config.sectionSkipped = st.transactions.filter((t) => t.type === 'income').map((t) => t.id);
+        g('saveState')();
+        const bal = () => g('sectionBalances')();
+        g('openSecMove')('food', 'add'); await wait(300);
+        $('sec-move-amount').value = '7500'; g('submitSecMove')(); await wait(300);
+        await addTx({ type: 'income', amount: 100000, desc: 'Salary A1', category: 'Salary', account: 'acc-f1' }); await wait(600);
+        const offered = [...document.querySelectorAll('[data-sec-alloc]')].map((i) => i.dataset.secAlloc).sort().join(',');
+        g('confirmDivide')(); await wait(300);
+        const b1 = bal();
+        await addTx({ type: 'income', amount: 100000, desc: 'Salary A2', category: 'Salary', account: 'acc-f1' }); await wait(600);
+        g('confirmDivide')(); await wait(300);
+        const b2 = bal();
+        g('openAddTx')('expense'); await wait(300);
+        $('tx-account').value = 'acc-f2'; $('tx-account').dispatchEvent(new Event('change', { bubbles: true }));
+        const picks = [...document.querySelectorAll('[data-tx-section]')].map((b) => b.dataset.txSection).filter(Boolean).join(',');
+        await close('modal-tx');
+        Object.assign(st.config, keep); g('saveState')();
+        return (offered === 'food,save,trip' && b1.food === 7500 && b1.trip === 5000 && b1.save === 95000 && b2.food === 7500 && b2.trip === 5000 && b2.save === 195000 && picks === 'two')
+            || `offered ${offered}, after 1st food ${b1.food} trip ${b1.trip} save ${b1.save}, after 2nd food ${b2.food} trip ${b2.trip} save ${b2.save}, account two picks ${picks}`;
+    });
+
+    await T('Bank charge: change it in the account and estimated foreign purchases are worked out again', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-fee', name: 'Fee Bank', kind: 'bank', currency: 'LKR', opening: 10000, createdAt: 0 });
+        g('saveState')();
+        const t0 = Date.now();
+        const sms = g('parseBankSms')({ id: `sms-${t0}-777`, source: 'sms', address: 'COMBANK', body: 'Purchase at SPOTIFY for USD 20.00 on 05/11/26 has been authorised on your debit card ending #5174.', date: t0 });
+        const rec = g('smsApply')(sms, 'acc-fee');
+        const first = rec.amount;
+        g('openAccountEditor')('acc-fee'); await wait(300);
+        const shown = $('account-fee').placeholder === '4';
+        $('account-fee').value = '5';
+        g('submitAccount')(); await wait(500);
+        const again = s().transactions.find((t) => t.id === rec.id);
+        return (first === 6240 && shown && again.amount === 6300 && again.fx.fee === 5) || `first ${first}, placeholder ${$('account-fee').placeholder}, after ${again.amount} (fee ${again.fx.fee})`;
+    });
+
+    await T('Maths: entries already in a balance are left out of this month change and the from-balance budget', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-mb', name: 'Math Bank', kind: 'bank', currency: 'LKR', opening: 40000, createdAt: 0 });
+        const b = { note: '', recurringId: null, receipt: null, fixed: false, pending: false, currency: 'LKR', accountId: 'acc-mb', createdAt: Date.now() };
+        st.transactions.push({ ...b, id: 'mb1', type: 'expense', desc: 'Now', amount: 1000, category: 'Food', date: today },
+            { ...b, id: 'mb2', type: 'expense', desc: 'Before', amount: 3000, category: 'Food', date: today, beforeBalance: true });
+        g('saveState')();
+        g('setViewAccount')('acc-mb');
+        const change = g('monthChange')();
+        const keepMode = st.config.budgetMode;
+        st.config.budgetMode = 'balance';
+        const ms = g('monthStats')();
+        st.config.budgetMode = keepMode; g('saveState')();
+        const balNow = g('viewBalance')();
+        g('setViewAccount')('acc-cash');
+        return (change === -1000 && balNow === 39000 && ms.budget === 40000) || `change ${change}, balance ${balNow}, budget ${ms.budget}`;
+    });
+
+    await T('Clear all data (this phone): nothing of Vela is left on the phone', async () => {
+        ['VELA_NOTIF_LOG', 'VELA_SHOP_LOGOS', 'VELA_HIDE_BALANCE'].forEach((k) => localStorage.setItem(k, '{"x":1}'));
+        g('wipeData')(); await wait(300);
+        const sheet = g('openSheets').includes('modal-wipe') && $('btn-wipe-everywhere').hidden;
+        await close('modal-wipe');
+        const saved = localStorage.getItem('VELA_STATE');
+        await g('clearPhoneData')();
+        const left = ['VELA_STATE', 'VELA_SHOP_LOGOS', 'VELA_NOTIF_LOG', 'VELA_HIDE_BALANCE', 'VELA_SMS'].filter((k) => localStorage.getItem(k) !== null);
+        localStorage.setItem('VELA_STATE', saved); g('loadState')(); g('renderActive')();
+        return (sheet && !left.length) || `sheet ${sheet}, still saved: ${left.join(', ')}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

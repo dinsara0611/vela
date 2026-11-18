@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.43.1';
+const APP_VERSION = '4.44.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -596,6 +596,21 @@ const learnFxFee = (acc, amount, cur, charged) => {
     state.syncSettings = true;
     return pct;
 };
+const reestimateFx = (acc) => {
+    let n = 0;
+    state.transactions.forEach((t) => {
+        if (t.accountId !== acc.id || !t.fx || !t.fx.estimated) return;
+        const rate = t.fx.rate || convertAmount(1, t.fx.currency, acc.currency);
+        const amount = round2(t.fx.amount * rate * (1 + fxFeeFor(acc) / 100));
+        if (Math.abs(amount - t.amount) < 0.005) return;
+        t.amount = amount;
+        t.fx.fee = fxFeeFor(acc);
+        t.fx.rate = rate;
+        queueSync('transaction', t.id, 'upsert', false);
+        n++;
+    });
+    return n;
+};
 const fxNote = (t) => (t.fx ? `${formatCurrency(t.fx.amount, t.fx.currency)}${t.fx.estimated ? ' · estimated charge' : ''}` : '');
 // The day an account's balance was typed in (when it was added, or when its balance was last corrected).
 const balanceDateOf = (acc) => (acc ? acc.balanceDate || (acc.createdAt ? toISODate(new Date(acc.createdAt)) : null) : null);
@@ -625,7 +640,7 @@ const netWorth = () => state.accounts.reduce((s, a) => s + toDisplay(accountBala
 const monthChange = (y = new Date().getFullYear(), m = new Date().getMonth()) => {
     const v = scopeId();
     return viewTx().reduce((sum, t) => {
-        if (!inMonth(t, y, m) || isUpcoming(t)) return sum;
+        if (!inMonth(t, y, m) || isUpcoming(t) || t.beforeBalance) return sum; // already in the balance you typed
         if (t.type === 'income') return sum + toDisplay(t.amount, t.currency);
         if (t.type === 'expense') return sum - toDisplay(t.amount, t.currency);
         if (t.type === 'transfer' && v !== 'all') {
@@ -694,7 +709,7 @@ const normalizeTx = (t, forcedType) => {
         ...(type !== 'transfer' && t.beforeBalance === true ? { beforeBalance: true } : {}),
         // Paid in another currency: what it was in that currency, the bank's charge used, and whether the account
         // amount is Vela's estimate or what the bank really took.
-        ...(type !== 'transfer' && t.fx && toNumber(t.fx.amount, 0) > 0 ? { fx: { amount: toNumber(t.fx.amount, 0), currency: normCur(t.fx.currency), fee: Number.isFinite(Number(t.fx.fee)) ? round2(Number(t.fx.fee)) : null, estimated: t.fx.estimated === true } } : {})
+        ...(type !== 'transfer' && t.fx && toNumber(t.fx.amount, 0) > 0 ? { fx: { amount: toNumber(t.fx.amount, 0), currency: normCur(t.fx.currency), fee: Number.isFinite(Number(t.fx.fee)) ? round2(Number(t.fx.fee)) : null, estimated: t.fx.estimated === true, ...(toNumber(t.fx.rate, 0) > 0 ? { rate: toNumber(t.fx.rate, 0) } : {}) } } : {})
     };
 };
 // Bank details on an entry: only known fields, short strings, no message text.
@@ -846,8 +861,9 @@ const mergeCategories = (custom) => {
 function normalizeSectionConfig(cfg) {
     const sections = (Array.isArray(cfg.sections) ? cfg.sections : []).map((x) => (x && x.id && x.name ? {
         id: String(x.id).slice(0, 64), name: String(x.name).slice(0, 40),
-        mode: ['percent', 'amount', 'rest'].includes(x.mode) ? x.mode : 'percent',
+        mode: ['percent', 'amount', 'rest', 'manual'].includes(x.mode) ? x.mode : 'percent',
         value: Math.max(0, toNumber(x.value, 0)), currency: normCur(x.currency),
+        once: x.once === true, accountId: x.accountId ? String(x.accountId).slice(0, 64) : null,
         color: PALETTE.includes(x.color) ? x.color : 'slate', icon: String(x.icon || 'i-wallet').slice(0, 32)
     } : null)).filter(Boolean).slice(0, 30);
     const ids = new Set(sections.map((x) => x.id));
@@ -1731,7 +1747,7 @@ function allAccountsBudget(y, m) {
         const b = a.id === v ? budgetSnapshot() : (state.config.accountBudgets || {})[a.id];
         if (!b) return sum;
         const balanceWay = () => {
-            const spentHere = sumDisplay(state.transactions.filter((t) => t.type === 'expense' && t.accountId === a.id && inMonth(t, y, m) && !isUpcoming(t)));
+            const spentHere = sumDisplay(state.transactions.filter((t) => t.type === 'expense' && t.accountId === a.id && inMonth(t, y, m) && !isUpcoming(t) && !t.beforeBalance)); // only spending that came out of the balance
             return Math.max(0, toDisplay(accountBalance(a), a.currency) + spentHere);
         };
         if (b.budgetMode === 'balance') return sum + balanceWay();
@@ -1788,7 +1804,7 @@ const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => 
     // From the balance: what you can spend this month is what's in the account now plus what you already spent.
     const fromBalance = !scopeAll && (state.config.budgetMode === 'balance' || incomeFallback);
     const budget = scopeAll ? allAccountsBudget(y, m)
-        : fromBalance ? Math.max(0, viewBalance() + spent)
+        : fromBalance ? Math.max(0, viewBalance() + spent - sumDisplay(spentList.filter((e) => e.beforeBalance)))
         : fromIncome ? plannedIncome * (1 - state.config.budgetSavePct / 100) : budgetIn(state.config.budget, dcur());
     const byCat = {};
     spentList.forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + toDisplay(e.amount, e.currency); });
@@ -3496,7 +3512,7 @@ const smsApply = (i, accountId) => {
             // The bank wrote both amounts: exact, and it teaches Vela this bank's charge.
             fx = { amount: i.fx.amount, currency: i.fx.currency, fee: learnFxFee(acc, i.fx.amount, i.fx.currency, i.amount), estimated: false };
         } else if (i.currency !== acc.currency) {
-            fx = { amount: i.amount, currency: i.currency, fee: fxFeeFor(acc), estimated: true };
+            fx = { amount: i.amount, currency: i.currency, rate: convertAmount(1, i.currency, acc.currency), fee: fxFeeFor(acc), estimated: true };
             amount = fxCharge(i.amount, i.currency, acc);
             currency = acc.currency;
         }
@@ -5096,7 +5112,7 @@ const submitTx = async () => {
         const estimate = fxCharge(amount, currency, acc);
         const real = txChargedTouched && Math.abs(charged - estimate) > 0.009;
         const fee = real ? learnFxFee(acc, amount, currency, charged) : fxFeeFor(acc);
-        fx = { amount, currency, fee: fee === null ? fxFeeFor(acc) : fee, estimated: !real && !(prevFx(id) && !prevFx(id).estimated && Math.abs(charged - (state.transactions.find((x) => x.id === id) || {}).amount) < 0.01) };
+        fx = { amount, currency, rate: convertAmount(1, currency, acc.currency), fee: fee === null ? fxFeeFor(acc) : fee, estimated: !real && !(prevFx(id) && !prevFx(id).estimated && Math.abs(charged - (state.transactions.find((x) => x.id === id) || {}).amount) < 0.01) };
         saveAmount = round2(charged);
         saveCurrency = acc.currency;
     }
@@ -6607,7 +6623,12 @@ const secList = () => state.config.sections || [];
 const secById = (id) => secList().find((x) => x.id === id) || null;
 const secMoves = () => state.config.sectionMoves || [];
 const secBadge = (sec, extra = '') => `<span class="cat-badge sec-badge${extra}" style="--cat:var(--pal-${PALETTE.includes(sec && sec.color) ? sec.color : 'slate'})">${icon(sec && /^[cxi]-[A-Za-z-]+$/.test(sec.icon || '') ? sec.icon : 'i-wallet')}</span>`;
-const secPlanLabel = (sec) => (sec.mode === 'rest' ? 'Remainder of income' : sec.mode === 'percent' ? `${sec.value}% of income` : `${formatCurrency(sec.value, sec.currency)} fixed per income`);
+// Funds that belong to an account (or to every account). Money is allocated from an income only to the funds
+// of the account it arrived in; an expense can only be paid from the funds of its account.
+const fundsFor = (accountId) => secList().filter((x) => !x.accountId || !accountId || x.accountId === accountId);
+const fundOnceDone = (x) => x.once && secMoves().some((m) => m.to === x.id && m.kind === 'income' && m.amount > 0);
+const secPlanLabelBase = (sec) => (sec.mode === 'manual' ? 'Only money you add' : sec.mode === 'rest' ? 'Remainder of income' : sec.mode === 'percent' ? `${sec.value}% of income` : `${formatCurrency(sec.value, sec.currency)} ${sec.once ? 'once' : 'fixed per income'}`);
+const secPlanLabel = (sec) => (sec.once && sec.mode !== 'manual' && sec.mode !== 'rest' ? (fundOnceDone(sec) ? `${secPlanLabelBase(sec)} · done, nothing more` : `${secPlanLabelBase(sec)} · next income only`) : secPlanLabelBase(sec));
 // Balances in the display currency, from the very first move: nothing is reset between months.
 const sectionBalances = () => {
     const bal = {};
@@ -6685,14 +6706,16 @@ let divideJob = null;
 let divideKeepRest = false;
 // The plan for an amount: fixed amounts first (in order), then percentages of the same base, the rest to the
 // "what's left" section. Never more than there is.
+// The funds an income can go to: those of the account it arrived in, plus funds for every account.
+const divFunds = () => (divideJob ? fundsFor(divideJob.accountId) : secList());
 const planSplit = (amount) => {
     const out = {};
     let left = amount;
-    secList().forEach((x) => { out[x.id] = 0; });
-    secList().filter((x) => x.mode === 'amount').forEach((x) => { const v = Math.min(left, round2(toDisplay(x.value, x.currency))); out[x.id] = v; left -= v; });
+    divFunds().forEach((x) => { out[x.id] = 0; });
+    divFunds().filter((x) => x.mode === 'amount' && !fundOnceDone(x)).forEach((x) => { const v = Math.min(left, round2(toDisplay(x.value, x.currency))); out[x.id] = v; left -= v; });
     const base = left;
-    secList().filter((x) => x.mode === 'percent').forEach((x) => { const v = Math.min(left, round2((base * x.value) / 100)); out[x.id] = v; left -= v; });
-    const rest = secList().find((x) => x.mode === 'rest');
+    divFunds().filter((x) => x.mode === 'percent' && !fundOnceDone(x)).forEach((x) => { const v = Math.min(left, round2((base * x.value) / 100)); out[x.id] = v; left -= v; });
+    const rest = divFunds().find((x) => x.mode === 'rest');
     if (rest) { out[rest.id] = round2(out[rest.id] + left); left = 0; }
     return { split: out, left: round2(left) };
 };
@@ -6710,15 +6733,15 @@ const divideNumbers = () => {
     });
     let pool = job.total;
     const fills = [];
-    secList().map((x) => ({ id: x.id, need: round2(-after[x.id]) })).filter((x) => x.need > 0).sort((a, b) => b.need - a.need)
+    divFunds().map((x) => ({ id: x.id, need: round2(-after[x.id]) })).filter((x) => x.need > 0).sort((a, b) => b.need - a.need)
         .forEach((x) => { const v = Math.min(pool, x.need); if (v > 0) { fills.push({ to: x.id, amount: round2(v) }); pool -= v; } });
     pool = round2(pool);
     return { bal, after, carries, fills, pool };
 };
 const openDivide = (incomeId) => {
     const t = state.transactions.find((x) => x.id === incomeId && x.type === 'income');
-    if (!t || !secList().length) return;
-    divideJob = { incomeId, total: round2(toDisplay(t.amount, t.currency)), carry: {}, alloc: null, name: t.desc, date: t.date };
+    if (!t || !fundsFor(t.accountId).length) { if (t) showToast('No funds for this account yet. Add one in Plan › Funds.', 'info'); return; }
+    divideJob = { incomeId, total: round2(toDisplay(t.amount, t.currency)), carry: {}, alloc: null, name: t.desc, date: t.date, accountId: t.accountId };
     divideKeepRest = false;
     const n = divideNumbers();
     divideJob.alloc = planSplit(n.pool).split;
@@ -6732,16 +6755,16 @@ const renderDivide = () => {
     const n = divideNumbers();
     $('divide-title').textContent = `Allocate ${job.name}`;
     $('divide-total').textContent = formatCurrency(job.total, cur);
-    const leftovers = secList().filter((x) => n.bal[x.id] > 0);
+    const leftovers = divFunds().filter((x) => n.bal[x.id] > 0);
     $('divide-carry').innerHTML = leftovers.length ? `<div class="section-head"><h2>Unspent balances</h2></div><p class="field-hint">Carry each one forward in the same fund, or transfer it to another fund.</p>${leftovers.map((x) => `
         <div class="sec-line">${secBadge(x, ' is-mini')}<span class="sec-line-name"><span>${escapeHtml(x.name)}</span><span class="text-income">${escapeHtml(formatCurrency(n.bal[x.id], cur))} unspent</span></span>
             <div class="select sec-carry"><select class="input" data-sec-carry="${escapeHtml(x.id)}" aria-label="Where ${escapeHtml(x.name)}'s unspent balance goes">
                 <option value="keep">Carry forward in ${escapeHtml(x.name)}</option>
-                ${secList().filter((o) => o.id !== x.id).map((o) => `<option value="${escapeHtml(o.id)}" ${job.carry[x.id] === o.id ? 'selected' : ''}>Transfer to ${escapeHtml(o.name)}</option>`).join('')}
+                ${divFunds().filter((o) => o.id !== x.id).map((o) => `<option value="${escapeHtml(o.id)}" ${job.carry[x.id] === o.id ? 'selected' : ''}>Transfer to ${escapeHtml(o.name)}</option>`).join('')}
             </select></div></div>`).join('')}` : '';
     $('divide-fills').innerHTML = n.fills.length ? `<div class="section-head"><h2>Cover deficits first</h2></div>${n.fills.map((f) => { const x = secById(f.to); return `
         <div class="sec-line">${secBadge(x, ' is-mini')}<span class="sec-line-name"><span>${escapeHtml(x.name)}</span><span class="text-expense">deficit ${escapeHtml(formatCurrency(-n.after[x.id], cur))}</span></span><span class="amount">+${escapeHtml(formatCurrency(f.amount, cur))}</span></div>`; }).join('')}` : '';
-    $('divide-split').innerHTML = `<div class="section-head"><h2>${n.fills.length ? 'Allocate the rest' : 'Allocation'}</h2><span class="card-sub">${escapeHtml(formatCurrency(n.pool, cur))}</span></div>${secList().map((x) => `
+    $('divide-split').innerHTML = `<div class="section-head"><h2>${n.fills.length ? 'Allocate the rest' : 'Allocation'}</h2><span class="card-sub">${escapeHtml(formatCurrency(n.pool, cur))}</span></div>${divFunds().map((x) => `
         <div class="sec-line">${secBadge(x, ' is-mini')}<span class="sec-line-name"><span>${escapeHtml(x.name)}</span><span>${escapeHtml(secPlanLabel(x))}</span></span>
             <input type="text" inputmode="decimal" class="input sec-amount" data-sec-alloc="${escapeHtml(x.id)}" value="${job.alloc[x.id] ? round2(job.alloc[x.id]) : ''}" placeholder="0" aria-label="Amount for ${escapeHtml(x.name)}"></div>`).join('')}`;
     updateDivideLeft();
@@ -6752,7 +6775,7 @@ const updateDivideLeft = () => {
     const n = divideNumbers();
     const used = Object.values(job.alloc).reduce((s, v) => s + (v || 0), 0);
     const left = round2(n.pool - used);
-    const rest = secList().find((x) => x.mode === 'rest');
+    const rest = divFunds().find((x) => x.mode === 'rest');
     const el = $('divide-left');
     el.dataset.state = left < -0.004 ? 'over' : left > 0.004 ? 'left' : 'ok';
     el.textContent = left < -0.004 ? `Over-allocated by ${formatCurrency(-left, dcur())}. Lower an amount.`
@@ -6761,7 +6784,7 @@ const updateDivideLeft = () => {
     $('divide-keep-row').hidden = !(left > 0.004);
     setSwitch($('divide-keep'), divideKeepRest || !rest);
     $('btn-divide-ok').disabled = left < -0.004;
-    const parts = secList().map((x) => [x, (job.alloc[x.id] || 0) + (n.fills.find((f) => f.to === x.id) || { amount: 0 }).amount + (x.mode === 'rest' && left > 0 && !divideKeepRest ? left : 0)]);
+    const parts = divFunds().map((x) => [x, (job.alloc[x.id] || 0) + (n.fills.find((f) => f.to === x.id) || { amount: 0 }).amount + (x.mode === 'rest' && left > 0 && !divideKeepRest ? left : 0)]);
     $('divide-bar').innerHTML = secStackBar(parts).replace(/data-grow="([\d.]+)"/g, 'style="width:$1%" data-w="$1"').replace(/style="--cat:([^"]+)" style="width/g, 'style="--cat:$1;width');
 };
 const confirmDivide = () => {
@@ -6773,7 +6796,7 @@ const confirmDivide = () => {
     let left = round2(n.pool - used);
     if (left < -0.004) return;
     // Kept unallocated (your choice, or there's no remainder fund): it simply stays out of the funds.
-    const rest = divideKeepRest ? null : secList().find((x) => x.mode === 'rest');
+    const rest = divideKeepRest ? null : divFunds().find((x) => x.mode === 'rest');
     if (!rest) left = 0;
     const moves = [];
     const mk = (kind, from, to, amount) => moves.push({ id: generateId(), date: job.date, kind, incomeId: job.incomeId, from: from || null, to: to || null, amount: round2(amount), currency: cur });
@@ -6781,7 +6804,7 @@ const confirmDivide = () => {
     n.fills.forEach((f) => mk('fill', null, f.to, f.amount));
     Object.entries(job.alloc).forEach(([id, v]) => { if (v > 0 && secById(id)) mk('income', null, id, v); });
     if (left > 0.004) mk('income', null, rest.id, left);
-    if (!moves.length) mk('income', null, (rest || secList()[0]).id, 0); // marks it divided even if nothing went in
+    if (!moves.length) mk('income', null, (rest || divFunds()[0]).id, 0); // marks it divided even if nothing went in
     state.config.sectionMoves = [...secMoves(), ...moves];
     if (!commitState('The allocation')) return;
     divideJob = null;
@@ -6893,6 +6916,7 @@ const setupSections = (template) => {
 let secEditMode = 'percent';
 let secEditColor = 'violet';
 let secEditIcon = 'i-wallet';
+let secEditOnce = false;
 const SECTION_ICONS = ['i-wallet', 'c-Rent', 'c-Food', 'c-Utilities', 'c-Travel', 'c-Entertainment', 'c-Health', 'c-Shopping', 'c-Investment', 'c-Gift', 'x-school', 'x-book', 'x-coffee', 'x-plane', 'x-gym', 'x-paw', 'x-phone', 'x-fuel', 'x-music', 'x-tools'];
 const openSectionEditor = (id) => {
     const x = id ? secById(id) : null;
@@ -6902,18 +6926,25 @@ const openSectionEditor = (id) => {
     secEditMode = x ? x.mode : (secList().some((o) => o.mode === 'rest') ? 'percent' : 'rest');
     secEditColor = x ? x.color : PALETTE[secList().length % PALETTE.length];
     secEditIcon = x && x.icon ? x.icon : 'i-wallet';
-    $('section-value').value = x && x.mode !== 'rest' ? x.value : '';
+    $('section-value').value = x && x.mode !== 'rest' && x.mode !== 'manual' ? x.value : '';
+    secEditOnce = !!(x && x.once);
+    const view = viewAccountObj();
+    $('section-account').innerHTML = `<option value="">All accounts</option>${state.accounts.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('')}`;
+    $('section-account').value = x ? (x.accountId || '') : (view ? view.id : '');
     $('btn-delete-section').hidden = !x;
     renderSectionEditor();
     openOrSwap('modal-section');
 };
 const renderSectionEditor = () => {
     setPressed('[data-sec-mode]', (b) => b.dataset.secMode === secEditMode);
-    $('section-value-field').hidden = secEditMode === 'rest';
+    $('section-value-field').hidden = secEditMode === 'rest' || secEditMode === 'manual';
+    $('section-once-row').hidden = secEditMode === 'rest' || secEditMode === 'manual';
+    setSwitch($('section-once'), secEditOnce);
     $('section-value-label').textContent = secEditMode === 'percent' ? 'Percentage of each income (%)' : `Fixed amount from each income (${dcur()})`;
     $('section-value').placeholder = secEditMode === 'percent' ? 'e.g. 30' : '0.00';
     const restNow = secList().find((o) => o.mode === 'rest' && o.id !== $('section-id').value);
-    $('section-mode-hint').textContent = secEditMode === 'rest'
+    $('section-mode-hint').textContent = secEditMode === 'manual' ? 'Nothing is allocated to it automatically: it only has the money you add yourself (Add funds), for example Rs. 7,500 for food this month only.'
+        : secEditMode === 'rest'
         ? (restNow ? `This becomes the remainder fund instead of ${restNow.name} (it becomes 0%).` : 'Receives whatever is left after the other funds are allocated.')
         : secEditMode === 'percent' ? 'Allocated after fixed amounts and after covering any fund in deficit.' : 'Allocated first, before the percentages.';
     $('section-colors').innerHTML = PALETTE.map((p) => `<button type="button" class="swatch" data-sec-color="${p}" style="--cat:var(--pal-${p})" aria-label="${p}" aria-pressed="${p === secEditColor}"></button>`).join('');
@@ -6923,7 +6954,7 @@ const renderSectionEditor = () => {
 const updateSectionPreview = () => {
     const name = $('section-name').value.trim() || 'Your fund';
     const v = toNumber($('section-value').value, 0);
-    $('section-preview').innerHTML = `${secBadge({ color: secEditColor, icon: secEditIcon })}<span><span>${escapeHtml(name)}</span><span>${escapeHtml(secPlanLabel({ mode: secEditMode, value: v, currency: dcur() }))}</span></span>`;
+    $('section-preview').innerHTML = `${secBadge({ color: secEditColor, icon: secEditIcon })}<span><span>${escapeHtml(name)}</span><span>${escapeHtml(secPlanLabelBase({ mode: secEditMode, value: v, currency: dcur(), once: secEditOnce }))}</span></span>`;
 };
 const submitSection = () => {
     const id = $('section-id').value;
@@ -6931,13 +6962,14 @@ const submitSection = () => {
     const value = toNumber($('section-value').value, NaN);
     if (!name) return fieldError($('section-name'), 'Give the fund a name, like "Food".');
     if (secList().some((o) => o.name.toLowerCase() === name.toLowerCase() && o.id !== id)) return fieldError($('section-name'), `You already have "${name}".`);
-    if (secEditMode !== 'rest' && !(value > 0)) return fieldError($('section-value'), secEditMode === 'percent' ? 'Enter a percentage like 30.' : 'Enter an amount.');
+    if (secEditMode !== 'rest' && secEditMode !== 'manual' && !(value > 0)) return fieldError($('section-value'), secEditMode === 'percent' ? 'Enter a percentage like 30.' : 'Enter an amount.');
     if (secEditMode === 'percent') {
         const others = secList().filter((o) => o.mode === 'percent' && o.id !== id).reduce((s, o) => s + o.value, 0);
         if (others + value > 100) return fieldError($('section-value'), `Your other funds already take ${others}%. This can be at most ${Math.max(0, 100 - others)}%.`);
     }
     if (secEditMode === 'rest') state.config.sections = secList().map((o) => (o.mode === 'rest' && o.id !== id ? { ...o, mode: 'percent', value: 0 } : o));
-    const data = { name, mode: secEditMode, value: secEditMode === 'rest' ? 0 : value, color: secEditColor, icon: secEditIcon, currency: dcur() };
+    const data = { name, mode: secEditMode, value: secEditMode === 'rest' || secEditMode === 'manual' ? 0 : value, color: secEditColor, icon: secEditIcon, currency: dcur(),
+        once: secEditOnce && (secEditMode === 'percent' || secEditMode === 'amount'), accountId: $('section-account').value || null };
     if (id) state.config.sections = secList().map((o) => (o.id === id ? { ...o, ...data } : o));
     else {
         state.config.sections = [...secList(), { id: generateId(), ...data }];
@@ -7047,6 +7079,8 @@ const saveUnassigned = () => {
 /* ---- Plan > Sections, the Home card, Insights ---- */
 const planSectionsHtml = () => {
     const cur = dcur();
+    const viewing = viewAccountObj();
+    const shown = fundsFor(viewing ? viewing.id : null);
     if (!secList().length) {
         const tpl = (key, title, desc) => `<button type="button" class="sec-template" data-sec-template="${key}">
             <span class="sec-template-icons">${SECTION_TEMPLATES[key].map(([n, , , color, ic]) => secBadge({ color, icon: ic }, ' is-mini')).join('')}</span>
@@ -7064,9 +7098,9 @@ const planSectionsHtml = () => {
     const bal = sectionBalances();
     const now = new Date();
     const mo = sectionMonth(now.getFullYear(), now.getMonth());
-    const total = Object.values(bal).reduce((a, v) => a + v, 0);
-    const waiting = undividedIncomes();
-    const loose = unassignedExpenses();
+    const total = shown.reduce((a, x) => a + (bal[x.id] || 0), 0);
+    const waiting = undividedIncomes().filter((t) => !viewing || t.accountId === viewing.id);
+    const loose = unassignedExpenses().filter((t) => !viewing || t.accountId === viewing.id);
     const pct = secList().filter((x) => x.mode === 'percent').reduce((a, x) => a + x.value, 0);
     return `
         ${waiting.map((t) => `<section class="card sec-divide-card">
@@ -7074,9 +7108,9 @@ const planSectionsHtml = () => {
             <span class="sec-divide-text"><strong>${escapeHtml(formatCurrency(t.amount, t.currency))} ${escapeHtml(t.desc)}</strong><span>Received ${escapeHtml(shortDate(t.date))} · unallocated</span></span>
             <span class="sec-divide-actions"><button type="button" class="btn btn-primary btn-sm" data-sec-divide="${escapeHtml(t.id)}">Allocate now</button><button type="button" class="btn btn-secondary btn-sm" data-sec-skip="${escapeHtml(t.id)}">Don't allocate</button></span></section>`).join('')}
         <section class="card sec-summary">
-            <span class="sec-summary-label">Total in funds</span>
+            <span class="sec-summary-label">Total in funds${viewing ? ` · ${escapeHtml(viewing.name)}` : ''}</span>
             <strong class="sec-summary-total amount" data-countup="${total}">${escapeHtml(formatCurrency(total, cur))}</strong>
-            ${secStackBar(secList().map((x) => [x, bal[x.id] || 0]))}
+            ${secStackBar(shown.map((x) => [x, bal[x.id] || 0]))}
             <div class="sec-summary-actions">
                 <button type="button" class="chip-btn" data-action="sec-move">${icon('i-swap', 'ic ic-sm')} Transfer</button>
                 <button type="button" class="chip-btn" data-action="sec-add-money">${icon('i-plus', 'ic ic-sm')} Add funds</button>
@@ -7084,12 +7118,13 @@ const planSectionsHtml = () => {
             </div>
             ${pct > 100 ? '<p class="field-hint text-expense">Your percentages add up to more than 100%.</p>' : ''}
         </section>
-        <div class="sec-grid">${secList().map((x, n) => {
+        ${shown.length ? '' : `<section class="card"><p class="card-sub">No funds for ${escapeHtml(viewing ? viewing.name : 'this account')} yet. Add one, or switch account at the top.</p></section>`}
+        <div class="sec-grid">${shown.map((x, n) => {
         const b = bal[x.id] || 0;
         const m = mo[x.id];
         const used = m.in > 0 ? Math.min(100, (m.spent / m.in) * 100) : (m.spent > 0 ? 100 : 0);
         return `<button type="button" class="sec-tile${b < 0 ? ' is-below' : ''}" data-sec-view="${escapeHtml(x.id)}" style="--cat:var(--pal-${x.color});--n:${n}">
-                <span class="sec-tile-top">${secBadge(x)}${b < 0 ? '<span class="sec-pill">Deficit</span>' : ''}</span>
+                <span class="sec-tile-top">${secBadge(x)}${b < 0 ? '<span class="sec-pill">Deficit</span>' : x.accountId ? '' : '<span class="sec-pill is-all">All accounts</span>'}</span>
                 <span class="sec-tile-name">${escapeHtml(x.name)}</span>
                 <strong class="sec-tile-amount amount" data-countup="${b}">${escapeHtml(formatCurrency(b, cur))}</strong>
                 <span class="sec-tile-bar"><span data-grow="${used.toFixed(1)}"></span></span>
@@ -7102,15 +7137,17 @@ const planSectionsHtml = () => {
 const renderSectionsHome = () => {
     const el = $('dash-sections');
     if (!el) return;
-    if (!secList().length) { el.innerHTML = ''; return; }
+    const viewing = viewAccountObj();
+    const mine = fundsFor(viewing ? viewing.id : null);
+    if (!mine.length) { el.innerHTML = ''; return; }
     const bal = sectionBalances();
     const cur = dcur();
-    const waiting = undividedIncomes();
+    const waiting = undividedIncomes().filter((t) => !viewing || t.accountId === viewing.id);
     el.innerHTML = `<section class="card sec-home">
         <div class="card-head"><h2 class="card-title">Funds</h2><button type="button" class="link-btn" data-goto-plan="sections">See all</button></div>
         ${waiting.length ? `<button type="button" class="btn btn-primary btn-block sec-home-divide" data-sec-divide="${escapeHtml(waiting[0].id)}">Allocate ${escapeHtml(waiting[0].desc)} · ${escapeHtml(formatCurrency(waiting[0].amount, waiting[0].currency))}</button>` : ''}
-        ${secStackBar(secList().map((x) => [x, bal[x.id] || 0]))}
-        <div class="sec-chips">${secList().map((x) => `<button type="button" class="sec-chip${bal[x.id] < 0 ? ' is-below' : ''}" data-sec-view="${escapeHtml(x.id)}">${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span class="amount ${bal[x.id] < 0 ? 'text-expense' : ''}">${escapeHtml(formatCompact(bal[x.id] || 0, cur))}</span></span></button>`).join('')}</div>
+        ${secStackBar(mine.map((x) => [x, bal[x.id] || 0]))}
+        <div class="sec-chips">${mine.map((x) => `<button type="button" class="sec-chip${bal[x.id] < 0 ? ' is-below' : ''}" data-sec-view="${escapeHtml(x.id)}">${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span class="amount ${bal[x.id] < 0 ? 'text-expense' : ''}">${escapeHtml(formatCompact(bal[x.id] || 0, cur))}</span></span></button>`).join('')}</div>
     </section>`;
     animateIn(el);
 };
@@ -7135,12 +7172,15 @@ let txSectionId = null;
 let txSectionTouched = false;
 const renderTxSections = () => {
     const field = $('tx-section-field');
-    const show = txType === 'expense' && secList().length > 0;
+    const accId = $('tx-account').value || (state.accounts[0] && state.accounts[0].id);
+    const list = fundsFor(accId);
+    const show = txType === 'expense' && list.length > 0;
     field.hidden = !show;
     if (!show) return;
+    if (txSectionId && !list.some((x) => x.id === txSectionId)) txSectionId = null;
     const bal = sectionBalances();
     const cur = dcur();
-    $('tx-section-picker').innerHTML = secList().map((x) => `<button type="button" class="sec-pick" data-tx-section="${escapeHtml(x.id)}" aria-pressed="${txSectionId === x.id}">${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span class="${bal[x.id] < 0 ? 'text-expense' : ''}">${escapeHtml(formatCompact(bal[x.id] || 0, cur))}</span></span></button>`).join('')
+    $('tx-section-picker').innerHTML = list.map((x) => `<button type="button" class="sec-pick" data-tx-section="${escapeHtml(x.id)}" aria-pressed="${txSectionId === x.id}">${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span class="${bal[x.id] < 0 ? 'text-expense' : ''}">${escapeHtml(formatCompact(bal[x.id] || 0, cur))}</span></span></button>`).join('')
         + `<button type="button" class="sec-pick is-none" data-tx-section="" aria-pressed="${!txSectionId}"><span><span>Unallocated</span></span></button>`;
 };
 const pickTxSection = (id) => { txSectionId = id || null; txSectionTouched = true; renderTxSections(); haptic(); };
@@ -8800,19 +8840,58 @@ const importBackup = (file) => {
     reader.readAsText(file);
 };
 
+// Everything Vela keeps on this phone (not the phone's own settings: lock timing, screen privacy, device key).
+const VELA_DATA_KEYS = ['VELA_STATE', 'VELA_SHOP_LOGOS', 'VELA_NOTIF_LOG', 'VELA_VIEW_ACCOUNT', 'VELA_HIDE_BALANCE', 'VELA_INSIGHTS_ALL', 'VELA_SMS', 'VELA_BEFORE_BAL_FIXED'];
+const clearPhoneData = async () => {
+    const ln = nativePlugin('LocalNotifications');
+    if (ln && state.config.reminderIds.length) { try { await ln.cancel({ notifications: state.config.reminderIds.map((id) => ({ id })) }); } catch (e) { /* ignore */ } }
+    const sms = smsPlugin && smsPlugin();
+    if (sms && sms.disconnect) { try { await sms.disconnect(); } catch (e) { /* ignore */ } }
+    VELA_DATA_KEYS.forEach((k) => storage.remove(k));
+    try { await new Promise((done) => { const r = indexedDB.deleteDatabase('vela'); r.onsuccess = r.onerror = r.onblocked = () => done(); }); } catch (e) { /* no receipts */ }
+};
 const wipeData = () => {
     const cloud = canSync();
+    $('wipe-msg').textContent = `${plural(state.transactions.length, 'entry', 'entries')}, ${plural(state.accounts.length, 'account')}, funds, goals, bills, debts, trips, logos and receipt photos.`;
+    $('btn-wipe-everywhere').hidden = !cloud;
+    $('btn-wipe-phone').textContent = cloud ? 'This phone only' : 'Delete everything';
+    $('wipe-note').textContent = cloud
+        ? '"This phone only": your synced data comes back when you sign in again. "Everywhere": it is also deleted from your online account and cannot be brought back.'
+        : 'This cannot be undone. Make a backup first (Back up data) if you might need it.';
+    openOrSwap('modal-wipe');
+};
+const wipePhone = async () => {
+    closeSheet('modal-wipe');
+    await clearPhoneData();
+    window.location.reload();
+};
+const wipeEverywhere = () => {
     showConfirm({
-        title: 'Delete data on this device?',
-        message: cloud
-            ? 'Everything stored on this device will be removed. Your synced data stays in your account and comes back when the app reloads.'
-            : `This permanently deletes ${plural(state.transactions.length, 'entry', 'entries')}, ${plural(state.savings.length, 'goal')}, bills and debts. Back up first if you might need them.`,
-        confirmLabel: 'Delete everything',
+        title: 'Delete everything everywhere?',
+        message: 'All your Vela data is deleted from this phone AND from your online account. It cannot be brought back.',
+        confirmLabel: 'Delete everywhere',
         onConfirm: async () => {
-            const ln = nativePlugin('LocalNotifications');
-            if (ln && state.config.reminderIds.length) { try { await ln.cancel({ notifications: state.config.reminderIds.map((id) => ({ id })) }); } catch (e) { /* ignore */ } }
-            storage.remove(STORAGE_KEY);
-            try { localStorage.removeItem(SHOP_LOGO_KEY); } catch (e) { /* ignore */ }
+            closeSheet('modal-wipe');
+            const uid = state.auth.user && state.auth.user.id;
+            try {
+                const { error } = await supabaseClient.from('vela_records').delete().eq('user_id', uid);
+                if (error) throw error;
+                // The settings row is emptied (accounts, budgets, funds, trips...).
+                const fresh = createDefaultState();
+                applyRegionDefaults(fresh);
+                const keep = { auth: state.auth, settingsUser: state.settingsUser };
+                state = { ...fresh, ...keep, sync: {}, syncSettings: true, settingsSig: null };
+                ensureAccounts(state);
+                saveState();
+                const ok = await flushSync();
+                if (!ok) throw new Error('settings not uploaded');
+            } catch (e) {
+                showToast('Couldn’t delete your online data (check the internet). Nothing was deleted from the phone.', 'error');
+                loadState();
+                renderActive();
+                return;
+            }
+            await clearPhoneData();
             window.location.reload();
         }
     });
@@ -8977,6 +9056,8 @@ const initEvents = () => {
         if (d.smsPairSplit) { smsPairSplit(d.smsPairSplit); return; }
         if (d.openTrip) { openTrips(d.openTrip); return; }
         if (d.secTemplate) { setupSections(d.secTemplate); return; }
+        if (d.action === 'wipe-phone') { wipePhone(); return; }
+        if (d.action === 'wipe-everywhere') { wipeEverywhere(); return; }
         if (d.fundIncome) { toggleFundIncomeCat(d.fundIncome); return; }
         if (d.action === 'tx-allocate') {
             const id = $('tx-allocate').dataset.id;
@@ -8992,6 +9073,7 @@ const initEvents = () => {
         if (d.secMode) { secEditMode = d.secMode; renderSectionEditor(); return; }
         if (d.secColor) { secEditColor = d.secColor; renderSectionEditor(); return; }
         if (d.secIcon) { secEditIcon = d.secIcon; renderSectionEditor(); return; }
+        if (d.action === 'sec-once') { secEditOnce = !secEditOnce; renderSectionEditor(); return; }
         if (d.txSection !== undefined) { pickTxSection(d.txSection); return; }
         if (d.action === 'sec-new') { openSectionEditor(); return; }
         if (d.action === 'sec-edit') { openSectionEditor(secViewId); return; }
@@ -9267,7 +9349,7 @@ const initEvents = () => {
     $('tx-trip').addEventListener('click', () => { txTripId = txTripId ? null : $('tx-trip').dataset.trip; updateTripRow(); });
     $('tx-before').addEventListener('click', () => { txBefore = !txBefore; txBeforeTouched = true; updateBeforeRow(); });
     $('tx-date').addEventListener('change', updateBeforeRow);
-    $('tx-account').addEventListener('change', () => { updateBeforeRow(); txChargedTouched = false; updateChargedRow(); });
+    $('tx-account').addEventListener('change', () => { updateBeforeRow(); txChargedTouched = false; updateChargedRow(); renderTxSections(); });
     $('tx-date').addEventListener('change', () => { if (!$('tx-id').value && txType === 'expense') { txTripId = tripIdFor($('tx-date').value); updateTripRow(); } });
     $('mfa-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitMfa(); } });
     setInterval(pollSignInRequests, 8000);
@@ -9720,6 +9802,12 @@ const openAccountEditor = (id) => {
     fillCurrencySelect($('account-currency'), a ? a.currency : dcur());
     $('account-opening').value = a ? round2(accountBalance(a)) : '';
     $('account-balance-date').value = a ? (balanceDateOf(a) || todayISO()) : todayISO();
+    const feeAcc = a || { kind: $('account-kind').value || 'bank', currency: dcur() };
+    $('account-fee').value = a && fxFeeLearned(a) ? a.fxFee : '';
+    $('account-fee').placeholder = String(FX_FEE_TYPICAL[feeAcc.currency] ?? 3);
+    $('account-fee-hint').textContent = a && fxFeeLearned(a)
+        ? `Learned from what your bank charged. Foreign purchases from this account cost the market rate + ${a.fxFee}%.`
+        : `Empty = typical ${FX_FEE_TYPICAL[feeAcc.currency] ?? 3}% for ${feeAcc.currency} cards. Enter your bank's real charge if you know it; Vela also learns it from your bank SMS.`;
     $('account-balance-date').max = todayISO();
     $('account-opening-label').textContent = 'Balance right now';
     $('account-opening-hint').textContent = a
@@ -9762,6 +9850,15 @@ const submitAccount = () => {
         a.kind = kind;
         a.currency = currency;
         // Keep entries untouched: move the starting amount so today's balance matches.
+        const feeRaw = $('account-fee').value.trim();
+        const feeNew = feeRaw === '' ? null : toNumber(feeRaw, NaN);
+        if (feeRaw !== '' && !(feeNew >= -3 && feeNew <= 15)) return fieldError($('account-fee'), 'Enter a charge between 0 and 15%.');
+        const feeChanged = (feeNew === null ? null : round2(feeNew)) !== (fxFeeLearned(a) ? a.fxFee : null);
+        if (feeChanged) {
+            if (feeNew === null) delete a.fxFee; else a.fxFee = round2(feeNew);
+            const n = reestimateFx(a);
+            if (n) setTimeout(() => showToast(`${plural(n, 'estimated foreign purchase')} worked out again with the new charge`, 'success'), 400);
+        }
         const before = accountBalance(a);
         a.opening = round2(a.opening + (balance - before));
         const chosen = $('account-balance-date').value;

@@ -4762,3 +4762,10 @@ body.approve-waiting { overflow: hidden; }
 .view-bar .amount.text-expense, .view-bar-text .text-expense { color: var(--expense); }
 
 .fx-charged-field { padding: 12px; border-radius: 14px; background: color-mix(in srgb, var(--pal-cyan) 10%, transparent); }
+
+.plan-tabs-wrap {}
+#modal-section .segmented button { font-size: 12px; padding-left: 4px; padding-right: 4px; }
+.sec-pill.is-all { color: var(--text-2); background: var(--surface-2); }
+/* Fund editor: four ways a fund gets money, as a 2 x 2 grid so they always fit */
+#modal-section .segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; border-radius: 18px; }
+#modal-section .segmented button { font-size: 13px; padding: 10px 6px; min-width: 0; white-space: nowrap; border-radius: 14px; }

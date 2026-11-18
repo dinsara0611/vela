@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.43.1">
+    <link rel="stylesheet" href="style.css?v=4.44.0">
 </head>
 <body data-view="dashboard">
 
@@ -641,7 +641,7 @@
                             <input type="file" id="file-import" accept=".json,application/json" hidden>
                             <button class="row-btn danger" type="button" id="btn-wipe-data">
                                 <span class="row-icon"><svg class="ic"><use href="#i-trash"/></svg></span>
-                                <span class="row-label"><span>Delete data on this device</span><span>Removes everything stored here</span></span>
+                                <span class="row-label"><span>Clear all data</span><span>From this phone, or everywhere</span></span>
                             </button>
                         </div>
                     </div>
@@ -1290,6 +1290,26 @@
         </div>
     </div>
 
+    <!-- Clear all data -->
+    <div class="sheet-overlay" id="modal-wipe" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="wipe-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <h2 class="sheet-title" id="wipe-title">Clear all data</h2>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body">
+                <p class="card-sub">This removes <span id="wipe-msg"></span></p>
+                <p class="field-hint" id="wipe-note"></p>
+            </div>
+            <div class="sheet-foot wipe-foot">
+                <button type="button" class="btn btn-secondary" data-close-sheet>Cancel</button>
+                <button type="button" class="btn btn-danger-solid" id="btn-wipe-phone" data-action="wipe-phone">This phone only</button>
+                <button type="button" class="btn btn-danger-solid" id="btn-wipe-everywhere" data-action="wipe-everywhere" hidden>Everywhere</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Funds: allocate an income -->
     <div class="sheet-overlay" id="modal-divide" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="divide-title">
@@ -1355,12 +1375,22 @@
                         <button type="button" data-sec-mode="percent" aria-pressed="true">% of income</button>
                         <button type="button" data-sec-mode="amount" aria-pressed="false">Fixed amount</button>
                         <button type="button" data-sec-mode="rest" aria-pressed="false">Remainder</button>
+                        <button type="button" data-sec-mode="manual" aria-pressed="false">Only what I add</button>
                     </div>
                     <span class="field-hint" id="section-mode-hint"></span>
+                </div>
+                <div class="field">
+                    <label class="field-label" for="section-account">Money kept in</label>
+                    <div class="select"><select id="section-account" class="input"></select></div>
+                    <span class="field-hint">Allocated only from income into this account, and spent only by expenses from it.</span>
                 </div>
                 <div class="field" id="section-value-field">
                     <label class="field-label" for="section-value" id="section-value-label">Percentage of each income (%)</label>
                     <input type="text" id="section-value" class="input" inputmode="decimal" autocomplete="off">
+                </div>
+                <div class="setting-row" id="section-once-row" hidden>
+                    <div class="setting-text"><span class="setting-title">Only once</span><span class="setting-desc">Allocated from the next income only, then nothing more (for example food money for this month).</span></div>
+                    <button class="switch" type="button" role="switch" aria-checked="false" id="section-once" data-action="sec-once" aria-label="Only once"></button>
                 </div>
                 <fieldset class="field">
                     <legend class="field-label" style="margin-bottom:6px">Icon</legend>
@@ -1634,6 +1664,11 @@
                         <span class="field-hint" id="account-opening-hint">What is in this account today. Use a minus sign for a card you owe on.</span>
                     </div>
                     <div class="field">
+                        <label class="field-label" for="account-fee">Foreign purchase charge (%)</label>
+                        <input type="text" id="account-fee" class="input" inputmode="decimal" autocomplete="off">
+                        <span class="field-hint" id="account-fee-hint"></span>
+                    </div>
+                    <div class="field">
                         <label class="field-label" for="account-balance-date">Balance correct on</label>
                         <input type="date" id="account-balance-date" class="input">
                         <span class="field-hint">Entries dated before this day are already in the balance, so they aren't counted again.</span>
@@ -1811,7 +1846,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.43.1"></script>
+    <script src="app.js?v=4.44.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
