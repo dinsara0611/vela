@@ -4751,3 +4751,12 @@ body.approve-waiting { overflow: hidden; }
 .fund-income-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: var(--sp-2); }
 .tx-allocate { margin: 4px 0 8px; }
 .divide-keep-row { margin-top: var(--sp-2); }
+
+/* A minus balance: red (bright enough on the purple Home card) and labelled */
+.hero-amount.is-negative { color: #ff6b81; text-shadow: 0 0 22px rgba(255, 77, 109, 0.35); }
+:root[data-theme="light"] .hero-amount.is-negative { color: #d7263d; text-shadow: none; }
+@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) .hero-amount.is-negative { color: #d7263d; text-shadow: none; } }
+.hero-minus { font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; padding: 3px 8px; border-radius: 999px; color: #fff; background: #e5384f; margin-left: 6px; white-space: nowrap; }
+.hero-minus[hidden] { display: none; }
+/* The account bar's grey text style must not hide a minus balance */
+.view-bar .amount.text-expense, .view-bar-text .text-expense { color: var(--expense); }

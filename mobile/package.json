@@ -1,6 +1,6 @@
 {
   "name": "vela-mobile",
-  "version": "4.42.3",
+  "version": "4.42.4",
   "private": true,
   "description": "Vela Android app (Capacitor wrapper around the web app in the repository root).",
   "scripts": {

@@ -1968,6 +1968,57 @@ export async function run() {
         return (notAsked && btn && opened && keepShown && added === 10000 && asked) || `not asked ${notAsked}, button ${btn}, opened ${opened}, keep switch ${keepShown}, added ${added}, asked once chosen ${asked}`;
     });
 
+    await T('Account added today with its current balance: an older expense is history, not taken off again', async () => {
+        g('openAccountEditor')(); await wait(300);
+        $('account-name').value = 'Sampath Bank'; $('account-kind').value = 'bank';
+        g('fillCurrencySelect')($('account-currency'), 'LKR');
+        $('account-opening').value = '50000';
+        g('submitAccount')(); await wait(400);
+        const acc = s().accounts.find((a) => a.name === 'Sampath Bank');
+        const bal = () => Math.round(g('accountBalance')(s().accounts.find((a) => a.id === acc.id)));
+        const twoDaysAgo = iso(addDays(new Date(), -2));
+        g('openAddTx')('expense'); await wait(300);
+        $('tx-account').value = acc.id; $('tx-account').dispatchEvent(new Event('change', { bubbles: true }));
+        $('tx-date').value = twoDaysAgo; $('tx-date').dispatchEvent(new Event('change', { bubbles: true }));
+        const shown = !$('tx-before-row').hidden && $('tx-before').getAttribute('aria-checked') === 'true';
+        $('tx-amount').value = '3000'; $('tx-desc').value = 'Groceries before';
+        await g('submitTx')(); await wait(350);
+        const afterOld = bal();
+        const counted = find('Groceries before').beforeBalance === true;
+        await addTx({ amount: 1000, desc: 'Lunch today', account: acc.id });
+        const afterNew = bal();
+        // Bank SMS from before the account was added: also already in the balance.
+        const sms = g('quickSaveTx')({ type: 'expense', desc: 'Old card payment', amount: 700, currency: 'LKR', category: 'Food', date: twoDaysAgo, accountId: acc.id });
+        const afterSms = bal();
+        // An entry added by an older version (no mark) is fixed once.
+        const old = find('Lunch today');
+        const legacy = { ...old, id: 'legacy-1', desc: 'Legacy back-dated', date: twoDaysAgo, createdAt: Date.now() };
+        delete legacy.beforeBalance;
+        s().transactions.push(legacy); g('saveState')();
+        const beforeFix = bal();
+        localStorage.removeItem('VELA_BEFORE_BAL_FIXED');
+        const fixed = g('fixBeforeBalance')();
+        const afterFix = bal();
+        return (shown && counted && afterOld === 50000 && afterNew === 49000 && sms.beforeBalance && afterSms === 49000 && beforeFix === 48000 && fixed >= 1 && afterFix === 49000)
+            || `switch ${shown}, marked ${counted}, after old ${afterOld}, after today ${afterNew}, sms ${afterSms}, legacy ${beforeFix}->${afterFix} (fixed ${fixed})`;
+    });
+
+    await T('A minus balance is red with a label on Home, in the account bar, account cards and total', async () => {
+        const acc = s().accounts.find((a) => a.name === 'Sampath Bank');
+        g('setViewAccount')(acc.id);
+        await addTx({ amount: 200000, desc: 'Big overdraft', account: acc.id });
+        g('switchTab')('dashboard'); await wait(500);
+        const hero = $('dash-balance').classList.contains('is-negative') && !$('dash-minus').hidden;
+        const bar = document.querySelector('#tab-dashboard .view-bar .amount');
+        const barRed = bar && getComputedStyle(bar).color === getComputedStyle(document.querySelector('.text-expense') || bar).color && bar.classList.contains('text-expense');
+        const chip = document.querySelector(`[data-view-account="${acc.id}"] .account-bal`);
+        const chipRed = !!chip && chip.classList.contains('text-expense');
+        g('deleteTx')(find('Big overdraft').id); await confirmOk(); await wait(300);
+        g('switchTab')('dashboard'); await wait(300);
+        const back = !$('dash-balance').classList.contains('is-negative') && $('dash-minus').hidden;
+        return (hero && barRed && chipRed && back) || `hero ${hero}, bar ${barRed}, card ${chipRed}, normal again ${back}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

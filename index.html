@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.42.3">
+    <link rel="stylesheet" href="style.css?v=4.42.4">
 </head>
 <body data-view="dashboard">
 
@@ -225,7 +225,7 @@
                     <article class="hero">
                         <svg class="hero-sail" aria-hidden="true"><use href="#sail-outline"/></svg>
                         <div class="hero-top">
-                            <span class="hero-label-row"><span class="hero-label" id="dash-month-label">This month's balance</span><button type="button" class="hero-eye" id="btn-hide-balance" data-hide-balance="" aria-pressed="false" aria-label="Hide balance" hidden></button></span>
+                            <span class="hero-label-row"><span class="hero-label" id="dash-month-label">This month's balance</span><span class="hero-minus" id="dash-minus" hidden>Minus balance</span><button type="button" class="hero-eye" id="btn-hide-balance" data-hide-balance="" aria-pressed="false" aria-label="Hide balance" hidden></button></span>
                             <span class="pill" id="dash-spend-trend" data-trend="flat"><svg class="ic"><use href="#i-arrow-up"/></svg><span id="dash-spend-trend-text">—</span></span>
                         </div>
                         <div class="hero-amount amount" id="dash-balance">$0.00</div>
@@ -782,6 +782,10 @@
                     <div class="field" id="tx-section-field" hidden>
                         <span class="field-label">Paid from fund</span>
                         <div class="sec-picker" id="tx-section-picker" role="group" aria-label="Fund"></div>
+                    </div>
+                    <div class="setting-row tx-before-row" id="tx-before-row" hidden>
+                        <div class="setting-text"><span class="setting-title">Already in my balance</span><span class="setting-desc" id="tx-before-desc"></span></div>
+                        <button class="switch" type="button" role="switch" aria-checked="false" id="tx-before" aria-label="Already in my balance"></button>
                     </div>
                     <div class="setting-row tx-trip-row" id="tx-trip-row" hidden>
                         <div class="setting-text"><span class="setting-title" id="tx-trip-name">Part of the trip</span><span class="setting-desc">Counts in the trip's total.</span></div>
@@ -1797,7 +1801,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.42.3"></script>
+    <script src="app.js?v=4.42.4"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

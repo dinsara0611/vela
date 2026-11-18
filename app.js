@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.42.3';
+const APP_VERSION = '4.42.4';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -563,7 +563,7 @@ const accountBalance = (acc) => {
         if (t.type === 'transfer') {
             if (t.accountId === acc.id) bal -= convertAmount(t.amount, t.currency, acc.currency);
             if (t.toAccountId === acc.id) bal += convertAmount(t.toAmount, t.toCurrency, acc.currency);
-        } else if (t.accountId === acc.id) {
+        } else if (t.accountId === acc.id && !t.beforeBalance) {
             bal += (t.type === 'income' ? 1 : -1) * convertAmount(t.amount, t.currency, acc.currency);
         }
     });
@@ -574,6 +574,28 @@ const accountBalance = (acc) => {
     });
     if (balanceMemo) balanceMemo.set(acc, bal);
     return bal;
+};
+// The day an account's balance was typed in (when it was added, or when its balance was last corrected).
+const balanceDateOf = (acc) => (acc ? acc.balanceDate || (acc.createdAt ? toISODate(new Date(acc.createdAt)) : null) : null);
+// An entry dated before that day is already inside that balance.
+const beforeBalanceFor = (accountId, date) => {
+    const d = balanceDateOf(state.accounts.find((a) => a.id === accountId));
+    return !!(d && date && date < d);
+};
+// Entries added (by hand, from bank SMS, ...) after an account was set up but dated before it were taken off the
+// balance a second time. Fixed once: they're marked as already in the balance. Only accounts given a balance.
+const fixBeforeBalance = () => {
+    if (storage.get('VELA_BEFORE_BAL_FIXED') === '1') return 0;
+    let n = 0;
+    state.transactions.forEach((t) => {
+        if (t.type === 'transfer' || t.beforeBalance) return;
+        const a = state.accounts.find((x) => x.id === t.accountId);
+        if (!a || !a.createdAt || !a.opening || !t.createdAt) return;
+        if (t.createdAt > a.createdAt && t.date < toISODate(new Date(a.createdAt))) { t.beforeBalance = true; queueSync('transaction', t.id, 'upsert', false); n++; }
+    });
+    storage.set('VELA_BEFORE_BAL_FIXED', '1');
+    if (n) saveState();
+    return n;
 };
 const netWorth = () => state.accounts.reduce((s, a) => s + toDisplay(accountBalance(a), a.currency), 0);
 // How much the account you're in changed this month (income, spending and transfers in or out; waiting ones not
@@ -645,7 +667,9 @@ const normalizeTx = (t, forcedType) => {
         ...(typeof t.paidAt === 'string' && !isNaN(Date.parse(t.paidAt)) ? { paidAt: t.paidAt } : {}),
         ...(normalizeBankMeta(t.bank) ? { bank: normalizeBankMeta(t.bank) } : {}),
         ...(type === 'expense' && t.tripId ? { tripId: String(t.tripId).slice(0, 64) } : {}),
-        ...(type === 'expense' && t.sectionId ? { sectionId: String(t.sectionId).slice(0, 64) } : {})
+        ...(type === 'expense' && t.sectionId ? { sectionId: String(t.sectionId).slice(0, 64) } : {}),
+        // Dated before the account's balance was entered: already in that balance, so it doesn't change it again.
+        ...(type !== 'transfer' && t.beforeBalance === true ? { beforeBalance: true } : {})
     };
 };
 // Bank details on an entry: only known fields, short strings, no message text.
@@ -730,7 +754,8 @@ const normalizeAccount = (a) => {
         kind: ACCOUNT_KINDS[a.kind] ? a.kind : 'cash',
         currency: normCur(a.currency),
         opening: toNumber(a.opening, 0),
-        createdAt: stamp(a.createdAt)
+        createdAt: stamp(a.createdAt),
+        ...(cleanDate(a.balanceDate) ? { balanceDate: cleanDate(a.balanceDate) } : {})
     };
 };
 
@@ -1884,6 +1909,7 @@ const logBill = (bill, date) => {
         receipt: null
     };
     if (tx.type === 'expense' && sectionForCategory(tx.category)) tx.sectionId = sectionForCategory(tx.category);
+    if (beforeBalanceFor(tx.accountId, tx.date)) tx.beforeBalance = true;
     state.transactions.push(tx);
     queueSync('transaction', tx.id, 'upsert', false);
     return tx;
@@ -2070,7 +2096,7 @@ const txRow = (t, { showDate = true } = {}) => {
     const signed = formatSigned(t.type === 'income' ? value : -value, dcur());
     const orig = t.currency !== dcur() ? `<span class="tx-orig-inline">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>` : '';
     const sec = t.sectionId ? secById(t.sectionId) : null;
-    const label = `${showDate ? cat.name : (t.note || cat.name)}${sec ? ` · ${sec.name}` : ''}`;
+    const label = `${showDate ? cat.name : (t.note || cat.name)}${sec ? ` · ${sec.name}` : ''}${t.beforeBalance ? ' · before balance date' : ''}`;
     const st = t.pending ? payStatus(t.date) : null;
     const waitingStrip = t.pending ? `<div class="tx-confirm" data-status="${st}"><span>${st === 'overdue' ? `${t.type === 'income' ? 'Expected' : 'Was due'} ${escapeHtml(shortDate(t.date))}` : st === 'due' ? (t.type === 'income' ? 'Expected today' : 'Due today') : `Due ${escapeHtml(shortDate(t.date))}`}</span><button type="button" class="btn btn-xs ${t.type === 'income' ? 'btn-income' : 'btn-primary'}" data-pay="tx:${escapeHtml(t.id)}">${icon('i-check', 'ic ic-sm')} ${t.type === 'income' ? 'Mark as received' : 'Mark as paid'}</button></div>` : '';
     return `<li class="${t.pending ? 'tx-li-pending' : ''}"><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
@@ -4078,6 +4104,10 @@ const renderDashboard = () => {
         eye.innerHTML = icon(hideIt ? 'i-eye-off' : 'i-eye', 'ic ic-sm');
     }
     if (hideIt) showHidden($('dash-balance'), cur); else countUp($('dash-balance'), viewBalance(), cur);
+    // A minus balance is always shown in red, with a label (never only by colour).
+    const minus = !hideIt && viewBalance() < -0.004;
+    $('dash-balance').classList.toggle('is-negative', minus);
+    $('dash-minus').hidden = !minus;
     const nowD = new Date();
     const coming = viewTx().filter((t) => isUpcoming(t) && t.type === 'income' && inMonth(t, nowD.getFullYear(), nowD.getMonth()))
         .sort((a, b) => (a.date > b.date ? 1 : -1));
@@ -4132,6 +4162,7 @@ const renderDashboard = () => {
     renderTripHome();
     renderSectionsHome();
     setMoney($('networth'), netWorth(), cur, 16);
+    $('networth').classList.toggle('text-expense', netWorth() < -0.004);
     $('account-strip').innerHTML = state.accounts.map((a) => {
         const bal = accountBalance(a);
         return `<button type="button" class="account-chip${viewId() === a.id ? ' is-current' : ''}" data-view-account="${escapeHtml(a.id)}" data-hold-account="${escapeHtml(a.id)}" aria-pressed="${viewId() === a.id}" aria-label="${escapeHtml(a.name)}: ${escapeHtml(formatCurrency(bal, a.currency))}. ${viewId() === a.id ? 'You are in this account' : 'Switch to this account'}">
@@ -4825,6 +4856,23 @@ const setTxType = (type, keepCategory) => {
     setTxKind(txKind);
     updateTripRow();
     renderTxSections();
+    updateBeforeRow();
+};
+// An entry dated before its account's balance was typed in: "Already in my balance" (on by default), so it's
+// recorded in history and spending without changing the balance again.
+let txBefore = false;
+let txBeforeTouched = false;
+const updateBeforeRow = () => {
+    const accId = $('tx-account').value || (state.accounts[0] && state.accounts[0].id);
+    const acc = state.accounts.find((a) => a.id === accId);
+    const bd = balanceDateOf(acc);
+    const date = $('tx-date').value;
+    const show = !!(bd && isISODate(date) && date <= bd && (txType === 'expense' || txType === 'income'));
+    $('tx-before-row').hidden = !show;
+    if (!show) { if (!txBeforeTouched) txBefore = false; return; }
+    if (!txBeforeTouched) txBefore = date < bd;
+    setSwitch($('tx-before'), txBefore);
+    $('tx-before-desc').textContent = `${acc.name}'s balance was entered on ${shortDate(bd)}. ${txBefore ? `This ${txType} is already inside it, so it's kept in your history and spending without changing the balance again.` : `This ${txType} will be ${txType === 'income' ? 'added to' : 'taken off'} the balance.`}`;
 };
 // While a trip is on (or the entry already belongs to one), expenses show a "Part of the trip" switch.
 let txTripId = null;
@@ -4886,6 +4934,8 @@ const openAddTx = (type = 'expense') => {
     $('tx-date').value = todayISO();
     txWaiting = false;
     txTripId = tripIdFor(todayISO());
+    txBefore = false;
+    txBeforeTouched = false;
     txSectionId = null;
     txSectionTouched = false;
     setTxType(type);
@@ -4916,6 +4966,8 @@ const openEditTx = (id) => {
     $('tx-note').value = t.note || '';
     txWaiting = t.pending === true;
     txTripId = t.tripId || null;
+    txBefore = t.beforeBalance === true;
+    txBeforeTouched = true;
     txSectionId = t.sectionId && secById(t.sectionId) ? t.sectionId : null;
     txSectionTouched = true;
     setTxType(t.type, t.category);
@@ -4983,6 +5035,7 @@ const submitTx = async () => {
         record = { ...prev, type: txType, desc, amount, currency, category, date, note, accountId, receipt, fixed: txKind === 'fixed' || !!prev.recurringId, pending: waiting };
         if (txType === 'expense' && txTripId) record.tripId = txTripId; else delete record.tripId;
         if (txType === 'expense' && txSectionId && secById(txSectionId)) record.sectionId = txSectionId; else delete record.sectionId;
+        if (!$('tx-before-row').hidden && txBefore) record.beforeBalance = true; else delete record.beforeBalance;
         // Marked done here: same as tapping Received / Paid. Marked not done: it waits again, with reminders.
         if (prev.pending && !waiting) { record.paidAt = new Date().toISOString(); record.dueDate = prev.dueDate || prev.date; cancelPaymentReminders(`tx:${id}`); }
         if (!prev.pending && waiting) delete record.paidAt;
@@ -4992,6 +5045,7 @@ const submitTx = async () => {
         record = { id: generateId(), type: txType, desc, amount, currency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txKind === 'fixed', pending: date > todayISO() || txWaiting };
         if (txType === 'expense' && txTripId) record.tripId = txTripId;
         if (txType === 'expense' && txSectionId && secById(txSectionId)) record.sectionId = txSectionId;
+        if (!$('tx-before-row').hidden && txBefore) record.beforeBalance = true;
         if (record.pending) setTimeout(scheduleReminders, 0);
         // A new fixed entry that repeats becomes a monthly fixed payment; this entry is its first one.
         // Fixed income is only expected each month: it counts when you tap Received (never on its own, never twice).
@@ -5683,6 +5737,7 @@ const quickSaveTx = (d) => {
     const acc = state.accounts.find((a) => a.id === d.accountId) || state.accounts.find((a) => a.id === state.config.lastAccount) || state.accounts[0];
     const record = { id: generateId(), type: d.type, desc: d.desc, amount: d.amount, currency: d.currency, category: d.category, date: d.date, note: d.note || '', createdAt: Date.now(), recurringId: null, accountId: acc.id, receipt: null, fixed: d.type === 'expense' && !!d.fixed, pending: d.date > todayISO() };
     if (d.type === 'expense' && tripIdFor(d.date)) record.tripId = tripIdFor(d.date);
+    if (beforeBalanceFor(acc.id, d.date)) record.beforeBalance = true;
     if (d.type === 'expense' && sectionForCategory(d.category)) record.sectionId = sectionForCategory(d.category);
     state.transactions.push(record);
     state.config.lastCategory[d.type] = d.category;
@@ -9116,6 +9171,9 @@ const initEvents = () => {
         }
     });
     $('tx-trip').addEventListener('click', () => { txTripId = txTripId ? null : $('tx-trip').dataset.trip; updateTripRow(); });
+    $('tx-before').addEventListener('click', () => { txBefore = !txBefore; txBeforeTouched = true; updateBeforeRow(); });
+    $('tx-date').addEventListener('change', updateBeforeRow);
+    $('tx-account').addEventListener('change', updateBeforeRow);
     $('tx-date').addEventListener('change', () => { if (!$('tx-id').value && txType === 'expense') { txTripId = tripIdFor($('tx-date').value); updateTripRow(); } });
     $('mfa-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitMfa(); } });
     setInterval(pollSignInRequests, 8000);
@@ -9608,10 +9666,12 @@ const submitAccount = () => {
         a.kind = kind;
         a.currency = currency;
         // Keep entries untouched: move the starting amount so today's balance matches.
-        a.opening = round2(a.opening + (balance - accountBalance(a)));
+        const before = accountBalance(a);
+        a.opening = round2(a.opening + (balance - before));
+        if (Math.abs(balance - before) > 0.004) a.balanceDate = todayISO(); // a corrected balance is today's
         showToast('Account saved', 'success');
     } else {
-        state.accounts.push({ id: generateId(), name, kind, currency, opening: round2(balance), createdAt: Date.now() });
+        state.accounts.push({ id: generateId(), name, kind, currency, opening: round2(balance), createdAt: Date.now(), balanceDate: todayISO() });
         showToast(`${name} added`, 'success');
     }
     afterAccountChange();
@@ -9961,6 +10021,7 @@ const init = () => {
     runSplash();
     loadState();
     repairAccountKinds();
+    { const fixed = fixBeforeBalance(); if (fixed) setTimeout(() => showToast(`Fixed ${plural(fixed, 'entry', 'entries')} dated before an account was added: they were taken off its balance twice.`, 'success'), 1600); }
     applyViewBudget();
     migrateBudgets();
     fixAccountCurrencies();
