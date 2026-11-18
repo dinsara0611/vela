@@ -4933,3 +4933,10 @@ body.approve-waiting { overflow: hidden; }
 .budget-goals > span { flex: 1; }
 .goal-monthly-suggest { margin-top: 6px; align-self: flex-start; }
 .budget-goals { color: var(--primary); background: none; padding: 0; }
+
+/* Sign-in that didn't finish: the reason stays on the page */
+.auth-problem { display: grid; gap: 6px; margin-top: var(--sp-3); padding: 12px 14px; border-radius: 14px; background: var(--danger-soft); border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent); font-size: var(--fs-sm); color: var(--text); text-align: left; }
+.auth-problem[hidden] { display: none; }
+.auth-problem > strong { color: var(--danger); }
+.auth-problem summary { cursor: pointer; color: var(--text-2); font-weight: 600; }
+.auth-problem pre { margin: 6px 0 0; white-space: pre-wrap; font-size: 11px; color: var(--text-2); font-family: ui-monospace, monospace; }

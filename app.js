@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.51.0';
+const APP_VERSION = '4.51.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -8414,7 +8414,7 @@ const endApproveWait = (ok, message, via = 'phone') => {
     document.body.classList.remove('approve-waiting');
     if (ok) { showToast('Approved. Welcome back!', 'success'); g.resolve(via === 'phone' ? 'phone' : true); return; }
     g.resolve(false);
-    Promise.resolve(supabaseClient.auth.signOut()).catch(() => {}).finally(() => { resetToSignedOut(); if (message) showToast(message, 'warning'); });
+    Promise.resolve(supabaseClient.auth.signOut()).catch(() => {}).finally(() => { resetToSignedOut(); if (message) showAuthProblem(message); });
 };
 const askForApproval = async () => {
     const k = deviceKey();
@@ -8442,7 +8442,7 @@ const waitForApproval = () => new Promise((resolve) => {
     approvalGate = { resolve, requestId: null, number: '··', since: Date.now(), timer: null };
     askForApproval().then(() => {
         if (approvalGate) approvalGate.timer = setInterval(checkApproval, 3000);
-    }, () => endApproveWait(false, 'Couldn’t ask your other phone. Check the internet and sign in again.'));
+    }, (err) => endApproveWait(false, `Couldn’t ask your other phone (${(err && err.message) || 'server error'}). If you have no other phone signed in, turn off phone approval with turn-off-approval.sql, then sign in again.`));
 });
 const resendApproval = async () => {
     if (!approvalGate) return;
@@ -8507,20 +8507,63 @@ const decideSignIn = async (approve, picked) => {
     }
 };
 let gatingUser = null;
+let signSteps = [];
+let finishingUser = null;
+const signStep = (text) => {
+    signSteps = [...signSteps, `${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} ${String(text).replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, '(email)').slice(0, 160)}`].slice(-14);
+    try { localStorage.setItem('VELA_SIGNIN_STEPS', JSON.stringify(signSteps)); } catch (e) { /* storage blocked */ }
+};
+// A sign-in that didn't finish says why on the sign-in page itself (a toast is gone before you read it).
+const showAuthProblem = (message) => {
+    signStep(`Stopped: ${message}`);
+    const box = $('auth-problem');
+    if (!box) return;
+    $('auth-problem-text').textContent = message;
+    $('auth-problem-steps').textContent = signSteps.join('\n');
+    box.hidden = false;
+};
+const clearAuthProblem = () => { if ($('auth-problem')) $('auth-problem').hidden = true; };
 const handleSession = async (session) => {
     if (!session || !session.user) return;
     const user = session.user;
-    if (handledUserId === user.id || gatingUser === user.id) return;
+    if (gatingUser === user.id) return;
+    // Already done for this user, unless you're still looking at the sign-in page (then an earlier try failed: go again).
+    if (handledUserId === user.id && !$('auth-overlay-container').classList.contains('active')) return;
+    if (finishingUser === user.id) return; // the same sign-in is still loading
     gatingUser = user.id;
+    signStep('Signed in with Google. Checking this phone');
     let allowed;
     try {
         const phone = await passDeviceApproval();
+        signStep(phone === false ? 'This phone was not approved' : phone === 'phone' ? 'Approved on your other phone' : 'This phone is allowed');
         if (phone === false) allowed = false;
         else if (phone === 'phone') allowed = true; // approved on your other phone: that is the second step
-        else allowed = (await needsMfaCode()) ? await askMfaCode() : true;
+        else {
+            const mfa = await needsMfaCode();
+            if (mfa) signStep('Asking for the 6-digit code');
+            allowed = mfa ? await askMfaCode() : true;
+            if (mfa) signStep(allowed ? 'Code accepted' : 'Code not given');
+        }
+    } catch (err) {
+        allowed = false;
+        handledUserId = null;
+        showAuthProblem(`Couldn't check this phone (${(err && err.message) || 'unknown error'}). Check the internet and try again.`);
     } finally { gatingUser = null; }
     if (!allowed) return;
     handledUserId = user.id;
+    finishingUser = user.id;
+    try {
+        await finishSession(user);
+        signStep('Done');
+        clearAuthProblem();
+    } catch (err) {
+        // Don't remember a half-finished sign-in: the next try must run again, not be skipped.
+        handledUserId = null;
+        console.error('Sign-in did not finish:', err);
+        showAuthProblem(`Signed in, but your data couldn't be loaded (${(err && err.message) || 'unknown error'}). Check the internet and try again.`);
+    } finally { finishingUser = null; }
+};
+const finishSession = async (user) => {
 
     const hasLocal = state.transactions.length || state.savings.length || state.recurring.length || state.debts.length;
     const wasGuestWithData = state.auth.isMock && state.auth.completedOnboarding && hasLocal;
@@ -8552,6 +8595,7 @@ const handleSession = async (session) => {
     if (!sameUserAgain) { state.sync = {}; state.syncSettings = false; state.settingsUser = null; state.settingsSig = null; }
     saveState();
 
+    signStep('Loading your data');
     const hasRemote = await remoteHasData();
     const remoteHasSettings = await remoteSettingsExist();
     if (wasGuestWithData) {
@@ -8673,6 +8717,9 @@ const handleGoogleSignIn = async () => {
         return;
     }
     const native = isNative();
+    signSteps = [];
+    clearAuthProblem();
+    signStep('Opening Google');
     const { data, error } = await supabaseClient.auth.signInWithOAuth({
         provider: 'google',
         // In the Android app Google opens in a real browser tab (Google blocks sign-in inside app web views).
@@ -8687,7 +8734,9 @@ const handleGoogleSignIn = async () => {
 };
 
 const handleNativeAuthRedirect = async (url) => {
+    if (url && !url.startsWith(NATIVE_AUTH_REDIRECT)) signStep('Opened by a link that is not the sign-in link');
     if (!url || !url.startsWith(NATIVE_AUTH_REDIRECT)) return;
+    signStep('Back from Google');
     const browser = nativePlugin('Browser');
     if (browser) browser.close().catch(() => {});
     if (!supabaseClient) return;
@@ -8696,7 +8745,7 @@ const handleNativeAuthRedirect = async (url) => {
     const query = parsed.searchParams;
     const hash = new URLSearchParams(parsed.hash.replace(/^#/, ''));
     const errorText = query.get('error_description') || hash.get('error_description');
-    if (errorText) { showToast(`Sign-in didn't finish: ${errorText}`, 'error'); return; }
+    if (errorText) { showAuthProblem(`Google sign-in didn't finish: ${errorText}`); return; }
     try {
         let session = null;
         const code = query.get('code');
@@ -8710,12 +8759,13 @@ const handleNativeAuthRedirect = async (url) => {
             session = data.session;
         }
         if (session) {
+            signStep('Google accepted the sign-in');
             await handleSession(session);
-            if (state.auth.completedOnboarding) showToast(`Signed in as ${displayName()}`, 'success');
-        }
+            if (state.auth.completedOnboarding && handledUserId) showToast(`Signed in as ${displayName()}`, 'success');
+        } else showAuthProblem('Google sent Vela back without a sign-in. Try again.');
     } catch (err) {
         console.error('Could not finish sign-in:', err);
-        showToast(friendlyAuthError(err), 'error');
+        showAuthProblem(friendlyAuthError(err));
     }
 };
 

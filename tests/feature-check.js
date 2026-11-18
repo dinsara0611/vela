@@ -2814,6 +2814,34 @@ export async function run() {
         return empty || `entries left ${s().transactions.length}`;
     });
 
+    await T('Sign-in that stops (Google error, phone approval failing) says why on the sign-in page, and the next try works', async () => {
+        const { client } = fakeCloud(null);
+        let approval = 'broken';
+        client.rpc = async (fn) => {
+            if (fn === 'vela_device_check') return { data: approval === 'ok' ? 'ok' : 'pending', error: null };
+            if (fn === 'vela_request_login') return approval === 'broken' ? { data: null, error: new Error('function vela_request_login does not exist') } : { data: [{ request_id: 'r1', number: 42 }], error: null };
+            return { data: null, error: null };
+        };
+        window.__fakeClient = client; (0, eval)('supabaseClient = window.__fakeClient');
+        g('showAuth')(1); await wait(200);
+        // Google itself said no.
+        await g('handleNativeAuthRedirect')('io.github.dinsara0611.vela://auth-callback?error=access_denied&error_description=Access+denied');
+        const google = !$('auth-problem').hidden && /Access denied/.test($('auth-problem-text').textContent);
+        // Phone approval can't be asked: back on the sign-in page with the reason, not silently.
+        const user = { id: 'u9', email: 'nine@example.com', user_metadata: {} };
+        await g('handleSession')({ user }); await wait(500);
+        const said = !$('auth-problem').hidden && /Couldn’t ask your other phone/.test($('auth-problem-text').textContent) && /does not exist/.test($('auth-problem-text').textContent);
+        const steps = /Checking this phone/.test($('auth-problem-steps').textContent) && !/nine@example/.test($('auth-problem-steps').textContent);
+        const notStuck = g('handledUserId') === null;
+        // Fixed on the server: the next try goes through.
+        approval = 'ok';
+        await g('handleSession')({ user }); await wait(600);
+        const second = g('handledUserId') === 'u9' && $('auth-problem').hidden;
+        g('resetToSignedOut')(); await wait(200);
+        (0, eval)('supabaseClient = window.__realClient');
+        return (google && said && steps && notStuck && second) || `google error shown ${google}, approval reason ${said} ("${$('auth-problem-text').textContent}"), steps ${steps}, not stuck ${notStuck}, second try ${second}`;
+    });
+
     await T('No errors logged during the run', () => (window.__velaErrors || []).length === 0 || window.__velaErrors.join(' | '));
 
     window.removeEventListener('error', onErr);

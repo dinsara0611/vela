@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.51.0">
+    <link rel="stylesheet" href="style.css?v=4.51.1">
 </head>
 <body data-view="dashboard">
 
@@ -1898,6 +1898,11 @@
                     </svg>
                     Continue with Google
                 </button>
+                <div class="auth-problem" id="auth-problem" role="alert" hidden>
+                    <strong>Sign-in didn't finish</strong>
+                    <span id="auth-problem-text"></span>
+                    <details><summary>What happened</summary><pre id="auth-problem-steps"></pre></details>
+                </div>
                 <div class="divider">or use email</div>
                 <div class="auth-notice" id="auth-notice" role="status" hidden>
                     <span class="auth-notice-icon"><svg class="ic"><use href="#i-info"/></svg></span>
@@ -1946,7 +1951,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.51.0"></script>
+    <script src="app.js?v=4.51.1"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
