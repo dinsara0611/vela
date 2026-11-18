@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.40.0">
+    <link rel="stylesheet" href="style.css?v=4.40.1">
 </head>
 <body data-view="dashboard">
 
@@ -491,6 +491,12 @@
                                 <div class="setting-row">
                                     <div class="setting-text"><span class="setting-title">Unlock with fingerprint</span><span class="setting-desc">Use your fingerprint or face instead of the PIN.</span></div>
                                     <button class="switch" type="button" role="switch" aria-checked="false" id="switch-biometric" aria-label="Unlock with fingerprint"></button>
+                                </div>
+                            </div>
+                            <div class="setting" id="secure-screen-row" hidden>
+                                <div class="setting-row">
+                                    <div class="setting-text"><span class="setting-title">Hide in screenshots</span><span class="setting-desc">Like bank apps: screenshots, screen recording, recent apps and Circle to Search show Vela as a black screen. Turn off to take a screenshot.</span></div>
+                                    <button class="switch" type="button" role="switch" aria-checked="true" id="switch-secure-screen" aria-label="Hide in screenshots"></button>
                                 </div>
                             </div>
                             <div class="setting" id="lock-after-row" hidden>
@@ -1653,7 +1659,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.40.0"></script>
+    <script src="app.js?v=4.40.1"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

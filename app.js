@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.40.0';
+const APP_VERSION = '4.40.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -53,6 +53,26 @@ const LOCK_AFTER_MS = 60 * 1000;
    ========================================================================= */
 const isNative = () => !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
 const nativePlugin = (name) => (isNative() && window.Capacitor.Plugins ? window.Capacitor.Plugins[name] : null);
+// Screen privacy (Android app): black in screenshots, screen recording, recent apps and Circle to Search.
+let secureScreenOn = true;
+const updateSecureScreenRow = async () => {
+    const sp = nativePlugin('ScreenPrivacy');
+    const row = document.getElementById('secure-screen-row');
+    if (!row) return;
+    row.hidden = !sp;
+    if (!sp) return;
+    try { secureScreenOn = !!(await sp.get()).on; } catch (e) { /* older app build */ row.hidden = true; return; }
+    setSwitch($('switch-secure-screen'), secureScreenOn);
+};
+const toggleSecureScreen = async () => {
+    const sp = nativePlugin('ScreenPrivacy');
+    if (!sp) return;
+    try {
+        secureScreenOn = !!(await sp.set({ on: !secureScreenOn })).on;
+        setSwitch($('switch-secure-screen'), secureScreenOn);
+        showToast(secureScreenOn ? 'Vela is hidden in screenshots and recent apps' : 'Screenshots allowed. Turn it back on when you’re done.', secureScreenOn ? 'success' : 'info');
+    } catch (e) { showToast('Couldn’t change it on this phone.', 'error'); }
+};
 const authRedirectUrl = () => (isNative() ? NATIVE_AUTH_REDIRECT : window.location.origin + window.location.pathname);
 const haptic = (style = 'LIGHT') => {
     const h = nativePlugin('Haptics');
@@ -4396,6 +4416,7 @@ const renderSettings = () => {
     $('btn-change-pin').hidden = !lock.enabled;
     $('biometric-row').hidden = !(lock.enabled && biometricAvailable);
     $('lock-after-row').hidden = !lock.enabled;
+    updateSecureScreenRow();
     renderDevices();
     updateMfaRow();
     setPressed('[data-lock-after]', (b) => Number(b.dataset.lockAfter) * 1000 === lockAfterMs());
@@ -8323,6 +8344,7 @@ const initEvents = () => {
     initAccountHold();
     updateNotifBell();
     $('switch-approval').addEventListener('click', toggleApproval);
+    $('switch-secure-screen').addEventListener('click', toggleSecureScreen);
     $('tx-trip').addEventListener('click', () => { txTripId = txTripId ? null : $('tx-trip').dataset.trip; updateTripRow(); });
     $('tx-date').addEventListener('change', () => { if (!$('tx-id').value && txType === 'expense') { txTripId = tripIdFor($('tx-date').value); updateTripRow(); } });
     $('mfa-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitMfa(); } });
