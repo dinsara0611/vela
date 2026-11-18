@@ -3,31 +3,31 @@
    rebuilt phone-first. Documentation: DESIGN_SYSTEM.md
    ========================================================================== */
 
-/* ---------- 1. Tokens (dark is the default theme) ---------- */
+/* ---------- 1. Tokens (dark is the default theme: true black and neutral grays, no blue tint) ---------- */
 :root {
     --logo-edge: rgba(255, 255, 255, 0.14);
     --logo-shadow: rgba(0, 0, 0, 0.35);
     color-scheme: dark;
 
     /* Ground & surfaces */
-    --bg: #07070b;
-    --bg-elevated: #111119;
-    --surface: #101018;
+    --bg: #000000;
+    --bg-elevated: #141414;
+    --surface: #121212;
     --surface-glass: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.015));
-    --surface-2: #1a1a26;
-    --surface-pressed: #232333;
-    --bar-bg: rgba(9, 9, 14, 0.86);
-    --input-bg: #0c0c13;
-    --scrim: rgba(3, 3, 8, 0.72);
+    --surface-2: #1d1d1d;
+    --surface-pressed: #262626;
+    --bar-bg: rgba(0, 0, 0, 0.88);
+    --input-bg: #0d0d0d;
+    --scrim: rgba(0, 0, 0, 0.74);
     --border: rgba(255, 255, 255, 0.07);
     --border-strong: rgba(255, 255, 255, 0.14);
-    --ambient-1: rgba(155, 81, 224, 0.20);
-    --ambient-2: rgba(255, 42, 95, 0.12);
+    --ambient-1: rgba(155, 81, 224, 0.06);
+    --ambient-2: rgba(255, 42, 95, 0.04);
 
     /* Text */
     --text: #f3f3f6;
-    --text-2: #a7a7ba;
-    --text-3: #7d7d93;
+    --text-2: #a9a9a9;
+    --text-3: #808080;
 
     /* Neon palette (category colours and accents) */
     --pal-violet: #b17aff;
@@ -39,7 +39,7 @@
     --pal-magenta: #f0508c;
     --pal-indigo: #8487ff;
     --pal-teal: #2fd4bf;
-    --pal-slate: #9a9ab0;
+    --pal-slate: #9e9e9e;
 
     /* Roles */
     --primary: #b17aff;
@@ -62,7 +62,7 @@
     /* Brand (logo) */
     --sail-violet: #9b51e0;
     --sail-coral: #ff2a5f;
-    --sail-mast: #8e8e9f;
+    --sail-mast: #8e8e8e;
 
     /* Hero */
     --hero-bg:
@@ -3918,7 +3918,7 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
     align-items: center;
     justify-content: center;
     padding: 32px;
-    background: #07070b;
+    background: #000000;
     color: #faf9ff;
     overflow: hidden;
     cursor: pointer;

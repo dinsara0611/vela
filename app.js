@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.45.0';
+const APP_VERSION = '4.45.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1360,7 +1360,7 @@ const cssVar = (name) => {
 };
 
 const updateThemeChrome = () => {
-    const bg = cssVar('--bg') || '#07070b';
+    const bg = cssVar('--bg') || '#000000';
     const meta = $('meta-theme-color');
     if (meta) meta.setAttribute('content', bg);
     setPressed('[data-theme-choice]', (b) => b.dataset.themeChoice === state.config.theme);

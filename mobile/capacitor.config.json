@@ -3,7 +3,7 @@
   "appName": "Vela",
   "webDir": "www",
   "android": {
-    "backgroundColor": "#07070b",
+    "backgroundColor": "#000000",
     "allowMixedContent": false
   },
   "plugins": {
@@ -11,7 +11,7 @@
       "launchShowDuration": 3000,
       "launchAutoHide": true,
       "launchFadeOutDuration": 250,
-      "backgroundColor": "#07070b",
+      "backgroundColor": "#000000",
       "androidScaleType": "CENTER_CROP",
       "showSpinner": false,
       "splashFullScreen": false,
@@ -24,7 +24,7 @@
     },
     "StatusBar": {
       "style": "DARK",
-      "backgroundColor": "#07070b",
+      "backgroundColor": "#000000",
       "overlaysWebView": false
     },
     "LocalNotifications": {
