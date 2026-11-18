@@ -4808,3 +4808,20 @@ body.approve-waiting { overflow: hidden; }
 .pay-later-btn { font-size: var(--fs-xs); margin-top: 4px; }
 .pay-carry { display: block; font-size: var(--fs-xs); color: var(--warning); margin-top: 2px; }
 .bill-actions { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; }
+
+/* A fund that uses several accounts */
+.acc-checklist { display: grid; gap: 6px; }
+.acc-check { display: flex; align-items: center; gap: var(--sp-3); padding: 8px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--input-bg); cursor: pointer; }
+.acc-check input { width: 20px; height: 20px; accent-color: var(--primary); flex: none; }
+.acc-check:has(input:checked) { border-color: var(--primary); background: var(--surface-2); }
+.acc-check .row-icon { width: 30px; height: 30px; }
+.sec-split { display: grid; gap: 8px; }
+.split-row { display: flex; align-items: center; gap: var(--sp-3); }
+.split-row .row-icon { width: 32px; height: 32px; flex: none; }
+.split-name { flex: 1; min-width: 0; display: grid; }
+.split-name > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.split-name > span:first-child { font-weight: 600; }
+.split-name > span + span { font-size: var(--fs-xs); color: var(--text-3); }
+.split-amount { width: 120px; flex: none; text-align: right; }
+.split-total { display: flex; justify-content: space-between; padding-top: 6px; border-top: 1px solid var(--border); font-size: var(--fs-sm); }
+.fund-where { display: grid; gap: 8px; margin-bottom: var(--sp-2); }

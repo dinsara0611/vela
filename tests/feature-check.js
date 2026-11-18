@@ -2350,6 +2350,53 @@ export async function run() {
         return (offered && carried && received && skipped && moved) || `offered ${offered}, carried ${carried} (${next.amount}), received ${received} (${got && got.amount}, next ${after && after.amount}), skipped ${skipped}, moved ${moved}`;
     });
 
+    await T('One fund from two accounts: checklist, Rs. 3,000 from A + Rs. 2,000 from B, spending from B, too much from B blocked', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-2fa', name: 'Multi A', kind: 'bank', currency: 'LKR', opening: 10000, createdAt: 0 }, { id: 'acc-2fb', name: 'Multi B', kind: 'bank', currency: 'LKR', opening: 4000, createdAt: 0 });
+        const keep = { sections: st.config.sections, sectionMoves: st.config.sectionMoves };
+        st.config.sections = [{ id: 'multi', name: 'House', mode: 'manual', value: 0, currency: 'LKR', color: 'blue', icon: 'i-wallet', accountIds: ['acc-2fa'] }];
+        st.config.sectionMoves = [];
+        g('saveState')();
+        // Tick the second account in the editor.
+        g('openSectionEditor')('multi'); await wait(300);
+        const boxes = [...document.querySelectorAll('#section-accounts input')];
+        const tickedFirst = boxes.filter((i) => i.checked).map((i) => i.value).join(',') === 'acc-2fa';
+        boxes.find((i) => i.value === 'acc-2fb').checked = true;
+        g('submitSection')(); await wait(400);
+        const both = g('secById')('multi').accountIds.slice().sort().join(',') === 'acc-2fa,acc-2fb';
+        // Add money: one box per account.
+        g('openSecMove')('multi', 'add'); await wait(300);
+        const rows = [...document.querySelectorAll('[data-split-acc]')];
+        const twoRows = rows.length === 2 && $('sec-move-amount-field').hidden;
+        rows.find((i) => i.dataset.splitAcc === 'acc-2fa').value = '3000';
+        rows.find((i) => i.dataset.splitAcc === 'acc-2fb').value = '2000';
+        $('sec-move-split').dispatchEvent(new Event('input'));
+        const totalShown = /5,000/.test($('sec-split-total').textContent);
+        g('submitSecMove')(); await wait(400);
+        const p1 = g('fundPortions')().multi;
+        const total1 = g('sectionBalances')().multi;
+        // Spending Rs. 500 from B out of the fund.
+        st.transactions.push({ id: 'multi-exp', type: 'expense', desc: 'Paint', amount: 500, currency: 'LKR', category: 'Other', date: today, note: '', createdAt: 1, accountId: 'acc-2fb', sectionId: 'multi', recurringId: null, receipt: null });
+        g('saveState')();
+        const p2 = g('fundPortions')().multi;
+        // B had 4,000 - 500 spent = 3,500, of which 1,500 is in the fund: 2,000 free. Ask for 2,500.
+        const movesBefore = s().config.sectionMoves.length;
+        g('openSecMove')('multi', 'add'); await wait(300);
+        document.querySelector('[data-split-acc="acc-2fb"]').value = '2500';
+        g('submitSecMove')(); await wait(400);
+        const blocked = s().config.sectionMoves.length === movesBefore;
+        const dbg = `ids ${g('secById')('multi').accountIds.join(',')}, free B ${g('accountFreeMoney')('acc-2fb')}, bal B ${g('accountBalance')(s().accounts.find((x) => x.id === 'acc-2fb'))}, last move ${JSON.stringify(s().config.sectionMoves.slice(-1)[0])}`;
+        await close('modal-sec-move');
+        // The fund page shows where the money is.
+        g('openSectionView')('multi'); await wait(400);
+        const where = /Where the money is/.test(document.body.textContent) && /Multi A/.test(document.body.textContent);
+        g('goToPlan')('sections'); await wait(300);
+        st.transactions = st.transactions.filter((t) => t.id !== 'multi-exp');
+        Object.assign(st.config, keep); g('saveState')();
+        return (tickedFirst && both && twoRows && totalShown && p1['acc-2fa'] === 3000 && p1['acc-2fb'] === 2000 && total1 === 5000 && p2['acc-2fb'] === 1500 && blocked && where)
+            || `ticked ${tickedFirst}, both ${both}, two rows ${twoRows}, total shown ${totalShown}, portions ${JSON.stringify(p1)} total ${total1}, after spend ${JSON.stringify(p2)}, blocked ${blocked}, where ${where}; ${dbg}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };
