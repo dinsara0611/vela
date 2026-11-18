@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.42.0';
+const APP_VERSION = '4.42.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -124,6 +124,7 @@ const createDefaultState = () => ({
 });
 
 let state = createDefaultState();
+let dataVersion = 0; // goes up with every save: lists worked out before a change are never reused after it
 let supabaseClient = null;
 let currentTab = 'dashboard';
 let planTab = 'budgets';
@@ -218,23 +219,39 @@ const payStatusLabel = (status, type) => (type === 'income'
     ? { upcoming: 'Expected', due: 'Expected today', overdue: 'Late' }[status]
     : { upcoming: 'Upcoming', due: 'Due today', overdue: 'Overdue' }[status]);
 
+// Date formatters are made once (making one per call was a large part of drawing long lists).
+const FMT_DAY = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+const FMT_DAY_YEAR = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+const FMT_MONTH_DAY = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' });
+const FMT_MONTH = new Intl.DateTimeFormat('en-US', { month: 'short' });
+const FMT_MONTH_YEAR = new Intl.DateTimeFormat('en-US', { month: 'short', year: '2-digit' });
+let dayLabelCache = { day: '', map: new Map() };
 const relativeDayLabel = (dateStr) => {
+    const today = todayFast();
+    if (dayLabelCache.day !== today) dayLabelCache = { day: today, map: new Map() };
+    const hit = dayLabelCache.map.get(dateStr);
+    if (hit !== undefined) return hit;
     const d = parseDate(dateStr);
-    if (isNaN(d)) return '';
-    const diff = daysBetween(d, new Date());
-    if (diff === 0) return 'Today';
-    if (diff === 1) return 'Yesterday';
-    if (diff === -1) return 'Tomorrow';
-    const sameYear = d.getFullYear() === new Date().getFullYear();
-    return d.toLocaleDateString('en-US', sameYear
-        ? { weekday: 'short', month: 'short', day: 'numeric' }
-        : { month: 'short', day: 'numeric', year: 'numeric' });
+    let out = '';
+    if (!isNaN(d)) {
+        const diff = daysBetween(d, new Date());
+        out = diff === 0 ? 'Today' : diff === 1 ? 'Yesterday' : diff === -1 ? 'Tomorrow'
+            : (d.getFullYear() === new Date().getFullYear() ? FMT_DAY : FMT_DAY_YEAR).format(d);
+    }
+    dayLabelCache.map.set(dateStr, out);
+    return out;
 };
+const shortDateCache = new Map();
 const shortDate = (s) => {
+    const year = new Date().getFullYear();
+    const key = `${year}|${s}`;
+    const hit = shortDateCache.get(key);
+    if (hit !== undefined) return hit;
     const d = parseDate(s);
-    if (isNaN(d)) return '';
-    return d.toLocaleDateString('en-US', d.getFullYear() === new Date().getFullYear()
-        ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' });
+    const out = isNaN(d) ? '' : (d.getFullYear() === year ? FMT_MONTH_DAY : FMT_DAY_YEAR).format(d);
+    if (shortDateCache.size > 4000) shortDateCache.clear();
+    shortDateCache.set(key, out);
+    return out;
 };
 const dueLabel = (s) => {
     const diff = daysBetween(new Date(), parseDate(s));
@@ -351,18 +368,29 @@ const fitAmounts = (els) => {
         items.push({ el, ...t });
     });
     if (!items.length) return;
-    // 2. read: box widths and fonts, all at once (one layout)
+    // 2. read: box widths and fonts, all at once (one layout). Amounts in the same kind of box share their font
+    // and padding, so each style is read once per kind (reading it for every row was most of the cost).
+    const padOf = new Map();
+    const fontOf = new Map();
     items.forEach((it) => {
         const el = it.el;
         const own = el.clientWidth > 0;
         const box = own ? el : el.parentElement;
         if (!box || !box.clientWidth) { it.avail = 0; return; }
-        const bs = getComputedStyle(box);
-        it.avail = box.clientWidth - (parseFloat(bs.paddingLeft) || 0) - (parseFloat(bs.paddingRight) || 0);
-        const cs = getComputedStyle(el);
-        it.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
-        it.ls = parseFloat(cs.letterSpacing) || 0;
-        it.tabular = /tabular/.test(cs.fontVariantNumeric || '');
+        const bk = `${box.tagName}.${box.className}`;
+        let pad = padOf.get(bk);
+        if (pad === undefined) { const bs = getComputedStyle(box); pad = (parseFloat(bs.paddingLeft) || 0) + (parseFloat(bs.paddingRight) || 0); padOf.set(bk, pad); }
+        it.avail = box.clientWidth - pad;
+        const fk = `${el.tagName}.${el.className}|${el.parentElement ? el.parentElement.className : ''}|${el.style.cssText}`;
+        let f = fontOf.get(fk);
+        if (!f) {
+            const cs = getComputedStyle(el);
+            f = { font: `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`, ls: parseFloat(cs.letterSpacing) || 0, tabular: /tabular/.test(cs.fontVariantNumeric || '') };
+            fontOf.set(fk, f);
+        }
+        it.font = f.font;
+        it.ls = f.ls;
+        it.tabular = f.tabular;
     });
     // 3. work out and write the result for each
     items.forEach((it) => {
@@ -975,6 +1003,7 @@ const applyCloudSettings = (d) => {
 };
 
 const saveState = () => {
+    dataVersion++;
     if (state.accounts.length) stashBudget();
     watchSettings();
     const ok = storage.set(STORAGE_KEY, JSON.stringify(state));
@@ -1032,6 +1061,7 @@ const applyRegionDefaults = (st) => {
 };
 
 const loadState = () => {
+    dataVersion++;
     const raw = storage.get(STORAGE_KEY);
     if (!raw) { state = createDefaultState(); applyRegionDefaults(state); return; }
     try {
@@ -1431,7 +1461,8 @@ const renderViewBar = () => {
 };
 const renderActive = () => {
     balanceMemo = new Map();
-    try { renderActiveNow(); } finally { balanceMemo = null; }
+    viewTxMemo = new Map();
+    try { renderActiveNow(); } finally { balanceMemo = null; viewTxMemo = null; }
 };
 const renderActiveNow = () => {
     renderViewBar();
@@ -1562,7 +1593,19 @@ const openNotif = (id) => {
         else switchTab('activity');
     }, 260);
 };
-const viewTx = () => { const v = scopeId(); return v === 'all' ? state.transactions : state.transactions.filter((t) => inAccount(t, v)); };
+let viewTxMemo = null; // during one screen draw, when nothing changes
+// Also kept between draws until anything is saved (every change is saved), for the same list of entries.
+let viewTxKept = { version: -1, list: null, v: null, src: null };
+const viewTx = () => {
+    const v = scopeId();
+    if (v === 'all') return state.transactions;
+    if (viewTxMemo && viewTxMemo.has(v)) return viewTxMemo.get(v);
+    if (viewTxKept.version === dataVersion && viewTxKept.v === v && viewTxKept.src === state.transactions && viewTxKept.len === state.transactions.length) return viewTxKept.list;
+    const list = state.transactions.filter((t) => inAccount(t, v));
+    if (viewTxMemo) viewTxMemo.set(v, list);
+    viewTxKept = { version: dataVersion, list, v, src: state.transactions, len: state.transactions.length };
+    return list;
+};
 const ownedBy = (x, v) => (x.accountId || (state.accounts[0] && state.accounts[0].id)) === v;
 const viewGoals = () => { const v = scopeId(); return v === 'all' ? state.savings : state.savings.filter((g) => ownedBy(g, v)); };
 const viewDebts = () => { const v = scopeId(); return v === 'all' ? state.debts : state.debts.filter((d) => ownedBy(d, v)); };
@@ -4134,7 +4177,7 @@ const renderActivity = () => {
         .concat(chipCats.map((c) => `<button type="button" class="chip" data-filter-category="${escapeHtml(c.id)}" aria-pressed="${activityCategory === c.id}" style="--cat:${catColor(c)}"><span class="chip-dot"></span>${escapeHtml(c.name)}</button>`))
         .join('');
 
-    const scoped = state.transactions.filter((t) => inAccount(t, activityAccount));
+    const scoped = activityAccount === scopeId() ? viewTx() : state.transactions.filter((t) => inAccount(t, activityAccount));
     // Unpaid, upcoming, overdue and bank filters look across all months.
     const allMonths = ['unpaid', 'upcoming', 'overdue', 'bank'].includes(activityStatus);
     const base = query || allMonths ? scoped : scoped.filter((t) => inMonth(t, y, m));
@@ -4148,8 +4191,18 @@ const renderActivity = () => {
         bank: (t) => !!t.bank
     };
     if (STATUS_TEST[activityStatus]) list = list.filter(STATUS_TEST[activityStatus]);
+    // The counts on the filter chips, in one pass over the entries.
+    const counts = { unpaid: 0, upcoming: 0, overdue: 0, bank: 0 };
+    scoped.forEach((t) => {
+        if (t.bank) counts.bank++;
+        if (t.pending === true) {
+            if (t.type !== 'transfer') counts.unpaid++;
+            if (t.date > today) counts.upcoming++;
+            else if (t.date < today) counts.overdue++;
+        }
+    });
     $('activity-status').innerHTML = [['all', 'All'], ['paid', 'Paid'], ['unpaid', 'Unpaid'], ['upcoming', 'Upcoming'], ['overdue', 'Overdue'], ['bank', 'From bank']]
-        .map(([v, label]) => `<button type="button" class="chip" data-activity-status="${v}" aria-pressed="${activityStatus === v}">${label}${v !== 'all' && v !== 'paid' ? ` <span class="chip-count">${scoped.filter(STATUS_TEST[v]).length}</span>` : ''}</button>`).join('');
+        .map(([v, label]) => `<button type="button" class="chip" data-activity-status="${v}" aria-pressed="${activityStatus === v}">${label}${v !== 'all' && v !== 'paid' ? ` <span class="chip-count">${counts[v]}</span>` : ''}</button>`).join('');
     if (allMonths && !query) $('month-label').innerHTML = `${escapeHtml({ unpaid: 'Unpaid', upcoming: 'Upcoming', overdue: 'Overdue', bank: 'From your bank' }[activityStatus])}<small>All months</small>`;
     if (activityType !== 'all') list = list.filter((t) => t.type === activityType);
     if (activityCategory !== 'all') list = list.filter((t) => t.category === activityCategory);
@@ -4565,8 +4618,8 @@ const baseOptions = (t) => ({
         }
     },
     scales: {
-        x: { grid: { display: false }, border: { display: false }, ticks: { color: t.text, font: { family: 'Inter', size: 10 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 6 } },
-        y: { beginAtZero: true, grid: { color: t.grid }, border: { display: false }, ticks: { color: t.text, font: { family: 'Inter', size: 10 }, maxTicksLimit: 5, callback: (v) => formatCompact(v, dcur()) } }
+        x: { grid: { display: false }, border: { display: false }, ticks: { color: t.text, font: { family: 'Inter', size: 10 }, maxRotation: 0, autoSkip: true, maxTicksLimit: 6, sampleSize: 8 } },
+        y: { beginAtZero: true, grid: { color: t.grid }, border: { display: false }, ticks: { color: t.text, font: { family: 'Inter', size: 10 }, maxTicksLimit: 5, sampleSize: 6, callback: (v) => formatCompact(v, dcur()) } }
     }
 });
 
@@ -4589,7 +4642,7 @@ const bucketize = (list, start, end, byMonth) => {
             const k = monthKey(c);
             inc.set(k, 0);
             out.set(k, 0);
-            labels.push(c.toLocaleDateString('en-US', span > 366 ? { month: 'short', year: '2-digit' } : { month: 'short' }));
+            labels.push((span > 366 ? FMT_MONTH_YEAR : FMT_MONTH).format(c));
             c.setMonth(c.getMonth() + 1);
         }
         list.forEach((t) => {
@@ -4605,7 +4658,7 @@ const bucketize = (list, start, end, byMonth) => {
             const k = toISODate(d);
             inc.set(k, 0);
             out.set(k, 0);
-            labels.push(d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }));
+            labels.push(FMT_MONTH_DAY.format(d));
         }
         list.forEach((t) => {
             if (t.type === 'transfer') return;
@@ -9830,8 +9883,8 @@ const initNative = () => {
     if (splash) setTimeout(() => splash.hide({ fadeOutDuration: 250 }).catch(() => {}), 150);
 };
 
-/* ---- Splash: the mark draws on, then the screen slides up after ~1.1 s ---- */
-const SPLASH_MS = 1080;
+/* ---- Splash: the mark draws on, then the screen slides up after ~0.9 s ---- */
+const SPLASH_MS = 760; // the logo is drawn by ~0.66 s
 let splashEnded = false;
 let splashResolve;
 const splashDone = new Promise((r) => { splashResolve = r; });
@@ -9854,7 +9907,7 @@ const runSplash = () => {
     window.addEventListener('keydown', splashKey);
     if (el.classList.contains('play')) { setTimeout(endSplash, Math.max(200, SPLASH_MS - performance.now())); return; }
     // Android app: start once Android's launch screen has faded (it hides shortly after start-up).
-    setTimeout(() => { el.classList.add('play'); setTimeout(endSplash, SPLASH_MS); }, 420);
+    setTimeout(() => { el.classList.add('play'); setTimeout(endSplash, SPLASH_MS); }, 120);
 };
 
 const init = () => {

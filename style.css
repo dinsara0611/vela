@@ -3934,9 +3934,9 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
 .splash-mark { width: 128px; height: 128px; display: flex; align-items: center; justify-content: center; }
 .splash-mark svg { width: 100%; height: 100%; filter: drop-shadow(0 4px 25px rgba(177, 122, 255, 0.45)); }
 .splash-mark path { stroke-dasharray: 700; stroke-dashoffset: 700px; opacity: 0; }
-.play .sp-a { animation: spStroke 0.68s cubic-bezier(0.65, 0, 0.35, 1) 40ms forwards; }
-.play .sp-b { animation: spStroke 0.68s cubic-bezier(0.65, 0, 0.35, 1) 0.15s forwards; }
-.play .sp-c { animation: spStroke 0.68s cubic-bezier(0.65, 0, 0.35, 1) 0.26s forwards; }
+.play .sp-a { animation: spStroke 0.48s cubic-bezier(0.65, 0, 0.35, 1) 30ms forwards; }
+.play .sp-b { animation: spStroke 0.48s cubic-bezier(0.65, 0, 0.35, 1) 0.1s forwards; }
+.play .sp-c { animation: spStroke 0.48s cubic-bezier(0.65, 0, 0.35, 1) 0.18s forwards; }
 @keyframes spStroke {
     0% { stroke-dashoffset: 700px; opacity: 0; }
     15% { opacity: 1; }
@@ -3955,7 +3955,7 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
     color: #ffffff;
     opacity: 0;
 }
-.play .splash-title { animation: spUp 0.42s ease-out 0.22s both; }
+.play .splash-title { animation: spUp 0.32s ease-out 0.15s both; }
 .splash-sub {
     font-size: 10px;
     font-weight: 600;
@@ -3965,7 +3965,7 @@ body:has(#modal-quick-add.active) .fab .ic { transform: rotate(135deg); }
     color: #d6b8ff;
     opacity: 0;
 }
-.play .splash-sub { animation: spUp 0.42s ease-out 0.34s both; }
+.play .splash-sub { animation: spUp 0.32s ease-out 0.24s both; }
 @keyframes spUp {
     0% { opacity: 0; filter: blur(4px); transform: translateY(12px); }
     100% { opacity: 1; filter: blur(0); transform: translateY(0); }
