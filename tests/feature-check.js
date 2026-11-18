@@ -58,6 +58,7 @@ export async function run() {
     fresh.config.currencies = ['LKR', 'USD'];
     fresh.config.budgetCurrency = 'LKR';
     fresh.config.budget = 100000;
+    fresh.config.budgetOn = true;
     fresh.config.rates = { LKR: 300, EUR: 0.9 };
     fresh.accounts = [{ id: 'acc-cash', name: 'Cash', kind: 'cash', currency: 'LKR', opening: 0, createdAt: 0 }];
     fresh.auth = { user: { id: 'guest-local' }, isMock: true, completedOnboarding: true };
@@ -2081,7 +2082,7 @@ export async function run() {
 
     await T('Funds: "only what I add" (Food 7,500 this month, nothing next month), "only once", funds per account', async () => {
         const st = s();
-        st.accounts.push({ id: 'acc-f1', name: 'Fund Bank One', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 0 }, { id: 'acc-f2', name: 'Fund Bank Two', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 0 });
+        st.accounts.push({ id: 'acc-f1', name: 'Fund Bank One', kind: 'bank', currency: 'LKR', opening: 7500, createdAt: 0 }, { id: 'acc-f2', name: 'Fund Bank Two', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 0 });
         const keep = { sections: st.config.sections, sectionMoves: st.config.sectionMoves, sectionSince: st.config.sectionSince, fundIncomeCats: st.config.fundIncomeCats };
         st.config.sections = [
             { id: 'food', name: 'Food', mode: 'manual', value: 0, currency: 'LKR', color: 'pink', icon: 'c-Food', accountId: 'acc-f1' },
@@ -2154,6 +2155,133 @@ export async function run() {
         const left = ['VELA_STATE', 'VELA_SHOP_LOGOS', 'VELA_NOTIF_LOG', 'VELA_HIDE_BALANCE', 'VELA_SMS'].filter((k) => localStorage.getItem(k) !== null);
         localStorage.setItem('VELA_STATE', saved); g('loadState')(); g('renderActive')();
         return (sheet && !left.length) || `sheet ${sheet}, still saved: ${left.join(', ')}`;
+    });
+
+    await T('Fund money: 5,000 + 2,000 = 7,000, minus 1,500 = 5,500; no double add; limits checked; hold menu', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-fm', name: 'Fund Money Bank', kind: 'bank', currency: 'LKR', opening: 20000, createdAt: 0 });
+        const keep = { sections: st.config.sections, sectionMoves: st.config.sectionMoves };
+        st.config.sections = [{ id: 'fm', name: 'Holiday', mode: 'manual', value: 0, currency: 'LKR', color: 'cyan', icon: 'x-plane', accountId: 'acc-fm', target: 10000 }];
+        st.config.sectionMoves = [];
+        g('saveState')();
+        const bal = () => g('sectionBalances')().fm;
+        const add = async (amt, mode = 'add', note = '') => { g('openSecMove')('fm', mode); await wait(300); $('sec-move-amount').value = String(amt); $('sec-move-note').value = note; const r = g('submitSecMove')(); await wait(300); return r; };
+        await add(5000, 'add', 'start');
+        const b1 = bal();
+        // A quick double tap adds it once.
+        g('openSecMove')('fm', 'add'); await wait(300);
+        $('sec-move-amount').value = '2000';
+        g('submitSecMove')(); g('submitSecMove')(); await wait(300);
+        const b2 = bal();
+        await add(1500, 'out', 'tickets');
+        const b3 = bal();
+        // Taking out more than the fund has: refused with the numbers.
+        const tooMuch = await add(9000, 'out');
+        const outMsg = /Insufficient balance/.test(document.querySelector('#modal-sec-move .field-error, #modal-sec-move [role="alert"]')?.textContent || $('modal-sec-move').textContent);
+        await close('modal-sec-move');
+        // Setting aside more than the account has free (20,000 - 5,500 = 14,500): refused.
+        const overFree = await add(15000, 'add');
+        await close('modal-sec-move');
+        const b4 = bal();
+        const history = g('secMoves')().filter((m) => m.to === 'fm' || m.from === 'fm').length;
+        const noted = g('secMoves')().some((m) => m.note === 'tickets' && m.kind === 'out');
+        // Hold the fund tile: its menu opens.
+        g('setViewAccount')('acc-fm');
+        g('goToPlan')('sections'); await wait(400);
+        const tile = document.querySelector('#plan-content [data-sec-view="fm"]');
+        let menu = false;
+        if (tile) {
+            const r = tile.getBoundingClientRect();
+            tile.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: r.x + 5, clientY: r.y + 5 }));
+            await wait(650);
+            tile.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+            menu = g('openSheets').includes('modal-fund-actions');
+            await close('modal-fund-actions');
+        }
+        g('setViewAccount')('acc-cash');
+        Object.assign(st.config, keep); g('saveState')();
+        return (b1 === 5000 && b2 === 7000 && b3 === 5500 && tooMuch !== true && outMsg && overFree !== true && b4 === 5500 && history === 3 && noted && menu)
+            || `5000 -> ${b1}, +2000 (tapped twice) -> ${b2}, -1500 -> ${b3}, take out 9000 refused ${tooMuch !== true} (${outMsg}), over free refused ${overFree !== true}, now ${b4}, history ${history}, note ${noted}, hold menu ${menu} (tile ${!!tile})`;
+    });
+
+    await T('Allocate a salary: 50% leaves half unallocated; custom amount; 100%', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-al', name: 'Alloc Bank', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 0 });
+        const keep = { sections: st.config.sections, sectionMoves: st.config.sectionMoves, sectionSince: st.config.sectionSince, fundIncomeCats: st.config.fundIncomeCats };
+        st.config.sections = [{ id: 'need', name: 'Needs', mode: 'percent', value: 50, currency: 'LKR', color: 'cyan', icon: 'c-Rent', accountId: 'acc-al' }, { id: 'rest', name: 'Rest', mode: 'rest', value: 0, currency: 'LKR', color: 'green', icon: 'c-Investment', accountId: 'acc-al' }];
+        st.config.sectionMoves = []; st.config.sectionSince = today; st.config.fundIncomeCats = ['Salary'];
+        st.config.sectionSkipped = st.transactions.filter((t) => t.type === 'income').map((t) => t.id);
+        g('saveState')();
+        const total = () => Math.round(Object.values(g('sectionBalances')()).reduce((x, v) => x + v, 0));
+        await addTx({ type: 'income', amount: 100000, desc: 'Salary half', category: 'Salary', account: 'acc-al' }); await wait(600);
+        document.querySelector('[data-divide-share="0.5"]').click(); await wait(100);
+        const summary = $('divide-summary').textContent;
+        g('confirmDivide')(); await wait(300);
+        const half = total();
+        await addTx({ type: 'income', amount: 100000, desc: 'Salary custom', category: 'Salary', account: 'acc-al' }); await wait(600);
+        document.querySelector('[data-divide-share="custom"]').click(); await wait(100);
+        $('divide-custom').value = '30000'; $('divide-custom').dispatchEvent(new Event('input', { bubbles: true })); await wait(50);
+        g('confirmDivide')(); await wait(300);
+        const custom = total() - half;
+        await addTx({ type: 'income', amount: 100000, desc: 'Salary full', category: 'Salary', account: 'acc-al' }); await wait(600);
+        g('confirmDivide')(); await wait(300);
+        const full = total() - half - custom;
+        const accBal = g('accountBalance')(s().accounts.find((a) => a.id === 'acc-al'));
+        Object.assign(st.config, keep); g('saveState')();
+        return (/50,000/.test(summary) && half === 50000 && custom === 30000 && full === 100000 && accBal === 300000)
+            || `summary "${summary}", 50% -> ${half}, custom -> ${custom}, 100% -> ${full}, account still ${accBal} (allocating moves no money)`;
+    });
+
+    await T('Monthly budget OFF hides budget bar and warnings; ON shows them again', async () => {
+        g('setBudgetOn')(false); await wait(200);
+        g('switchTab')('dashboard'); await wait(300);
+        const homeHidden = document.querySelector('.hero-budget').hidden;
+        g('goToPlan')('budgets'); await wait(300);
+        const planOff = /No monthly budget/.test($('plan-content').textContent);
+        g('setBudgetOn')(true); await wait(200);
+        g('switchTab')('dashboard'); await wait(300);
+        const homeShown = !document.querySelector('.hero-budget').hidden;
+        g('goToPlan')('budgets'); await wait(300);
+        const planOn = /Monthly budget/.test($('plan-content').textContent) && !/No monthly budget/.test($('plan-content').textContent);
+        return (homeHidden && planOff && homeShown && planOn) || `off: home hidden ${homeHidden}, plan ${planOff}; on: home ${homeShown}, plan ${planOn}`;
+    });
+
+    await T('Transfer more than the account has: "Insufficient balance" with available, requested, short by', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-t1', name: 'Ten K Bank', kind: 'bank', currency: 'LKR', opening: 10000, createdAt: 0 }, { id: 'acc-t2', name: 'Other Bank', kind: 'bank', currency: 'LKR', opening: 0, createdAt: 0 });
+        g('saveState')();
+        const count = s().transactions.length;
+        g('openTransfer')(); await wait(300);
+        $('transfer-from').value = 'acc-t1'; $('transfer-to').value = 'acc-t2'; g('updateTransferFields')();
+        $('transfer-amount').value = '15000'; $('transfer-date').value = today;
+        const r = g('submitTransfer')(); await wait(300);
+        const msg = $('modal-transfer').textContent;
+        const refused = r !== true && s().transactions.length === count && /Insufficient balance/.test(msg) && /5,000/.test(msg);
+        $('transfer-amount').value = '10000';
+        g('submitTransfer')(); await wait(400);
+        const ok = g('accountBalance')(s().accounts.find((a) => a.id === 'acc-t1')) === 0 && g('accountBalance')(s().accounts.find((a) => a.id === 'acc-t2')) === 10000;
+        return (refused && ok) || `refused ${refused}, exact 10,000 allowed ${ok}`;
+    });
+
+    await T('A new account starts at Rs. 0.00 and other accounts keep their own balances', async () => {
+        const before = s().accounts.map((a) => [a.id, g('accountBalance')(a)]);
+        g('openAccountEditor')(); await wait(300);
+        const empty = $('account-opening').value === '';
+        $('account-name').value = 'Zero Start Bank';
+        g('submitAccount')(); await wait(400);
+        const acc = s().accounts.find((a) => a.name === 'Zero Start Bank');
+        const zero = g('accountBalance')(acc) === 0;
+        const othersSame = before.every(([id, b]) => g('accountBalance')(s().accounts.find((a) => a.id === id)) === b);
+        return (empty && zero && othersSame) || `form empty ${empty}, new balance ${g('accountBalance')(acc)}, others unchanged ${othersSame}`;
+    });
+
+    await T('Home recent "All accounts" names the account each entry came out of or went into', async () => {
+        g('switchTab')('dashboard'); await wait(300);
+        document.querySelector('[data-recent-all="1"]').click(); await wait(300);
+        const text = $('recent-list').textContent;
+        const named = /(From|Into) [A-Z]/.test(text);
+        document.querySelector('[data-recent-all="0"]').click(); await wait(200);
+        return named || `recent list: ${text.slice(0, 120)}`;
     });
 
     // Cloud sync against a fake account.

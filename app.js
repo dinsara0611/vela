@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.44.0';
+const APP_VERSION = '4.45.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -110,6 +110,7 @@ const createDefaultState = () => ({
         reminders: false,
         reminderIds: [],
         trips: [],                 // { id, name, budget, currency, start, end, endedAt } - one at a time is on
+        budgetOn: false,           // the monthly budget is only used when you turn it on (old data: on)
         sections: [],              // { id, name, mode: 'percent' | 'amount' | 'rest', value, currency, color, icon }
         sectionMoves: [],          // money into / out of sections: { id, date, kind, incomeId, from, to, amount, currency }
         sectionSince: null,        // incomes from this date on are offered for dividing
@@ -864,11 +865,13 @@ function normalizeSectionConfig(cfg) {
         mode: ['percent', 'amount', 'rest', 'manual'].includes(x.mode) ? x.mode : 'percent',
         value: Math.max(0, toNumber(x.value, 0)), currency: normCur(x.currency),
         once: x.once === true, accountId: x.accountId ? String(x.accountId).slice(0, 64) : null,
+        target: toNumber(x.target, 0) > 0 ? round2(toNumber(x.target, 0)) : 0,
         color: PALETTE.includes(x.color) ? x.color : 'slate', icon: String(x.icon || 'i-wallet').slice(0, 32)
     } : null)).filter(Boolean).slice(0, 30);
     const ids = new Set(sections.map((x) => x.id));
     const moves = (Array.isArray(cfg.sectionMoves) ? cfg.sectionMoves : []).map((m) => (m && m.id && toNumber(m.amount, -1) >= 0 ? {
-        id: String(m.id).slice(0, 64), date: cleanDate(m.date) || toISODate(), kind: ['income', 'fill', 'move', 'add'].includes(m.kind) ? m.kind : 'move',
+        id: String(m.id).slice(0, 64), date: cleanDate(m.date) || toISODate(), kind: ['income', 'fill', 'move', 'add', 'out'].includes(m.kind) ? m.kind : 'move',
+        ...(m.note ? { note: String(m.note).slice(0, 120) } : {}),
         incomeId: m.incomeId ? String(m.incomeId).slice(0, 64) : null,
         from: m.from && ids.has(String(m.from)) ? String(m.from) : null, to: m.to && ids.has(String(m.to)) ? String(m.to) : null,
         amount: round2(toNumber(m.amount, 0)), currency: normCur(m.currency)
@@ -928,6 +931,8 @@ const normalizeState = (raw) => {
     }
     base.config.accountBudgets = cleanAccountBudgets(cfg.accountBudgets);
     base.config.trips = normalizeTrips(cfg.trips);
+    // Saved before the switch existed: the budget was on. A new start: off until you turn it on.
+    base.config.budgetOn = cfg.budgetOn === undefined ? !!(raw && raw.transactions && raw.transactions.length) : cfg.budgetOn === true;
     Object.assign(base.config, normalizeSectionConfig(cfg));
     if (cfg.lastCategory && typeof cfg.lastCategory === 'object') {
         base.config.lastCategory = { ...base.config.lastCategory, ...cfg.lastCategory };
@@ -1018,6 +1023,7 @@ const settingsPayload = () => {
         lastAccount: c.lastAccount,
         reminders: !!c.reminders,
         trips: c.trips || [],
+        budgetOn: c.budgetOn !== false,
         sections: c.sections || [],
         sectionMoves: c.sectionMoves || [],
         sectionSince: c.sectionSince || null,
@@ -1048,6 +1054,7 @@ const applyCloudSettings = (d) => {
     if (d.budgetSavePct !== undefined) c.budgetSavePct = Math.min(90, Math.max(0, Math.round(toNumber(d.budgetSavePct, 0))));
     if (d.accountBudgets && typeof d.accountBudgets === 'object') c.accountBudgets = cleanAccountBudgets(d.accountBudgets);
     if (Array.isArray(d.trips)) c.trips = normalizeTrips(d.trips);
+    if (typeof d.budgetOn === 'boolean') c.budgetOn = d.budgetOn;
     if (Array.isArray(d.sections)) Object.assign(c, normalizeSectionConfig(d));
     if (isCurrency(d.currency)) c.currency = d.currency;
     if (Array.isArray(d.currencies) && d.currencies.some(isCurrency)) c.currencies = [...new Set(d.currencies.filter(isCurrency).concat(dcur()))];
@@ -2124,7 +2131,8 @@ const enableReminders = async (on) => {
    ========================================================================= */
 const transferLine = (t) => `${accountById(t.accountId).name} to ${accountById(t.toAccountId).name}`;
 
-const txRow = (t, { showDate = true } = {}) => {
+const txRow = (t, { showDate = true, withAccount = false } = {}) => {
+    const accName = withAccount ? (() => { const a = state.accounts.find((x) => x.id === t.accountId); return a ? a.name : ''; })() : '';
     const when = showDate ? `<span class="tx-when">${escapeHtml(relativeDayLabel(t.date))}</span>` : '';
     if (t.type === 'transfer') {
         return `<li><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
@@ -2138,7 +2146,7 @@ const txRow = (t, { showDate = true } = {}) => {
     const signed = formatSigned(t.type === 'income' ? value : -value, dcur());
     const orig = t.fx ? `<span class="tx-orig-inline">${escapeHtml(fxNote(t))}</span>` : t.currency !== dcur() ? `<span class="tx-orig-inline">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>` : '';
     const sec = t.sectionId ? secById(t.sectionId) : null;
-    const label = `${showDate ? cat.name : (t.note || cat.name)}${sec ? ` · ${sec.name}` : ''}${t.beforeBalance ? ' · before balance date' : ''}`;
+    const label = `${accName ? `${t.type === 'income' ? 'Into' : 'From'} ${accName} · ` : ''}${showDate ? cat.name : (t.note || cat.name)}${sec ? ` · ${sec.name}` : ''}${t.beforeBalance ? ' · before balance date' : ''}`;
     const st = t.pending ? payStatus(t.date) : null;
     const waitingStrip = t.pending ? `<div class="tx-confirm" data-status="${st}"><span>${st === 'overdue' ? `${t.type === 'income' ? 'Expected' : 'Was due'} ${escapeHtml(shortDate(t.date))}` : st === 'due' ? (t.type === 'income' ? 'Expected today' : 'Due today') : `Due ${escapeHtml(shortDate(t.date))}`}</span><button type="button" class="btn btn-xs ${t.type === 'income' ? 'btn-income' : 'btn-primary'}" data-pay="tx:${escapeHtml(t.id)}">${icon('i-check', 'ic ic-sm')} ${t.type === 'income' ? 'Mark as received' : 'Mark as paid'}</button></div>` : '';
     return `<li class="${t.pending ? 'tx-li-pending' : ''}"><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
@@ -4199,6 +4207,7 @@ const renderDashboard = () => {
         pillText.textContent = s.spent > 0 ? 'First month tracked' : 'Nothing spent yet';
     }
 
+    document.querySelector('.hero-budget').hidden = !budgetOn();
     setMeter($('dash-budget-fill'), s.budgetPct, budgetState(s.budgetPct));
     $('dash-budget-meter').setAttribute('aria-valuenow', String(Math.round(Math.min(100, s.budgetPct))));
     $('dash-budget-desc').textContent = `${Math.round(s.budgetPct)}% of ${fitMoney(s.budget, cur, 11)} budget${s.fromBalance ? ' (from balance)' : s.fromIncome ? ' (from income)' : ''}`;
@@ -4237,9 +4246,15 @@ const renderDashboard = () => {
     if (state.accounts.length) $('account-strip').setAttribute('title', 'Tap to switch, hold to edit');
 
     // Waiting payments live in the Payments card above; Recent is money that really moved.
-    const recent = sortByNewest(viewTx().filter((t) => !t.pending)).slice(0, 6);
+    // Recent: this account, or every account (each entry then says which account it was in or out of).
+    let recentAll = false;
+    try { recentAll = localStorage.getItem('VELA_RECENT_ALL') === '1'; } catch (e) { /* storage blocked */ }
+    $('recent-scope').hidden = state.accounts.length < 2;
+    setPressed('[data-recent-all]', (b) => (b.dataset.recentAll === '1') === recentAll);
+    const recentSrc = recentAll && state.accounts.length > 1 ? state.transactions : viewTx();
+    const recent = sortByNewest(recentSrc.filter((t) => !t.pending)).slice(0, recentAll ? 10 : 6);
     $('recent-list').innerHTML = recent.length
-        ? recent.map((t) => txRow(t)).join('')
+        ? recent.map((t) => txRow(t, { withAccount: recentAll })).join('')
         : starterHtml();
 
     renderTrendChart();
@@ -4431,8 +4446,14 @@ const planBudgetsHtml = () => {
     }).join('');
 
     const unbudgeted = Object.entries(s.byCat).filter(([id]) => !budgeted.includes(id)).sort((a, b) => b[1] - a[1]);
+    const toggle = `<div class="card budget-toggle"><div class="setting-row"><div class="setting-text"><span class="setting-title">Monthly budget</span><span class="setting-desc">${budgetOn() ? 'On: limits, progress and warnings.' : 'Off: Vela only tracks income and spending. Turn on to plan a monthly budget.'}</span></div>
+        <button class="switch" type="button" role="switch" aria-checked="${budgetOn()}" data-action="budget-toggle" aria-label="Monthly budget"></button></div></div>`;
+    if (!budgetOn()) {
+        return `${toggle}
+        <div class="card">${emptyState({ iconId: 'i-target', title: 'No monthly budget', text: `This month you spent ${formatCurrency(s.spent, cur)} and received ${formatCurrency(s.income, cur)}. Turn the budget on to set a total, a share of your salary, or limits per category.`, actionLabel: 'Turn the budget on', action: 'budget-toggle' })}</div>`;
+    }
 
-    return `
+    return `${toggle}
     <article class="card glow" style="--glow:var(--pal-violet)">
         <div class="card-head"><h2 class="card-title">Monthly budget</h2><button type="button" class="btn btn-secondary btn-xs" data-edit-budget="__overall">${icon('i-edit', 'ic ic-sm')} Edit</button></div>
         <div class="big-number ${left < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(Math.abs(left), cur))}</div>
@@ -5074,7 +5095,16 @@ const openEditTx = (id) => {
     openOrSwap('modal-tx');
 };
 
+const budgetOn = () => state.config.budgetOn !== false;
+const setBudgetOn = (on) => {
+    state.config.budgetOn = !!on;
+    if (!commitState('That')) return;
+    haptic();
+    showToast(on ? 'Monthly budget is on' : 'Monthly budget is off. Income and spending are still tracked; your budget settings are kept.', 'info');
+    renderActive();
+};
 const budgetAlert = (categoryId) => {
+    if (!budgetOn()) return;
     const s = monthStats();
     const limitUsd = state.config.categoryBudgets[categoryId];
     if (limitUsd) {
@@ -6626,6 +6656,14 @@ const secBadge = (sec, extra = '') => `<span class="cat-badge sec-badge${extra}"
 // Funds that belong to an account (or to every account). Money is allocated from an income only to the funds
 // of the account it arrived in; an expense can only be paid from the funds of its account.
 const fundsFor = (accountId) => secList().filter((x) => !x.accountId || !accountId || x.accountId === accountId);
+// Funds are part of an account's money set aside, never extra money. Free money = balance - what its funds hold.
+const accountFundsTotal = (accountId, bal = sectionBalances()) => round2(secList().filter((x) => x.accountId === accountId).reduce((a, x) => a + Math.max(0, bal[x.id] || 0), 0));
+const accountFreeMoney = (accountId, bal) => {
+    const acc = state.accounts.find((a) => a.id === accountId);
+    return acc ? round2(toDisplay(accountBalance(acc), acc.currency) - accountFundsTotal(accountId, bal)) : 0;
+};
+// "Not enough money" with the numbers: what is available, what was asked, what is missing.
+const shortfallText = (available, requested, cur = dcur()) => `Insufficient balance. Available: ${formatCurrency(Math.max(0, available), cur)} · Requested: ${formatCurrency(requested, cur)} · Short by: ${formatCurrency(requested - Math.max(0, available), cur)}`;
 const fundOnceDone = (x) => x.once && secMoves().some((m) => m.to === x.id && m.kind === 'income' && m.amount > 0);
 const secPlanLabelBase = (sec) => (sec.mode === 'manual' ? 'Only money you add' : sec.mode === 'rest' ? 'Remainder of income' : sec.mode === 'percent' ? `${sec.value}% of income` : `${formatCurrency(sec.value, sec.currency)} ${sec.once ? 'once' : 'fixed per income'}`);
 const secPlanLabel = (sec) => (sec.once && sec.mode !== 'manual' && sec.mode !== 'rest' ? (fundOnceDone(sec) ? `${secPlanLabelBase(sec)} · done, nothing more` : `${secPlanLabelBase(sec)} · next income only`) : secPlanLabelBase(sec));
@@ -6731,7 +6769,8 @@ const divideNumbers = () => {
         after[from] -= bal[from];
         after[to] += bal[from];
     });
-    let pool = job.total;
+    // Only the share of the income you chose to allocate (100%, 50%, a custom amount...); the rest stays free.
+    let pool = job.base === undefined ? job.total : Math.min(job.total, job.base);
     const fills = [];
     divFunds().map((x) => ({ id: x.id, need: round2(-after[x.id]) })).filter((x) => x.need > 0).sort((a, b) => b.need - a.need)
         .forEach((x) => { const v = Math.min(pool, x.need); if (v > 0) { fills.push({ to: x.id, amount: round2(v) }); pool -= v; } });
@@ -6741,7 +6780,7 @@ const divideNumbers = () => {
 const openDivide = (incomeId) => {
     const t = state.transactions.find((x) => x.id === incomeId && x.type === 'income');
     if (!t || !fundsFor(t.accountId).length) { if (t) showToast('No funds for this account yet. Add one in Plan › Funds.', 'info'); return; }
-    divideJob = { incomeId, total: round2(toDisplay(t.amount, t.currency)), carry: {}, alloc: null, name: t.desc, date: t.date, accountId: t.accountId };
+    divideJob = { incomeId, total: round2(toDisplay(t.amount, t.currency)), carry: {}, alloc: null, name: t.desc, date: t.date, accountId: t.accountId, share: 1 };
     divideKeepRest = false;
     const n = divideNumbers();
     divideJob.alloc = planSplit(n.pool).split;
@@ -6755,6 +6794,12 @@ const renderDivide = () => {
     const n = divideNumbers();
     $('divide-title').textContent = `Allocate ${job.name}`;
     $('divide-total').textContent = formatCurrency(job.total, cur);
+    const base = job.base === undefined ? job.total : Math.min(job.total, job.base);
+    const shares = [[1, '100%'], [0.75, '75%'], [0.5, '50%'], [0.25, '25%']];
+    $('divide-share').innerHTML = shares.map(([k, l]) => `<button type="button" class="chip" data-divide-share="${k}" aria-pressed="${job.share === k}">${l}</button>`).join('')
+        + `<button type="button" class="chip" data-divide-share="custom" aria-pressed="${job.share === 'custom'}">Custom</button><button type="button" class="chip" data-divide-share="none">None</button>`;
+    $('divide-custom-field').hidden = job.share !== 'custom';
+    $('divide-summary').innerHTML = `<span><small>Salary</small><strong>${escapeHtml(formatCurrency(job.total, cur))}</strong></span><span><small>Allocating</small><strong class="text-income">${escapeHtml(formatCurrency(base, cur))}</strong></span><span><small>Not allocated</small><strong>${escapeHtml(formatCurrency(job.total - base, cur))}</strong></span>`;
     const leftovers = divFunds().filter((x) => n.bal[x.id] > 0);
     $('divide-carry').innerHTML = leftovers.length ? `<div class="section-head"><h2>Unspent balances</h2></div><p class="field-hint">Carry each one forward in the same fund, or transfer it to another fund.</p>${leftovers.map((x) => `
         <div class="sec-line">${secBadge(x, ' is-mini')}<span class="sec-line-name"><span>${escapeHtml(x.name)}</span><span class="text-income">${escapeHtml(formatCurrency(n.bal[x.id], cur))} unspent</span></span>
@@ -6786,6 +6831,17 @@ const updateDivideLeft = () => {
     $('btn-divide-ok').disabled = left < -0.004;
     const parts = divFunds().map((x) => [x, (job.alloc[x.id] || 0) + (n.fills.find((f) => f.to === x.id) || { amount: 0 }).amount + (x.mode === 'rest' && left > 0 && !divideKeepRest ? left : 0)]);
     $('divide-bar').innerHTML = secStackBar(parts).replace(/data-grow="([\d.]+)"/g, 'style="width:$1%" data-w="$1"').replace(/style="--cat:([^"]+)" style="width/g, 'style="--cat:$1;width');
+};
+// 100% / 75% / 50% / 25% / a custom amount of the income to allocate; "None" leaves it out of the funds.
+const setDivideShare = (k) => {
+    const job = divideJob;
+    if (!job) return;
+    if (k === 'none') { skipDivide(job.incomeId); return; }
+    job.share = k === 'custom' ? 'custom' : Number(k);
+    job.base = k === 'custom' ? Math.min(job.total, Math.max(0, toNumber($('divide-custom').value, job.base === undefined ? job.total : job.base))) : round2(job.total * Number(k));
+    if (k === 'custom' && !$('divide-custom').value) $('divide-custom').value = job.base;
+    job.alloc = planSplit(divideNumbers().pool).split;
+    renderDivide();
 };
 const confirmDivide = () => {
     const job = divideJob;
@@ -6843,32 +6899,104 @@ const undoDivide = (incomeId) => {
 let secMoveFrom = null;
 const openSecMove = (fromId, mode = 'move') => {
     secMoveFrom = fromId || null;
-    $('sec-move-title').textContent = mode === 'add' ? 'Add funds' : 'Transfer between funds';
+    $('sec-move-title').textContent = mode === 'add' ? 'Add money to a fund' : mode === 'out' ? 'Take money out of a fund' : 'Move between funds';
     $('sec-move-mode').value = mode;
     const opts = secList().map((x) => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.name)}</option>`).join('');
     $('sec-move-from').innerHTML = opts;
     $('sec-move-to').innerHTML = opts;
     $('sec-move-from-field').hidden = mode === 'add';
+    $('sec-move-to-field').hidden = mode === 'out';
+    $('sec-move-from-label').textContent = mode === 'out' ? 'Fund' : 'From';
+    $('sec-move-to-label').textContent = mode === 'add' ? 'Fund' : 'To';
     if (fromId) { if (mode === 'add') $('sec-move-to').value = fromId; else $('sec-move-from').value = fromId; }
-    if (mode !== 'add' && $('sec-move-to').value === $('sec-move-from').value && secList().length > 1) $('sec-move-to').selectedIndex = (($('sec-move-from').selectedIndex) + 1) % secList().length;
+    if (mode === 'move' && $('sec-move-to').value === $('sec-move-from').value && secList().length > 1) $('sec-move-to').selectedIndex = (($('sec-move-from').selectedIndex) + 1) % secList().length;
     $('sec-move-amount').value = '';
-    $('sec-move-hint').textContent = mode === 'add' ? 'For an opening balance (money already set aside) or extra money you add yourself.' : 'Reallocates money from one fund to another. Your accounts don’t change.';
+    secMoveToken = generateId();
+    $('sec-move-note').value = '';
+    $('sec-move-date').value = todayISO();
+    $('sec-move-date').max = todayISO();
+    updateSecMoveHint();
     openOrSwap('modal-sec-move');
 };
-const submitSecMove = () => {
+const updateSecMoveHint = () => {
     const mode = $('sec-move-mode').value;
-    const amount = toNumber($('sec-move-amount').value, NaN);
-    const to = $('sec-move-to').value;
+    const bal = sectionBalances();
+    const cur = dcur();
+    const fund = secById(mode === 'add' ? $('sec-move-to').value : $('sec-move-from').value);
+    if (!fund) { $('sec-move-hint').textContent = ''; return; }
+    const acc = fund.accountId && state.accounts.find((a) => a.id === fund.accountId);
+    $('sec-move-hint').textContent = mode === 'add'
+        ? (acc ? `Sets money aside from ${acc.name}: ${formatCurrency(Math.max(0, accountFreeMoney(acc.id, bal)), cur)} is free (not in a fund). The account balance itself doesn't change.` : 'Sets money aside for this fund (an opening balance, or extra money you put away).')
+        : mode === 'out' ? `${fund.name} has ${formatCurrency(bal[fund.id] || 0, cur)}. Taken-out money is free to spend again; it stays in your account.`
+            : `${fund.name} has ${formatCurrency(bal[fund.id] || 0, cur)}. Moving between funds doesn't change your accounts.`;
+};
+let secMoveToken = null;
+const submitSecMove = () => {
+    if (!secMoveToken) return false; // this sheet was already saved: a second tap never adds it twice
+    const mode = $('sec-move-mode').value;
+    const amount = round2(toNumber($('sec-move-amount').value, NaN));
+    const to = mode === 'out' ? null : $('sec-move-to').value;
     const from = mode === 'add' ? null : $('sec-move-from').value;
+    const date = isISODate($('sec-move-date').value) && $('sec-move-date').value <= todayISO() ? $('sec-move-date').value : todayISO();
+    const note = $('sec-move-note').value.trim();
     if (!(amount > 0)) return fieldError($('sec-move-amount'), 'Enter an amount greater than zero.');
     if (from && from === to) return fieldError($('sec-move-to'), 'Pick a different fund.');
-    state.config.sectionMoves = [...secMoves(), { id: generateId(), date: todayISO(), kind: mode === 'add' ? 'add' : 'move', incomeId: null, from, to, amount: round2(amount), currency: dcur() }];
-    if (!commitState('The transfer')) return false;
+    const bal = sectionBalances();
+    if (from && amount > (bal[from] || 0) + 0.004) return fieldError($('sec-move-amount'), shortfallText(bal[from] || 0, amount));
+    if (mode === 'add') {
+        const fund = secById(to);
+        if (fund && fund.accountId) {
+            const free = accountFreeMoney(fund.accountId, bal);
+            if (amount > free + 0.004) return fieldError($('sec-move-amount'), shortfallText(free, amount));
+        }
+    }
+    const token = secMoveToken;
+    secMoveToken = null;
+    state.config.sectionMoves = [...secMoves(), { id: generateId(), date, kind: mode === 'add' ? 'add' : mode === 'out' ? 'out' : 'move', incomeId: null, from, to, amount, currency: dcur(), ...(note ? { note: note.slice(0, 120) } : {}) }];
+    if (!commitState('That')) { secMoveToken = token; return false; }
+    haptic('MEDIUM');
     closeSheet('modal-sec-move');
-    showToast(mode === 'add' ? `${formatCurrency(amount, dcur())} added to ${secById(to).name}` : `${formatCurrency(amount, dcur())} transferred from ${secById(from).name} to ${secById(to).name}`, 'success');
+    const after = sectionBalances();
+    const f = secById(to || from);
+    showToast(mode === 'add' ? `${formatCurrency(amount, dcur())} added to ${f.name}. Now ${formatCurrency(after[f.id], dcur())}.`
+        : mode === 'out' ? `${formatCurrency(amount, dcur())} taken out of ${f.name}. Now ${formatCurrency(after[f.id], dcur())}.`
+            : `${formatCurrency(amount, dcur())} moved from ${secById(from).name} to ${secById(to).name}`, 'success');
     if (openSheets.includes('modal-section-view')) renderSectionView();
     renderActive();
     return true;
+};
+
+// ---- Hold a fund: add, take out, move, edit, delete ----
+let fundHold = null;
+let fundHeld = false;
+const openFundActions = (id) => {
+    const x = secById(id);
+    if (!x) return;
+    secViewId = id;
+    const bal = sectionBalances()[id] || 0;
+    $('fund-actions-title').textContent = x.name;
+    $('fund-actions-sub').textContent = `${formatCurrency(bal, dcur())} · ${secPlanLabel(x)}`;
+    openOrSwap('modal-fund-actions');
+};
+const initFundHold = () => {
+    const cancel = () => { if (fundHold) { clearTimeout(fundHold.timer); fundHold = null; } };
+    document.addEventListener('pointerdown', (e) => {
+        const tile = e.target.closest('.sec-tile[data-sec-view], .sec-chip[data-sec-view]');
+        fundHeld = false;
+        if (!tile) return;
+        fundHold = { x: e.clientX, y: e.clientY, timer: setTimeout(() => {
+            fundHold = null;
+            fundHeld = true;
+            haptic('MEDIUM');
+            tile.classList.add('is-held');
+            setTimeout(() => tile.classList.remove('is-held'), 280);
+            openFundActions(tile.dataset.secView);
+        }, 480) };
+    });
+    document.addEventListener('pointermove', (e) => { if (fundHold && Math.hypot(e.clientX - fundHold.x, e.clientY - fundHold.y) > 8) cancel(); });
+    ['pointerup', 'pointercancel'].forEach((ev) => document.addEventListener(ev, () => { cancel(); if (fundHeld) setTimeout(() => { fundHeld = false; }, 80); }));
+    document.addEventListener('click', (e) => { if (fundHeld && e.target.closest('.sec-tile, .sec-chip')) { e.preventDefault(); e.stopPropagation(); fundHeld = false; } }, true);
+    document.addEventListener('contextmenu', (e) => { if (e.target.closest('.sec-tile, .sec-chip')) e.preventDefault(); });
 };
 
 /* ---- Motion: amounts count up, bars grow (nothing moves when the phone asks for less motion) ---- */
@@ -6928,6 +7056,7 @@ const openSectionEditor = (id) => {
     secEditIcon = x && x.icon ? x.icon : 'i-wallet';
     $('section-value').value = x && x.mode !== 'rest' && x.mode !== 'manual' ? x.value : '';
     secEditOnce = !!(x && x.once);
+    $('section-target').value = x && x.target ? x.target : '';
     const view = viewAccountObj();
     $('section-account').innerHTML = `<option value="">All accounts</option>${state.accounts.map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`).join('')}`;
     $('section-account').value = x ? (x.accountId || '') : (view ? view.id : '');
@@ -6969,7 +7098,8 @@ const submitSection = () => {
     }
     if (secEditMode === 'rest') state.config.sections = secList().map((o) => (o.mode === 'rest' && o.id !== id ? { ...o, mode: 'percent', value: 0 } : o));
     const data = { name, mode: secEditMode, value: secEditMode === 'rest' || secEditMode === 'manual' ? 0 : value, color: secEditColor, icon: secEditIcon, currency: dcur(),
-        once: secEditOnce && (secEditMode === 'percent' || secEditMode === 'amount'), accountId: $('section-account').value || null };
+        once: secEditOnce && (secEditMode === 'percent' || secEditMode === 'amount'), accountId: $('section-account').value || null,
+        target: Math.max(0, round2(toNumber($('section-target').value, 0))) };
     if (id) state.config.sections = secList().map((o) => (o.id === id ? { ...o, ...data } : o));
     else {
         state.config.sections = [...secList(), { id: generateId(), ...data }];
@@ -7026,16 +7156,24 @@ const renderSectionView = () => {
         if (m.to !== x.id && m.from !== x.id) return;
         const inc = m.incomeId && state.transactions.find((t) => t.id === m.incomeId);
         const other = secById(m.to === x.id ? m.from : m.to);
-        const label = m.kind === 'fill' ? `Deficit covered${inc ? ` · ${inc.desc}` : ''}` : m.kind === 'add' ? 'Funds added'
+        const label = m.kind === 'fill' ? `Deficit covered${inc ? ` · ${inc.desc}` : ''}` : m.kind === 'add' ? `Money added${m.note ? ` · ${m.note}` : ''}` : m.kind === 'out' ? `Taken out${m.note ? ` · ${m.note}` : ''}`
             : m.kind === 'move' ? (m.to === x.id ? `Transfer from ${other ? other.name : 'a fund'}` : `Transfer to ${other ? other.name : 'a fund'}`)
                 : `Allocated from ${inc ? inc.desc : 'income'}`;
-        items.push({ date: m.date, label, v: (m.to === x.id ? 1 : -1) * toDisplay(m.amount, m.currency), incomeId: m.kind === 'income' || m.kind === 'fill' ? m.incomeId : null, ic: m.kind === 'move' ? 'i-swap' : m.kind === 'fill' ? 'i-check' : m.kind === 'add' ? 'i-plus' : 'i-arrow-down' });
+        items.push({ date: m.date, label, v: (m.to === x.id ? 1 : -1) * toDisplay(m.amount, m.currency), incomeId: m.kind === 'income' || m.kind === 'fill' ? m.incomeId : null, ic: m.kind === 'move' ? 'i-swap' : m.kind === 'fill' ? 'i-check' : m.kind === 'add' ? 'i-plus' : m.kind === 'out' ? 'i-arrow-up' : 'i-arrow-down' });
     });
     state.transactions.forEach((t) => { if (t.type === 'expense' && t.sectionId === x.id && !isUpcoming(t)) items.push({ date: t.date, label: t.desc, v: -toDisplay(t.amount, t.currency), tx: t.id, badge: entryBadge(t.desc, t.category, 'expense') }); });
     items.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0));
     const seenIncome = new Set();
     $('section-view-body').innerHTML = `
         <div class="sec-hero" style="--cat:var(--pal-${x.color})">${secBadge(x, ' is-big')}<span class="sec-hero-amount amount ${bal < 0 ? 'text-expense' : ''}" data-countup="${bal}">${escapeHtml(formatCurrency(bal, cur))}</span><span>${bal < 0 ? 'deficit: covered first from the next income' : 'available balance'} · ${escapeHtml(secPlanLabel(x))}</span></div>
+        ${(() => {
+        let added = 0; let out = 0; let spent = 0;
+        secMoves().forEach((m) => { const v = toDisplay(m.amount, m.currency); if (m.to === x.id) added += v; if (m.from === x.id) out += v; });
+        state.transactions.forEach((t) => { if (t.type === 'expense' && t.sectionId === x.id && !isUpcoming(t)) spent += toDisplay(t.amount, t.currency); });
+        const tgt = x.target ? toDisplay(x.target, x.currency) : 0;
+        return `<div class="fund-stats"><span><small>Added</small><strong class="text-income">${escapeHtml(formatCurrency(added, cur))}</strong></span><span><small>Taken out</small><strong>${escapeHtml(formatCurrency(out, cur))}</strong></span><span><small>Spent</small><strong class="text-expense">${escapeHtml(formatCurrency(spent, cur))}</strong></span></div>`
+            + (tgt ? `<div class="fund-target"><div class="fund-target-row"><span>Target ${escapeHtml(formatCurrency(tgt, cur))}</span><span>${Math.min(100, Math.max(0, Math.round((bal / tgt) * 100)))}%</span></div>${meterHtml(Math.max(0, (bal / tgt) * 100), null, `${x.name} target`)}<span class="fund-target-left">${bal >= tgt ? 'Target reached' : `${escapeHtml(formatCurrency(tgt - Math.max(0, bal), cur))} still to go`}</span></div>` : '');
+    })()}
         <div class="sec-month"><span>Allocated this month <strong class="text-income">${escapeHtml(formatCurrency(mo.in, cur))}</strong></span><span>Spent <strong class="text-expense">${escapeHtml(formatCurrency(mo.spent, cur))}</strong></span></div>
         <div class="section-head"><h2>Transactions</h2></div>
         ${items.length ? `<ul class="sec-history">${items.slice(0, 80).map((i) => {
@@ -7111,9 +7249,17 @@ const planSectionsHtml = () => {
             <span class="sec-summary-label">Total in funds${viewing ? ` · ${escapeHtml(viewing.name)}` : ''}</span>
             <strong class="sec-summary-total amount" data-countup="${total}">${escapeHtml(formatCurrency(total, cur))}</strong>
             ${secStackBar(shown.map((x) => [x, bal[x.id] || 0]))}
+            ${viewing ? (() => {
+        const inAcc = toDisplay(accountBalance(viewing), viewing.currency);
+        const held = accountFundsTotal(viewing.id, bal);
+        const free = round2(inAcc - held);
+        return `<div class="fund-split"><span><small>In ${escapeHtml(viewing.name)}</small><strong>${escapeHtml(formatCurrency(inAcc, cur))}</strong></span><span><small>In its funds</small><strong>${escapeHtml(formatCurrency(held, cur))}</strong></span><span><small>Not in a fund</small><strong class="${free < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(free, cur))}</strong></span></div>
+            ${free < -0.004 ? `<p class="field-hint text-expense">Its funds hold ${escapeHtml(formatCurrency(-free, cur))} more than the account has. Take some out, or record the missing income.</p>` : '<p class="field-hint">Funds are part of this account\'s money set aside for a purpose, not extra money.</p>'}`;
+    })() : ''}
             <div class="sec-summary-actions">
                 <button type="button" class="chip-btn" data-action="sec-move">${icon('i-swap', 'ic ic-sm')} Transfer</button>
-                <button type="button" class="chip-btn" data-action="sec-add-money">${icon('i-plus', 'ic ic-sm')} Add funds</button>
+                <button type="button" class="chip-btn" data-action="sec-add-money">${icon('i-plus', 'ic ic-sm')} Add money</button>
+                <button type="button" class="chip-btn" data-action="sec-take-out">${icon('i-arrow-up', 'ic ic-sm')} Take out</button>
                 <button type="button" class="chip-btn" data-action="sec-new">${icon('i-plus', 'ic ic-sm')} New fund</button>
             </div>
             ${pct > 100 ? '<p class="field-hint text-expense">Your percentages add up to more than 100%.</p>' : ''}
@@ -7122,15 +7268,17 @@ const planSectionsHtml = () => {
         <div class="sec-grid">${shown.map((x, n) => {
         const b = bal[x.id] || 0;
         const m = mo[x.id];
-        const used = m.in > 0 ? Math.min(100, (m.spent / m.in) * 100) : (m.spent > 0 ? 100 : 0);
+        const tgt = x.target ? toDisplay(x.target, x.currency) : 0;
+        const used = tgt ? Math.min(100, Math.max(0, (b / tgt) * 100)) : m.in > 0 ? Math.min(100, (m.spent / m.in) * 100) : (m.spent > 0 ? 100 : 0);
         return `<button type="button" class="sec-tile${b < 0 ? ' is-below' : ''}" data-sec-view="${escapeHtml(x.id)}" style="--cat:var(--pal-${x.color});--n:${n}">
                 <span class="sec-tile-top">${secBadge(x)}${b < 0 ? '<span class="sec-pill">Deficit</span>' : x.accountId ? '' : '<span class="sec-pill is-all">All accounts</span>'}</span>
                 <span class="sec-tile-name">${escapeHtml(x.name)}</span>
                 <strong class="sec-tile-amount amount" data-countup="${b}">${escapeHtml(formatCurrency(b, cur))}</strong>
                 <span class="sec-tile-bar"><span data-grow="${used.toFixed(1)}"></span></span>
-                <span class="sec-tile-sub">${m.in || m.spent ? `${escapeHtml(formatCompact(m.spent, cur).replace(/^[^\d-]+/, ''))} of ${escapeHtml(formatCompact(m.in, cur).replace(/^[^\d-]+/, ''))} spent` : escapeHtml(secPlanLabel(x))}</span>
+                <span class="sec-tile-sub">${tgt ? `${Math.round(used)}% of ${escapeHtml(formatCompact(tgt, cur).replace(/^[^\d-]+/, ''))} target` : m.in || m.spent ? `${escapeHtml(formatCompact(m.spent, cur).replace(/^[^\d-]+/, ''))} of ${escapeHtml(formatCompact(m.in, cur).replace(/^[^\d-]+/, ''))} spent` : escapeHtml(secPlanLabel(x))}</span>
             </button>`;
     }).join('')}</div>
+        ${shown.length ? '<p class="field-hint sec-hold-hint">Tap a fund to see its history. Hold it to add, take out, move, edit or delete.</p>' : ''}
         ${fundIncomeChooserHtml()}
         ${loose.length ? `<button type="button" class="card sec-loose" data-action="sec-unassigned"><span class="sec-loose-icon">${icon('i-alert')}</span><span><strong>${plural(loose.length, 'unallocated expense')}</strong><span>${escapeHtml(formatCurrency(sumDisplay(loose), cur))} · tap to assign them to funds</span></span>${icon('i-chevron', 'ic chev')}</button>` : ''}`;
 };
@@ -7877,6 +8025,17 @@ const showApproveWait = () => {
     document.body.classList.add('approve-waiting');
     $('btn-approve-code').hidden = true;
     mfaFactor().then((f) => { if (approvalGate === g) $('btn-approve-code').hidden = !f; });
+    // Which phones can approve this one (the phones already approved on this account).
+    $('approve-phones').innerHTML = '';
+    Promise.resolve(supabaseClient.from('vela_devices').select('device_id, name, approved, last_seen').order('last_seen', { ascending: false }))
+        .then(({ data }) => {
+            if (approvalGate !== g) return;
+            const me = deviceKey().id;
+            const list = (data || []).filter((d) => d.approved && d.device_id !== me);
+            $('approve-phones').innerHTML = list.length
+                ? `<span class="approve-phones-title">Open Vela on one of these:</span>${list.slice(0, 4).map((d) => `<span class="approve-phone">${icon('x-phone', 'ic ic-sm')}<span>${escapeHtml(d.name || 'Phone')}</span><span>used ${escapeHtml(relTime(new Date(d.last_seen).getTime()))}</span></span>`).join('')}`
+                : '<span class="approve-phones-title">No other approved phone was found for this account.</span>';
+        }).catch(() => {});
 };
 const endApproveWait = (ok, message, via = 'phone') => {
     const g = approvalGate;
@@ -8841,7 +9000,7 @@ const importBackup = (file) => {
 };
 
 // Everything Vela keeps on this phone (not the phone's own settings: lock timing, screen privacy, device key).
-const VELA_DATA_KEYS = ['VELA_STATE', 'VELA_SHOP_LOGOS', 'VELA_NOTIF_LOG', 'VELA_VIEW_ACCOUNT', 'VELA_HIDE_BALANCE', 'VELA_INSIGHTS_ALL', 'VELA_SMS', 'VELA_BEFORE_BAL_FIXED'];
+const VELA_DATA_KEYS = ['VELA_STATE', 'VELA_SHOP_LOGOS', 'VELA_NOTIF_LOG', 'VELA_VIEW_ACCOUNT', 'VELA_HIDE_BALANCE', 'VELA_INSIGHTS_ALL', 'VELA_SMS', 'VELA_BEFORE_BAL_FIXED', 'VELA_RECENT_ALL'];
 const clearPhoneData = async () => {
     const ln = nativePlugin('LocalNotifications');
     if (ln && state.config.reminderIds.length) { try { await ln.cancel({ notifications: state.config.reminderIds.map((id) => ({ id })) }); } catch (e) { /* ignore */ } }
@@ -9080,11 +9239,25 @@ const initEvents = () => {
         if (d.action === 'sec-move') { openSecMove(secViewId && openSheets.includes('modal-section-view') ? secViewId : null, 'move'); return; }
         if (d.action === 'sec-add-money') { openSecMove(secViewId && openSheets.includes('modal-section-view') ? secViewId : null, 'add'); return; }
         if (d.action === 'sec-move-ok') { submitSecMove(); return; }
+        if (d.action === 'sec-take-out') { openSecMove(secViewId && (openSheets.includes('modal-section-view') || openSheets.includes('modal-fund-actions')) ? secViewId : null, 'out'); return; }
+        if (d.fundAction) {
+            const id = secViewId;
+            if (d.fundAction === 'view') openSectionView(id);
+            else if (d.fundAction === 'add') openSecMove(id, 'add');
+            else if (d.fundAction === 'out') openSecMove(id, 'out');
+            else if (d.fundAction === 'move') openSecMove(id, 'move');
+            else if (d.fundAction === 'edit') openSectionEditor(id);
+            else if (d.fundAction === 'delete') { openSectionEditor(id); setTimeout(deleteSection, 350); }
+            return;
+        }
         if (d.action === 'sec-save') { submitSection(); return; }
         if (d.action === 'sec-delete') { deleteSection(); return; }
         if (d.action === 'sec-unassigned') { openUnassigned(); return; }
         if (d.action === 'sec-unassigned-ok') { saveUnassigned(); return; }
         if (d.action === 'divide-ok') { confirmDivide(); return; }
+        if (d.divideShare) { setDivideShare(d.divideShare); return; }
+        if (d.action === 'budget-toggle') { setBudgetOn(!budgetOn()); return; }
+        if (d.recentAll !== undefined) { try { localStorage.setItem('VELA_RECENT_ALL', d.recentAll); } catch (e) { /* storage blocked */ } renderDashboard(); return; }
         if (d.action === 'divide-skip') { if (divideJob) skipDivide(divideJob.incomeId); return; }
         if (d.subPick !== undefined) { pickSubscription(d.subPick); return; }
         if (d.action === 'add-trip') { openTrips(); return; }
@@ -9331,12 +9504,15 @@ const initEvents = () => {
     updateNotifBell();
     $('switch-approval').addEventListener('click', toggleApproval);
     $('switch-secure-screen').addEventListener('click', toggleSecureScreen);
+    initFundHold();
+    ['sec-move-from', 'sec-move-to'].forEach((id) => $(id).addEventListener('change', updateSecMoveHint));
     ['section-name', 'section-value'].forEach((id) => $(id).addEventListener('input', updateSectionPreview));
     $('modal-divide').addEventListener('input', (e) => {
         const a = e.target.dataset.secAlloc;
         if (a && divideJob) { divideJob.alloc[a] = Math.max(0, toNumber(e.target.value, 0)); updateDivideLeft(); }
     });
     $('divide-keep').addEventListener('click', () => { divideKeepRest = !divideKeepRest; updateDivideLeft(); });
+    $('divide-custom').addEventListener('input', () => { if (!divideJob) return; divideJob.base = Math.min(divideJob.total, Math.max(0, toNumber($('divide-custom').value, 0))); divideJob.alloc = planSplit(divideNumbers().pool).split; const keep = $('divide-custom').value; renderDivide(); $('divide-custom').value = keep; });
     $('modal-divide').addEventListener('change', (e) => {
         const c = e.target.dataset.secCarry;
         if (c && divideJob) {
@@ -9953,6 +10129,12 @@ const submitTransfer = () => {
     if (from.id === to.id) return fieldError($('transfer-to'), 'Pick two different accounts.');
     if (!(amount > 0)) return fieldError($('transfer-amount'), 'Enter an amount greater than zero.');
     if (!isISODate(date)) return fieldError($('transfer-date'), 'Pick a date.');
+    // Money can't leave an account that doesn't have it (a credit card may go below zero; a future transfer waits).
+    if (from.kind !== 'card' && date <= todayISO() && !smsEditing) {
+        const prev = id && state.transactions.find((t) => t.id === id);
+        const available = round2(accountBalance(from) + (prev && prev.accountId === from.id && !isUpcoming(prev) ? convertAmount(prev.amount, prev.currency, from.currency) : 0));
+        if (amount > available + 0.004) return fieldError($('transfer-amount'), shortfallText(available, amount, from.currency));
+    }
     let toAmount = amount;
     if (from.currency !== to.currency) {
         toAmount = toNumber($('transfer-received').value, NaN);

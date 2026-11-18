@@ -10,7 +10,7 @@ const SEED = `(() => {
     localStorage.clear();
     const s = createDefaultState();
     applyRegionDefaults(s);
-    Object.assign(s.config, { currency: 'LKR', currencies: ['LKR', 'USD'], budgetCurrency: 'LKR', budget: 80000, budgetMode: 'fixed', rates: { LKR: 300 }, rateOverrides: { LKR: 300 } });
+    Object.assign(s.config, { currency: 'LKR', currencies: ['LKR', 'USD'], budgetCurrency: 'LKR', budget: 80000, budgetMode: 'fixed', rates: { LKR: 300 }, rateOverrides: { LKR: 300 }, budgetOn: true });
     s.accounts = [
         { id: 'A', name: 'Commercial bank', kind: 'bank', currency: 'LKR', opening: 100000, createdAt: 0 },
         { id: 'B', name: 'BOC', kind: 'bank', currency: 'LKR', opening: 100000, createdAt: 0 },

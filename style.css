@@ -4769,3 +4769,32 @@ body.approve-waiting { overflow: hidden; }
 /* Fund editor: four ways a fund gets money, as a 2 x 2 grid so they always fit */
 #modal-section .segmented { display: grid; grid-template-columns: 1fr 1fr; gap: 4px; border-radius: 18px; }
 #modal-section .segmented button { font-size: 13px; padding: 10px 6px; min-width: 0; white-space: nowrap; border-radius: 14px; }
+
+.approve-phones { display: grid; gap: 6px; width: 100%; }
+.approve-phones:empty { display: none; }
+.approve-phones-title { font-size: var(--fs-sm); color: var(--text-2); }
+.approve-phone { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-radius: 12px; background: var(--surface-2); font-size: var(--fs-sm); }
+.approve-phone > span:nth-child(2) { flex: 1; font-weight: 700; text-align: left; }
+.approve-phone > span:last-child { color: var(--text-3); font-size: var(--fs-xs); }
+.approve-lost { width: 100%; text-align: left; font-size: var(--fs-sm); color: var(--text-2); }
+.approve-lost summary { cursor: pointer; color: var(--primary); font-weight: 600; text-align: center; }
+.approve-lost p { margin: 8px 0 0; }
+
+/* Funds: hold menu, stats, target, account split */
+.sec-tile.is-held { transform: scale(1.05); box-shadow: 0 12px 30px -12px var(--cat); }
+.sec-tile { -webkit-touch-callout: none; user-select: none; }
+.fund-actions { display: grid; gap: 4px; }
+.fund-stats, .fund-split { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; margin: var(--sp-2) 0; }
+.fund-stats > span, .fund-split > span { display: grid; gap: 2px; padding: 10px; border-radius: 12px; background: var(--surface-2); min-width: 0; }
+.fund-stats small, .fund-split small { font-size: var(--fs-xs); color: var(--text-3); }
+.fund-stats strong, .fund-split strong { font-size: var(--fs-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fund-target { display: grid; gap: 6px; padding: 12px; border-radius: 14px; background: var(--surface-2); margin-bottom: var(--sp-2); }
+.fund-target-row { display: flex; justify-content: space-between; font-size: var(--fs-sm); font-weight: 600; }
+.fund-target-left { font-size: var(--fs-xs); color: var(--text-3); }
+.sec-hold-hint { text-align: center; margin: 0 0 var(--sp-3); }
+
+.divide-share { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.recent-scope { margin-bottom: var(--sp-2); }
+.sec-chip { -webkit-touch-callout: none; user-select: none; transition: transform 200ms ease; }
+.sec-chip.is-held { transform: scale(1.05); }
