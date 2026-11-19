@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.56.0';
+const APP_VERSION = '4.56.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -780,7 +780,8 @@ const normalizeBill = (b) => {
         nextDate,
         anchorDay: Math.min(31, Math.max(1, toNumber(b.anchorDay, parseDate(nextDate).getDate()))),
         accountId: b.accountId ? String(b.accountId) : null,
-        autoLog: b.autoLog !== false,
+        // Income never logs itself (it waits until it's received); bills can.
+        autoLog: type === 'expense' && b.autoLog !== false,
         createdAt: stamp(b.createdAt),
         ...(typeof b.ref === 'string' && b.ref.trim() ? { ref: b.ref.trim().slice(0, 40) } : {}),
         ...(toNumber(b.carry, 0) > 0 ? { carry: round2(toNumber(b.carry, 0)), ...(cleanDate(b.carryFrom) ? { carryFrom: cleanDate(b.carryFrom) } : {}) } : {}),
@@ -2057,7 +2058,7 @@ const processRecurring = () => {
     const today = todayISO();
     let created = 0;
     state.recurring.forEach((bill) => {
-        if (!bill.autoLog) return;
+        if (!bill.autoLog || bill.type === 'income') return;
         let guard = 0;
         let changed = false;
         while (bill.nextDate <= today && guard < 60) {
@@ -3488,6 +3489,7 @@ const smsMatchFor = (i) => {
 
 const smsBillPick = {};
 const smsBillCandidates = (i) => {
+    // (bills that wait for you: income always, expenses that don't log themselves)
     if (!i || i.type !== 'expense') return [];
     const word = (x) => String(x || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)[0] || '';
     const bSlug = (brandFor(i.merchant || i.desc) || {}).slug;
@@ -3734,7 +3736,7 @@ const expectedMatchFor = (rec, refKeys = []) => {
     }
     const near = (due) => Math.abs(daysBetween(parseDate(rec.date), parseDate(due))) <= 14;
     const same = (amt, cur) => Math.abs(toDisplay(amt, cur) - toDisplay(rec.amount, rec.currency)) <= Math.max(1, toDisplay(rec.amount, rec.currency) * 0.01);
-    const bill = state.recurring.find((b) => !b.autoLog && b.type === rec.type && b.nextDate && near(b.nextDate) && same(billDue(b), b.currency)
+    const bill = state.recurring.find((b) => (!b.autoLog || b.type === 'income') && b.type === rec.type && b.nextDate && near(b.nextDate) && same(billDue(b), b.currency)
         && (!b.accountId || b.accountId === rec.accountId));
     if (bill) return { kind: 'bill', bill };
     const tx = state.transactions.find((t) => t.id !== rec.id && t.pending && t.type === rec.type && near(t.date) && same(t.amount, t.currency) && (!t.accountId || t.accountId === rec.accountId));
@@ -6677,6 +6679,9 @@ const fillBillCategories = (type, selected) => {
 const setBillType = (type, selected) => {
     billType = type;
     setPressed('[data-bill-type]', (b) => b.dataset.billType === type);
+    // Income waits to be received (no automatic logging); only bills can log themselves.
+    $('bill-auto-setting').hidden = type === 'income';
+    $('bill-income-wait').hidden = type !== 'income';
     fillBillCategories(type, selected);
     $('bill-name').placeholder = type === 'income' ? 'e.g. Salary' : 'e.g. Netflix, Rent';
 };
@@ -6734,7 +6739,7 @@ const submitBill = () => {
         frequency: FREQ_LABELS[$('bill-frequency').value] ? $('bill-frequency').value : 'monthly',
         nextDate,
         anchorDay: parseDate(nextDate).getDate(),
-        autoLog: isOn($('bill-auto')),
+        autoLog: billType === 'income' ? false : isOn($('bill-auto')),
         accountId: $('bill-account').value || state.accounts[0].id,
         ...($('bill-form').dataset.sub === '1' ? { sub: true } : {}),
         ref: $('bill-ref').value.trim().slice(0, 40)

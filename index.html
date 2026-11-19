@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.56.0">
+    <link rel="stylesheet" href="style.css?v=4.56.1">
 </head>
 <body data-view="dashboard">
 
@@ -1216,7 +1216,8 @@
                         <input type="date" id="bill-next" class="input" required>
                     </div>
                     <div class="card list-card" style="background:var(--input-bg)">
-                        <div class="setting">
+                        <p class="field-hint bill-income-wait" id="bill-income-wait" hidden>Income waits as <strong>expected</strong> on its day and counts in your balance when you tap <strong>Received</strong> or the bank SMS comes in, with the real date and time.</p>
+                        <div class="setting" id="bill-auto-setting">
                             <div class="setting-row">
                                 <div class="setting-text"><span class="setting-title">Log it automatically</span><span class="setting-desc">Adds the entry on the due date. Off: you tap "Paid" yourself.</span></div>
                                 <button class="switch" type="button" role="switch" aria-checked="true" id="bill-auto" aria-label="Log automatically"></button>
@@ -1996,7 +1997,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.56.0"></script>
+    <script src="app.js?v=4.56.1"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

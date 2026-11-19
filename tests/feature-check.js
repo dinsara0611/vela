@@ -2812,6 +2812,29 @@ export async function run() {
         return (asked && covered && inFund) || `asked ${asked}, covered ${covered} (${JSON.stringify(bal)}), goal money in its fund ${inFund}`;
     });
 
+    await T('Rent due on the 17th arrives on the 19th: not logged by itself, stays expected, the SMS records it today and it counts in the balance', async () => {
+        const st = s();
+        const due = iso(addDays(new Date(), -2));
+        st.accounts.push({ id: 'acc-rt', name: 'Rent Bank', kind: 'bank', currency: 'LKR', opening: 22000, createdAt: 0, balanceDate: iso(addDays(new Date(), -1)) });
+        st.recurring.push(g('normalizeBill')({ id: 'rent-kw', type: 'income', name: 'Kothawala shop', amount: 40000, currency: 'LKR', category: 'Rent', frequency: 'monthly', nextDate: due, anchorDay: addDays(new Date(), -2).getDate(), autoLog: true, accountId: 'acc-rt', createdAt: 1 }));
+        g('saveState')();
+        const before = s().transactions.length;
+        g('processRecurring')();
+        const notLogged = s().transactions.length === before && s().recurring.find((b) => b.id === 'rent-kw').autoLog === false;
+        const expected = g('paymentItems')().some((i) => i.key === 'bill:rent-kw');
+        const t0 = Date.now();
+        const sms = g('parseBankSms')({ id: `sms-${t0}-rent2`, source: 'sms', address: 'COMBANK', body: 'LKR 40,000.00 credited to A/C 8001234567 on ' + new Date().toLocaleDateString('en-GB').replace(/\//g, '/') + ' Ref:KW1. Avl Bal LKR 62,000.00', date: t0 });
+        sms.time = '16:10';
+        const rec = g('smsApply')(sms, 'acc-rt'); await wait(300);
+        const bal = Math.round(g('accountBalance')(s().accounts.find((a) => a.id === 'acc-rt')));
+        const counted = rec && rec.type === 'income' && rec.recurringId === 'rent-kw' && !rec.beforeBalance && rec.time === '16:10' && bal === 62000;
+        st.transactions = st.transactions.filter((t) => t.accountId !== 'acc-rt');
+        st.recurring = st.recurring.filter((b) => b.id !== 'rent-kw');
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-rt');
+        g('saveState')();
+        return (notLogged && expected && counted) || `not logged ${notLogged}, expected ${expected}, counted ${counted} (${rec && rec.recurringId}, before ${rec && rec.beforeBalance}, time ${rec && rec.time}, balance ${bal})`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };
