@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.58.1">
+    <link rel="stylesheet" href="style.css?v=4.59.0">
 </head>
 <body data-view="dashboard">
 
@@ -807,6 +807,10 @@
                         <div class="setting-text"><span class="setting-title">Already in my balance</span><span class="setting-desc" id="tx-before-desc"></span></div>
                         <button class="switch" type="button" role="switch" aria-checked="false" id="tx-before" aria-label="Already in my balance"></button>
                     </div>
+                    <div class="setting-row tx-parts-row" id="tx-parts-row" hidden>
+                        <div class="setting-text"><span class="setting-title">Paid in parts</span><span class="setting-desc" id="tx-parts-desc">Koko, Mintpay or a card plan: this amount is the first part.</span></div>
+                        <div class="parts-pick" role="group" aria-label="Number of parts"><button type="button" class="chip-btn" data-tx-parts="0" aria-pressed="true">No</button><button type="button" class="chip-btn" data-tx-parts="3" aria-pressed="false">3</button><button type="button" class="chip-btn" data-tx-parts="4" aria-pressed="false">4</button><button type="button" class="chip-btn" data-tx-parts="6" aria-pressed="false">6</button></div>
+                    </div>
                     <div class="setting-row tx-inbudget-row" id="tx-inbudget-row" hidden>
                         <div class="setting-text"><span class="setting-title">Count in my budget</span><span class="setting-desc" id="tx-inbudget-desc"></span></div>
                         <button class="switch" type="button" role="switch" aria-checked="true" id="tx-inbudget" aria-label="Count in my budget"></button>
@@ -1206,6 +1210,11 @@
                         <label class="field-label" for="bill-ref">Account / reference no. <span class="faint">(optional)</span></label>
                         <input type="text" id="bill-ref" class="input" placeholder="e.g. 1234567890 or 0771234567" maxlength="40" autocomplete="off" inputmode="text">
                         <span class="field-hint">The CEB or water account number, or the phone number of a phone bill. A bank SMS with this number is matched to this bill.</span>
+                    </div>
+                    <div class="field bill-parts-field" id="bill-parts-field">
+                        <span class="field-label">Paid in parts <span class="faint">(Koko, Mintpay, card instalments)</span></span>
+                        <div class="duo"><input type="text" id="bill-parts" class="input" inputmode="numeric" placeholder="Parts in total, e.g. 3" aria-label="Parts in total"><input type="text" id="bill-parts-done" class="input" inputmode="numeric" placeholder="Already paid, e.g. 1" aria-label="Parts already paid"></div>
+                        <span class="field-hint">For a plan that already started: 3 parts, 1 already paid last month. The plan ends by itself after the last part.</span>
                     </div>
                     <div class="field" id="bill-account-field">
                         <label class="field-label" for="bill-account">Account</label>
@@ -1997,7 +2006,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.58.1"></script>
+    <script src="app.js?v=4.59.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

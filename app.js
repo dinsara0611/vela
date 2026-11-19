@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.58.1';
+const APP_VERSION = '4.59.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -784,6 +784,7 @@ const normalizeBill = (b) => {
         autoLog: type === 'expense' && b.autoLog !== false,
         createdAt: stamp(b.createdAt),
         ...(typeof b.ref === 'string' && b.ref.trim() ? { ref: b.ref.trim().slice(0, 40) } : {}),
+        ...(b.parts && toNumber(b.parts.count, 0) >= 2 ? { parts: { count: Math.min(60, Math.round(toNumber(b.parts.count, 0))), done: Math.max(0, Math.min(Math.round(toNumber(b.parts.count, 0)), Math.round(toNumber(b.parts.done, 0)))) } } : {}),
         ...(toNumber(b.carry, 0) > 0 ? { carry: round2(toNumber(b.carry, 0)), ...(cleanDate(b.carryFrom) ? { carryFrom: cleanDate(b.carryFrom) } : {}) } : {}),
         ...(b.sub === true ? { sub: true } : {})
     };
@@ -2045,6 +2046,33 @@ const advanceDate = (dateStr, frequency, anchorDay) => {
 };
 
 const billDue = (bill) => round2(bill.amount + (bill.carry || 0)); // this time's amount, with anything carried over
+// Plans paid in parts: each payment counts one part; after the last one the plan ends by itself.
+const BNPL_RE = /\b(koko|mintpay|payzy|instal+ments?|easy payment|0% plan)\b/i;
+const partsLeft = (b) => (b && b.parts ? Math.max(0, b.parts.count - b.parts.done) : 0);
+const notePart = (bill, tx, times = 1) => {
+    if (!bill.parts) return false;
+    const from = bill.parts.done + 1;
+    bill.parts.done = Math.min(bill.parts.count, bill.parts.done + times);
+    tx.note = [tx.note, from === bill.parts.done ? `Part ${from} of ${bill.parts.count}` : `Parts ${from}-${bill.parts.done} of ${bill.parts.count}`].filter(Boolean).join(' · ');
+    return bill.parts.done >= bill.parts.count;
+};
+const endPlan = (bill) => {
+    state.recurring = state.recurring.filter((b) => b.id !== bill.id);
+    queueSync('recurring', bill.id, 'delete', false);
+    cancelPaymentReminders(`bill:${bill.id}`);
+    setTimeout(() => showToast(`${bill.name}: all ${bill.parts.count} parts paid. The plan is finished.`, 'success'), 500);
+};
+// A new plan: this payment is part `done` (usually 1); the rest come every month from the next month.
+const makePlan = ({ name, amount, currency, category, accountId, firstDate, count, done = 1 }) => {
+    const day = parseDate(firstDate).getDate();
+    let next = firstDate;
+    for (let k = 0; k < done; k++) next = advanceDate(next, 'monthly', day);
+    const bill = { id: generateId(), type: 'expense', name: name.slice(0, 60), amount: round2(amount), currency, category, frequency: 'monthly', nextDate: next, anchorDay: day, autoLog: false, accountId, parts: { count, done }, createdAt: Date.now() };
+    if (done >= count) return null;
+    state.recurring.push(bill);
+    queueSync('recurring', bill.id, 'upsert', false);
+    return bill;
+};
 const logBill = (bill, date, times = 1) => {
     const carried = bill.carry || 0;
     const tx = {
@@ -2066,6 +2094,7 @@ const logBill = (bill, date, times = 1) => {
     if (date === todayISO()) tx.time = nowTime();
     if (beforeBalanceFor(tx.accountId, tx.date, tx.time)) tx.beforeBalance = true;
     if (carried) { tx.note = `Includes ${formatCurrency(carried, bill.currency)} carried from ${bill.carryFrom ? shortDate(bill.carryFrom) : 'last time'}`; delete bill.carry; delete bill.carryFrom; }
+    notePart(bill, tx, times);
     if (times > 1) {
         const dates = [bill.nextDate];
         for (let k = 1; k < times; k++) dates.push(advanceDate(dates[k - 1], bill.frequency, bill.anchorDay));
@@ -2092,6 +2121,7 @@ const processRecurring = () => {
             guard++;
             created++;
             changed = true;
+            if (bill.parts && partsLeft(bill) === 0) { endPlan(bill); break; }
         }
         if (changed) queueSync('recurring', bill.id, 'upsert', false);
     });
@@ -2115,6 +2145,7 @@ const markBillPaid = (id, times = 1) => {
     cancelPaymentReminders(`bill:${bill.id}`);
     for (let k = 0; k < times; k++) bill.nextDate = advanceDate(bill.nextDate, bill.frequency, bill.anchorDay);
     queueSync('recurring', bill.id, 'upsert', false);
+    if (bill.parts && partsLeft(bill) === 0) endPlan(bill);
     saveState();
     flushSync();
     haptic('MEDIUM');
@@ -3560,6 +3591,7 @@ const smsMatchFor = (i) => {
 };
 
 const smsBillPick = {};
+const smsPartsPick = {};
 const smsBillCandidates = (i) => {
     // (bills that wait for you: income always, expenses that don't log themselves)
     if (!i || i.type !== 'expense') return [];
@@ -3609,6 +3641,10 @@ const smsCardHtml = (i) => {
             const pick = smsBillPick[i.id];
             return [['Which bill?', `<span class="fee-pick bill-pick" role="group" aria-label="Which bill was paid">${bills.map((b) => `<button type="button" class="chip-btn" data-sms-bill="${escapeHtml(i.id)}:${escapeHtml(b.id)}" aria-pressed="${pick === b.id}">${escapeHtml(b.name)}${b.ref ? ` <span class="faint">· ${escapeHtml(b.ref)}</span>` : ''}</button>`).join('')}<button type="button" class="chip-btn" data-sms-bill="${escapeHtml(i.id)}:none" aria-pressed="${pick === 'none'}">None of these</button></span>`]];
         })(),
+        ...(i.type === 'expense' && BNPL_RE.test(`${i.desc} ${i.merchant || ''}`) && !smsBillCandidates(i).some((b) => b.parts) ? (() => {
+            const pick = smsPartsPick[i.id] || 0;
+            return [['Paid in parts?', `<span class="fee-pick" role="group" aria-label="Paid in parts">${[0, 3, 4, 6].map((n) => `<button type="button" class="chip-btn" data-sms-parts="${escapeHtml(i.id)}:${n}" aria-pressed="${pick === n}">${n ? `${n} parts` : 'No, one payment'}</button>`).join('')}</span>`]];
+        })() : []),
         ...(i.ref ? [['Reference', escapeHtml(i.ref)]] : []),
         ['Detected through', `<span class="sms-sources">${sourceList(i).map((s) => `<span class="sms-source" data-source="${s}">${escapeHtml(SOURCE_NAMES[s] || s)}</span>`).join('<span class="faint" aria-hidden="true">+</span>')}</span>`]
     ];
@@ -3790,6 +3826,11 @@ const smsApply = (i, accountId) => {
     rec.bank = bankMeta(i);
     if (i.feeKind === 'transfer' && acc) addBankFee(i, acc, rec.id);
     const matched = settleExpectedWith(rec, i.refKeys || [], smsBillPick[i.id] || null);
+    // Koko / Mintpay first part: the rest of the plan is expected every month.
+    if (!matched && smsPartsPick[i.id] >= 2 && i.type === 'expense') {
+        const plan = makePlan({ name: rec.desc, amount: rec.amount, currency: rec.currency, category: rec.category, accountId, firstDate: rec.date, count: smsPartsPick[i.id], done: 1 });
+        if (plan) { rec.recurringId = plan.id; rec.note = [rec.note, `Part 1 of ${plan.parts.count}`].filter(Boolean).join(' · '); }
+    }
     if (matched && rec.recurringId) { const b = state.recurring.find((x) => x.id === rec.recurringId); if (b && b.ref) rec.note = [rec.note, refLabel(b.ref)].filter(Boolean).join(' · '); }
     if (matched) setTimeout(() => showToast(`Matched to ${matched}: no longer waiting for it`, 'success'), 300);
     saveState();
@@ -3832,6 +3873,7 @@ const settleExpectedWith = (rec, refKeys = [], billId = null) => {
         const due = b.nextDate;
         b.nextDate = advanceDate(b.nextDate, b.frequency, b.anchorDay);
         queueSync('recurring', b.id, 'upsert', false);
+        if (notePart(b, rec)) endPlan(b);
         return `${b.name} (expected ${shortDate(due)})`;
     }
     const t = m.tx;
@@ -4287,7 +4329,7 @@ const paymentItems = ({ horizonDays = 7, view = false } = {}) => {
         key: `tx:${t.id}`, kind: 'tx', id: t.id, name: t.desc, type: t.type, amount: t.amount, currency: t.currency, category: t.category, due: t.date, status: payStatus(t.date)
     }));
     (view ? viewBills() : state.recurring).filter((b) => !b.autoLog).forEach((b) => items.push({
-        key: `bill:${b.id}`, kind: 'bill', id: b.id, name: b.name, type: b.type, amount: billDue(b), carry: b.carry || 0, carryFrom: b.carryFrom || null, currency: b.currency, category: b.category, due: b.nextDate, status: payStatus(b.nextDate)
+        key: `bill:${b.id}`, kind: 'bill', id: b.id, name: b.parts ? `${b.name} (${b.parts.done + 1}/${b.parts.count})` : b.name, type: b.type, amount: billDue(b), carry: b.carry || 0, carryFrom: b.carryFrom || null, currency: b.currency, category: b.category, due: b.nextDate, status: payStatus(b.nextDate)
     }));
     return items.filter((i) => i.status !== 'upcoming' || i.due <= horizon).sort((a, b) => (a.due > b.due ? 1 : a.due < b.due ? -1 : 0));
 };
@@ -4867,7 +4909,7 @@ const billRow = (b) => {
     return `<div class="plan-row">
         <button type="button" class="plan-row-main" data-edit-bill="${escapeHtml(b.id)}" aria-label="Edit ${escapeHtml(b.name)}">
             ${entryBadge(b.name, b.category, b.type)}
-            <span class="row-main"><span class="row-title">${escapeHtml(b.name)}</span><span class="row-sub">${b.ref ? `${escapeHtml(refLabel(b.ref))} · ` : ''}${FREQ_PHRASE[b.frequency]}, ${how}</span></span>
+            <span class="row-main"><span class="row-title">${escapeHtml(b.name)}</span><span class="row-sub">${b.parts ? `<span class="parts-pill">Part ${b.parts.done + 1} of ${b.parts.count}</span> ${escapeHtml(formatDisplay(partsLeft(b) * b.amount, b.currency))} left · ` : ''}${b.ref ? `${escapeHtml(refLabel(b.ref))} · ` : ''}${FREQ_PHRASE[b.frequency]}, ${how}</span></span>
             <span class="row-end"><span class="amount ${b.type === 'income' ? 'text-income' : ''}">${escapeHtml(formatDisplay(billDue(b), b.currency))}</span>${b.carry ? `<span class="row-sub">incl. ${escapeHtml(formatDisplay(b.carry, b.currency))} carried</span>` : ''}<span class="badge-due" data-tone="${dl.tone}">${escapeHtml(label)}</span></span>
         </button>
         ${b.autoLog ? '' : `<div class="bill-actions"><button type="button" class="btn btn-secondary btn-sm paid-btn" data-bill-paid="${escapeHtml(b.id)}">${icon('i-check', 'ic ic-sm')} ${b.type === 'income' ? 'Mark received' : 'Mark paid'}</button><button type="button" class="link-btn pay-later-btn" data-pay-later="bill:${escapeHtml(b.id)}">Not this time</button></div>`}
@@ -5351,6 +5393,7 @@ const setTxType = (type, keepCategory) => {
     renderTxSections();
     updateBeforeRow();
     updateInBudgetRow();
+    updatePartsRow();
     updateChargedRow();
 };
 let txChargedTouched = false;
@@ -5377,6 +5420,16 @@ const updateChargedRow = () => {
 let txBefore = false;
 let txBeforeTouched = false;
 let txInBudget = null; // null = the usual rule for its kind of income
+let txParts = 0; // a new expense paid in parts: how many parts (0 = not a plan)
+const updatePartsRow = () => {
+    const show = txType === 'expense' && !$('tx-id').value;
+    $('tx-parts-row').hidden = !show;
+    if (!show) return;
+    if (!txParts && BNPL_RE.test($('tx-desc').value)) txParts = 3;
+    setPressed('[data-tx-parts]', (b) => Number(b.dataset.txParts) === txParts);
+    const amt = toNumber($('tx-amount').value, 0);
+    $('tx-parts-desc').textContent = txParts ? `This is part 1 of ${txParts}. The other ${txParts - 1} (${formatCurrency(amt * (txParts - 1), normCur($('tx-currency').value))}) are expected every month, then the plan ends.` : 'Koko, Mintpay or a card plan: this amount is the first part.';
+};
 const updateInBudgetRow = () => {
     const show = txType === 'income' && budgetOn() && state.config.budgetMode === 'income';
     $('tx-inbudget-row').hidden = !show;
@@ -5466,6 +5519,7 @@ const openAddTx = (type = 'expense') => {
     txBefore = false;
     txBeforeTouched = false;
     txInBudget = null;
+    txParts = 0;
     txChargedTouched = false;
     txSectionId = null;
     txSectionTouched = false;
@@ -5619,6 +5673,10 @@ const submitTx = async () => {
         record = { id: generateId(), type: txType, desc, amount: saveAmount, currency: saveCurrency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txKind === 'fixed', pending: date > todayISO() || txWaiting };
         if (cleanTime($('tx-time').value)) record.time = $('tx-time').value;
         if (txType === 'income' && typeof txInBudget === 'boolean') record.inBudget = txInBudget;
+        if (txType === 'expense' && txParts >= 2) {
+            const plan = makePlan({ name: desc, amount: saveAmount, currency: saveCurrency, category, accountId, firstDate: date, count: txParts, done: 1 });
+            if (plan) { record.recurringId = plan.id; record.note = [record.note, `Part 1 of ${txParts}`].filter(Boolean).join(' · '); setTimeout(() => showToast(`${desc}: part 1 of ${txParts} saved. The next part is expected ${shortDate(plan.nextDate)}.`, 'success'), 450); }
+        }
         if (fx) record.fx = fx;
         if (txType === 'expense' && txTripId) record.tripId = txTripId;
         if (txType === 'expense' && txSectionId && secById(txSectionId) && (txSectionTouched || (sectionBalances()[txSectionId] || 0) + 0.004 >= toDisplay(saveAmount, saveCurrency))) record.sectionId = txSectionId;
@@ -6766,6 +6824,7 @@ const setBillType = (type, selected) => {
     setPressed('[data-bill-type]', (b) => b.dataset.billType === type);
     // Income waits to be received (no automatic logging); only bills can log themselves.
     $('bill-auto-setting').hidden = type === 'income';
+    $('bill-parts-field').hidden = type === 'income';
     $('bill-income-wait').hidden = type !== 'income';
     fillBillCategories(type, selected);
     $('bill-name').placeholder = type === 'income' ? 'e.g. Salary' : 'e.g. Netflix, Rent';
@@ -6800,6 +6859,8 @@ const openEditBill = (id) => {
     $('bill-frequency').value = b.frequency;
     $('bill-next').value = b.nextDate;
     $('bill-ref').value = b.ref || '';
+    $('bill-parts').value = b.parts ? b.parts.count : '';
+    $('bill-parts-done').value = b.parts ? b.parts.done : '';
     setSwitch($('bill-auto'), b.autoLog);
     fillAccountSelect($('bill-account'), b.accountId);
     $('bill-account-field').hidden = state.accounts.length < 2;
@@ -6830,10 +6891,19 @@ const submitBill = () => {
         ref: $('bill-ref').value.trim().slice(0, 40)
     };
     if (!data.ref) delete data.ref;
+    // A plan paid in parts: how many in total, how many already paid (e.g. Koko, first part paid last month).
+    const pc = Math.round(toNumber($('bill-parts').value, 0));
+    const pd = Math.round(toNumber($('bill-parts-done').value, 0));
+    if ($('bill-parts').value.trim() !== '' && billType === 'expense') {
+        if (!(pc >= 2 && pc <= 60)) return fieldError($('bill-parts'), 'Enter 2 or more parts, like 3.');
+        if (!(pd >= 0 && pd < pc)) return fieldError($('bill-parts-done'), `Parts already paid must be between 0 and ${pc - 1}.`);
+        data.parts = { count: pc, done: pd };
+    }
     let record;
     if (id) {
         const idx = state.recurring.findIndex((b) => b.id === id);
         if (idx >= 0 && !data.ref) delete state.recurring[idx].ref;
+        if (idx >= 0 && !data.parts) delete state.recurring[idx].parts;
         if (idx === -1) return false;
         record = { ...state.recurring[idx], ...data };
         state.recurring[idx] = record;
@@ -10079,8 +10149,10 @@ const initEvents = () => {
         const d = el.dataset;
 
         if (d.lockKey) { onLockKey(d.lockKey); return; }
+        if (d.txParts !== undefined) { txParts = Number(d.txParts); updatePartsRow(); return; }
         if (d.txCover) { txCover = d.txCover; $('tx-fund-cover').hidden = true; submitTx(); return; }
         if (el.id === 'debt-moved') { debtMoved = !debtMoved; updateDebtMovedRow(); return; }
+        if (d.smsParts) { const [sid, n] = d.smsParts.split(':'); smsPartsPick[sid] = Number(n); renderSmsSheet(); return; }
         if (d.smsBill) { const [sid, bid] = d.smsBill.split(':'); smsBillPick[sid] = bid; renderSmsSheet(); return; }
         if (d.smsFee) { const [sid, pick] = d.smsFee.split(':'); smsFeePick[sid] = pick; renderSmsSheet(); return; }
         if (d.pinKey) { onPinKey(d.pinKey); return; }
@@ -10505,7 +10577,8 @@ const initEvents = () => {
     });
     $('tx-trip').addEventListener('click', () => { txTripId = txTripId ? null : $('tx-trip').dataset.trip; updateTripRow(); });
     $('tx-before').addEventListener('click', () => { txBefore = !txBefore; txBeforeTouched = true; updateBeforeRow(); });
-    $('tx-amount').addEventListener('input', resetTxCover);
+    $('tx-amount').addEventListener('input', () => { resetTxCover(); if (!$('tx-parts-row').hidden) updatePartsRow(); });
+    $('tx-desc').addEventListener('change', () => { if (!$('tx-parts-row').hidden) updatePartsRow(); });
     $('tx-inbudget').addEventListener('click', () => { txInBudget = !isOn($('tx-inbudget')); updateInBudgetRow(); });
     document.addEventListener('change', (e) => { if (e.target && e.target.name === 'tx-category') updateInBudgetRow(); });
     $('tx-date').addEventListener('change', updateBeforeRow);

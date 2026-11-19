@@ -2878,6 +2878,37 @@ export async function run() {
         return (phone && water && label) || `phone bill ${phone} (${r1 && r1.recurringId}), water bill ${water} (${r2 && r2.recurringId}), label ${label}`;
     });
 
+    await T('Koko plans: new purchase in 3 parts, a plan started last month (1 of 3 paid), parts counted, plan ends after the last part', async () => {
+        const st = s();
+        // 1. A new Koko purchase: Rs. 5,000 now is part 1 of 3.
+        g('openAddTx')('expense'); await wait(300);
+        $('tx-amount').value = '5000'; $('tx-desc').value = 'Koko - Shoe Store';
+        $('tx-desc').dispatchEvent(new Event('change', { bubbles: true })); await wait(100);
+        const autoPicked = document.querySelector('[data-tx-parts="3"]').getAttribute('aria-pressed') === 'true';
+        await g('submitTx')(); await wait(400);
+        const plan1 = s().recurring.find((b) => b.name === 'Koko - Shoe Store');
+        const made = plan1 && plan1.parts.count === 3 && plan1.parts.done === 1 && plan1.amount === 5000 && plan1.nextDate > today;
+        // 2. Another plan started last month: 3 parts, 1 already paid.
+        g('openAddBill')('expense'); await wait(300);
+        $('bill-name').value = 'Koko - Phone'; $('bill-amount').value = '12000';
+        $('bill-next').value = iso(addDays(new Date(), 5));
+        $('bill-parts').value = '3'; $('bill-parts-done').value = '1';
+        g('submitBill')(); await wait(300);
+        const plan2 = s().recurring.find((b) => b.name === 'Koko - Phone');
+        const started = plan2 && plan2.parts.count === 3 && plan2.parts.done === 1;
+        g('goToPlan')('bills'); await wait(300);
+        const shows = /Part 2 of 3/.test($('plan-content').textContent) && /24,000/.test($('plan-content').textContent);
+        // Pay part 2, then part 3: the plan ends.
+        g('markBillPaid')(plan2.id); await wait(200);
+        const two = s().recurring.find((b) => b.id === plan2.id).parts.done === 2;
+        g('markBillPaid')(plan2.id); await wait(300);
+        const ended = !s().recurring.some((b) => b.id === plan2.id) && s().transactions.filter((t) => t.recurringId === plan2.id).length === 2;
+        st.recurring = st.recurring.filter((b) => !/^Koko/.test(b.name));
+        st.transactions = st.transactions.filter((t) => !/^Koko/.test(t.desc));
+        g('saveState')();
+        return (autoPicked && made && started && shows && two && ended) || `3 picked for Koko ${autoPicked}, plan made ${made}, started last month ${started}, shows part 2 of 3 ${shows}, part 2 counted ${two}, ended after part 3 ${ended}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

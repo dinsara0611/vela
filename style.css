@@ -5017,3 +5017,9 @@ body.approve-waiting { overflow: hidden; }
 .cover-opt .row-icon { width: 30px; height: 30px; }
 .cover-opt > .ic { color: var(--text-3); }
 .goal-eta[data-late="true"] .ic { color: var(--warning); }
+
+/* Plans paid in parts */
+.parts-pick { display: flex; gap: 6px; flex: none; }
+.parts-pick .chip-btn[aria-pressed="true"], .fee-pick .chip-btn[aria-pressed="true"] { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
+.parts-pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; color: var(--primary); background: var(--primary-soft); }
+.tx-parts-row { flex-wrap: wrap; gap: 8px; }
