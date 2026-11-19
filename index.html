@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.55.1">
+    <link rel="stylesheet" href="style.css?v=4.56.0">
 </head>
 <body data-view="dashboard">
 
@@ -801,6 +801,7 @@
                     <div class="field" id="tx-section-field" hidden>
                         <span class="field-label">Paid from fund</span>
                         <div class="sec-picker" id="tx-section-picker" role="group" aria-label="Fund"></div>
+                        <div class="fund-cover" id="tx-fund-cover" role="alert" hidden></div>
                     </div>
                     <div class="setting-row tx-before-row" id="tx-before-row" hidden>
                         <div class="setting-text"><span class="setting-title">Already in my balance</span><span class="setting-desc" id="tx-before-desc"></span></div>
@@ -1053,6 +1054,11 @@
                         <label class="field-label" for="goal-deadline">Target date <span class="faint">(optional)</span></label>
                         <input type="date" id="goal-deadline" class="input">
                         <span class="field-hint">Vela shows how much to save each month to get there.</span>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="goal-fund">Keep the money in</label>
+                        <div class="select"><select id="goal-fund" class="input"></select></div>
+                        <span class="field-hint">Deposits go into this fund, so your funds and your accounts always add up.</span>
                     </div>
                     <div class="field">
                         <label class="field-label" for="goal-monthly">Save each month <span class="faint">(optional)</span></label>
@@ -1990,7 +1996,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.55.1"></script>
+    <script src="app.js?v=4.56.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

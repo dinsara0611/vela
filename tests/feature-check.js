@@ -1853,6 +1853,9 @@ export async function run() {
         document.querySelector(`[data-tx-section="${needs.id}"]`).click();
         $('tx-amount').value = '60000'; $('tx-desc').value = 'Rent and bills'; g('selectTxCategory')('Rent');
         await g('submitTx')(); await wait(350);
+        // Needs hasn't got Rs. 60,000: Vela asks; here we let it go below zero on purpose.
+        const belowBtn = document.querySelector('[data-tx-cover="below"]');
+        if (belowBtn) { belowBtn.click(); await wait(400); }
         g('openAddTx')('expense'); await wait(300);
         document.querySelector(`[data-tx-section="${wants.id}"]`).click();
         $('tx-amount').value = '10000'; $('tx-desc').value = 'Concert'; g('selectTxCategory')('Entertainment');
@@ -2769,6 +2772,44 @@ export async function run() {
         st.accounts = st.accounts.filter((a) => a.id !== 'acc-dm');
         g('setViewAccount')('all'); g('saveState')();
         return (shown && off && refused && moved) || `switch shown off ${shown}, off keeps balance ${off} (${bal()}), too much refused ${refused}, 5,000 moved ${moved}`;
+    });
+
+    await T('Fund runs out: Food has Rs. 1,200, a Rs. 5,000 meal asks which fund pays the rest (Savings covers Rs. 3,800); goal deposits go into its fund', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-cv', name: 'Cover Bank', kind: 'bank', currency: 'LKR', opening: 30000, createdAt: 0 });
+        const keep = { sections: st.config.sections, moves: st.config.sectionMoves, map: st.config.sectionCatMap, since: st.config.sectionSince };
+        st.config.sections = [{ id: 'cv-food', name: 'Food', mode: 'manual', value: 0, currency: 'LKR', color: 'pink', icon: 'c-Food', accountIds: ['acc-cv'] },
+            { id: 'cv-save', name: 'Savings', mode: 'manual', value: 0, currency: 'LKR', color: 'green', icon: 'c-Investment', accountIds: ['acc-cv'] }];
+        st.config.sectionMoves = [{ id: 'cv1', date: today, kind: 'add', from: null, to: 'cv-food', amount: 1200, currency: 'LKR' }, { id: 'cv2', date: today, kind: 'add', from: null, to: 'cv-save', amount: 10000, currency: 'LKR' }];
+        st.config.sectionCatMap = {}; st.config.sectionSince = today;
+        g('saveState')(); g('setViewAccount')('acc-cv'); await wait(150);
+        g('openAddTx')('expense'); await wait(300);
+        $('tx-amount').value = '5000'; $('tx-desc').value = 'Family dinner';
+        $('tx-account').value = 'acc-cv'; $('tx-account').dispatchEvent(new Event('change', { bubbles: true })); await wait(100);
+        g('pickTxSection')('cv-food'); await wait(100);
+        const before = s().transactions.length;
+        await g('submitTx')(); await wait(300);
+        const asked = !$('tx-fund-cover').hidden && s().transactions.length === before && /3,800/.test($('tx-fund-cover').textContent) && !!document.querySelector('[data-tx-cover="cv-save"]');
+        document.querySelector('[data-tx-cover="cv-save"]').click(); await wait(500);
+        const bal = g('sectionBalances')();
+        const covered = s().transactions.some((t) => t.desc === 'Family dinner' && t.sectionId === 'cv-food') && bal['cv-food'] === 0 && bal['cv-save'] === 6200;
+        // Goal PS5 Pro kept in a new fund: Rs. 2,000 deposit goes into that fund.
+        g('openAddGoal')(); await wait(300);
+        $('goal-name').value = 'PS5 Pro'; $('goal-target').value = '400000';
+        $('goal-name').dispatchEvent(new Event('change', { bubbles: true }));
+        $('goal-fund').value = '__new';
+        g('submitGoal')(); await wait(300);
+        const goal = s().savings.find((x) => x.name === 'PS5 Pro');
+        const fund = goal && secById(goal.fundId);
+        g('openDeposit')(goal.id); await wait(300);
+        $('funds-amount').value = '2000'; g('submitFunds')(); await wait(300);
+        const inFund = fund && g('sectionBalances')()[fund.id] === 2000 && s().savings.find((x) => x.id === goal.id).saved === 2000;
+        st.transactions = st.transactions.filter((t) => t.accountId !== 'acc-cv');
+        st.savings = st.savings.filter((x) => x.name !== 'PS5 Pro');
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-cv');
+        Object.assign(st.config, { sections: keep.sections, sectionMoves: keep.moves, sectionCatMap: keep.map, sectionSince: keep.since });
+        g('setViewAccount')('all'); g('saveState')();
+        return (asked && covered && inFund) || `asked ${asked}, covered ${covered} (${JSON.stringify(bal)}), goal money in its fund ${inFund}`;
     });
 
     // Cloud sync against a fake account.

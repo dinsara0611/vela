@@ -5002,3 +5002,17 @@ body.approve-waiting { overflow: hidden; }
 .select:has(.vp-btn) > .select-logo { display: none; }
 .select.has-logo-pad .vp-btn { padding-left: 12px; }
 .vp-btn { padding-left: 12px; }
+
+/* A fund that hasn't got enough for this expense */
+.fund-cover { display: grid; gap: 8px; margin-top: var(--sp-2); padding: 12px; border-radius: 14px; background: var(--warning-soft); border: 1px solid color-mix(in srgb, var(--warning) 35%, transparent); }
+.fund-cover[hidden] { display: none; }
+.cover-msg { display: flex; gap: 8px; margin: 0; font-size: var(--fs-sm); color: var(--text); }
+.cover-msg .ic { color: var(--warning); flex: none; margin-top: 2px; }
+.cover-list { display: grid; gap: 6px; }
+.cover-opt { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px 10px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.cover-opt > span:nth-child(2) { flex: 1; min-width: 0; display: grid; }
+.cover-opt > span:nth-child(2) > span:first-child { font-weight: 600; }
+.cover-opt > span:nth-child(2) > span + span { font-size: var(--fs-xs); color: var(--text-3); }
+.cover-opt:disabled { opacity: 0.5; cursor: default; }
+.cover-opt .row-icon { width: 30px; height: 30px; }
+.cover-opt > .ic { color: var(--text-3); }

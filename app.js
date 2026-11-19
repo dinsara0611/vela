@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.55.1';
+const APP_VERSION = '4.56.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -757,6 +757,7 @@ const normalizeGoal = (g) => {
         deadline: cleanDate(g.deadline),
         accountId: g.accountId ? String(g.accountId) : null,
         monthly: Math.max(0, round2(toNumber(g.monthly, 0))),
+        ...(g.fundId ? { fundId: String(g.fundId).slice(0, 64) } : {}),
         months: g.months && typeof g.months === 'object' ? Object.fromEntries(Object.entries(g.months).filter(([k]) => /^\d{4}-\d{2}$/.test(k)).sort().slice(-24).map(([k, v]) => [k, round2(toNumber(v, 0))])) : {},
         createdAt: stamp(g.createdAt) || stamp(g.created_at)
     };
@@ -4851,6 +4852,7 @@ const planGoalsHtml = () => {
             ${meterHtml(p, done ? 'done' : null, `${g.name} progress`)}
             <div class="goal-hint">${hint}</div>
             ${monLine}
+            ${g.fundId && secById(g.fundId) ? `<div class="goal-hint">${icon('i-wallet')} Kept in the ${escapeHtml(secById(g.fundId).name)} fund · ${escapeHtml(formatCurrency(sectionBalances()[g.fundId] || 0, cur))} there</div>` : ''}
             <div class="row-actions">
                 <button type="button" class="btn btn-primary btn-sm" data-deposit-goal="${escapeHtml(g.id)}" ${mon > 0 && inMon < mon - 0.004 ? `data-deposit-amount="${round2(mon - inMon)}"` : ''}>${icon('i-deposit', 'ic ic-sm')} ${mon > 0 && inMon < mon - 0.004 ? `Save ${escapeHtml(formatCompact(mon - inMon, g.currency))}` : 'Deposit'}</button>
                 <button type="button" class="btn btn-secondary btn-sm" data-edit-goal="${escapeHtml(g.id)}">${icon('i-edit', 'ic ic-sm')} Edit</button>
@@ -5380,6 +5382,7 @@ const openAddTx = (type = 'expense') => {
     txChargedTouched = false;
     txSectionId = null;
     txSectionTouched = false;
+    resetTxCover();
     setTxType(type);
     syncTxSectionToCategory();
     openOrSwap('modal-tx');
@@ -5416,6 +5419,7 @@ const openEditTx = (id) => {
     txInBudget = typeof t.inBudget === 'boolean' ? t.inBudget : null;
     txSectionId = t.sectionId && secById(t.sectionId) ? t.sectionId : null;
     txSectionTouched = true;
+    resetTxCover();
     setTxType(t.type, t.category);
     const allocated = secMoves().some((m) => m.incomeId === t.id);
     $('tx-allocate').hidden = !(t.type === 'income' && secList().length && !isUpcoming(t));
@@ -5482,6 +5486,15 @@ const submitTx = async () => {
     }
     if (!desc) return fieldError($('tx-desc'), txType === 'income' ? 'Add where the money came from, like "Salary".' : 'Add a short description, like "Groceries".');
     if (!isISODate(date)) return fieldError($('tx-date'), 'Pick a date.');
+    // Paid from a fund that hasn't got enough: ask where the rest comes from (once per entry).
+    let coverNeed = 0;
+    const coverFund = txType === 'expense' && txSectionId && !$('tx-section-field').hidden ? secById(txSectionId) : null;
+    if (coverFund && date <= todayISO() && !txWaiting) {
+        const prevT = id ? state.transactions.find((x) => x.id === id) : null;
+        const have = round2((sectionBalances()[coverFund.id] || 0) + (prevT && prevT.sectionId === coverFund.id && !isUpcoming(prevT) ? toDisplay(prevT.amount, prevT.currency) : 0));
+        coverNeed = round2(toDisplay(saveAmount, saveCurrency) - Math.max(0, have));
+        if (coverNeed > 0.004 && txCover === null) { showTxCover(coverFund, have, coverNeed, accountId); return false; }
+    }
 
     const prev = id ? state.transactions.find((t) => t.id === id) : null;
     let receipt = prev ? prev.receipt : null;
@@ -5536,6 +5549,13 @@ const submitTx = async () => {
         }
         state.transactions.push(record);
     }
+    if (coverNeed > 0.004 && txCover === 'none') delete record.sectionId;
+    if (coverNeed > 0.004 && txCover && secById(txCover) && record.sectionId) {
+        state.config.sectionMoves = [...secMoves(), { id: generateId(), date, kind: 'move', incomeId: null, from: txCover, to: record.sectionId, amount: coverNeed, currency: dcur(), note: `To cover ${desc.slice(0, 80)}` }];
+        const coverMsg = `${formatCurrency(coverNeed, dcur())} moved from ${secById(txCover).name} to ${secById(record.sectionId).name}`;
+        setTimeout(() => showToast(coverMsg, 'success'), 400);
+    }
+    resetTxCover();
     state.config.lastCategory[txType] = category;
     state.config.lastAccount = accountId;
     if (txType === 'expense' && secList().length && txSectionTouched) learnSection(category, record.sectionId || null);
@@ -6369,6 +6389,7 @@ const openAddGoal = () => {
     $('btn-delete-goal').hidden = true;
     fillCurrencySelect($('goal-currency'), dcur());
     $('goal-monthly').value = '';
+    fillGoalFundSelect(null);
     updateGoalMonthlyHint();
     openOrSwap('modal-goal');
 };
@@ -6388,11 +6409,17 @@ const openEditGoal = (id) => {
     $('goal-saved').value = round2(g.saved);
     $('goal-deadline').value = g.deadline || '';
     $('goal-monthly').value = g.monthly ? round2(g.monthly) : '';
+    fillGoalFundSelect(g);
     updateGoalMonthlyHint();
     openOrSwap('modal-goal');
 };
 
 // Under "Save each month": what reaches the target by the date, as a tap-to-use chip.
+const fillGoalFundSelect = (g) => {
+    const name = $('goal-name').value.trim() || 'this goal';
+    $('goal-fund').innerHTML = `<option value="">Not in a fund</option>${secList().map((x) => `<option value="${escapeHtml(x.id)}">${escapeHtml(x.name)}</option>`).join('')}<option value="__new">New fund: ${escapeHtml(name)}</option>`;
+    $('goal-fund').value = g && g.fundId && secById(g.fundId) ? g.fundId : '';
+};
 const updateGoalMonthlyHint = () => {
     const target = toNumber($('goal-target').value, 0);
     const saved = toNumber($('goal-saved').value, 0);
@@ -6416,6 +6443,17 @@ const submitGoal = () => {
     const deadline = $('goal-deadline').value || null;
     const monthly = Math.max(0, round2(toNumber($('goal-monthly').value, 0)));
     if (!name) return fieldError($('goal-name'), 'Give your goal a name.');
+    let fundId = $('goal-fund').value || null;
+    if (fundId === '__new') {
+        if (secList().some((o) => o.name.toLowerCase() === name.toLowerCase())) fundId = secList().find((o) => o.name.toLowerCase() === name.toLowerCase()).id;
+        else {
+            const used = secList().map((x) => x.color);
+            const fund = { id: generateId(), name: name.slice(0, 40), mode: 'manual', value: 0, currency: dcur(), color: PALETTE.find((c) => !used.includes(c)) || 'green', icon: 'i-target', accountIds: viewId() !== 'all' ? [viewId()] : [], target: round2(convertAmount(target, normCur($('goal-currency').value), dcur())) };
+            state.config.sections = [...secList(), fund];
+            if (!state.config.sectionSince) state.config.sectionSince = todayISO();
+            fundId = fund.id;
+        }
+    }
     if (!(target > 0)) return fieldError($('goal-target'), 'Enter a target greater than zero.');
     if (!(saved >= 0)) return fieldError($('goal-saved'), "The saved amount can't be negative.");
     let record;
@@ -6423,9 +6461,10 @@ const submitGoal = () => {
         const idx = state.savings.findIndex((g) => g.id === id);
         if (idx === -1) return false;
         record = { ...state.savings[idx], name, target, currency, saved, deadline, monthly };
+        if (fundId) record.fundId = fundId; else delete record.fundId;
         state.savings[idx] = record;
     } else {
-        record = { id: generateId(), name, target, currency, saved, deadline, monthly, months: {}, accountId: viewId() !== 'all' ? viewId() : null, createdAt: Date.now() };
+        record = { id: generateId(), name, target, currency, saved, deadline, monthly, months: {}, accountId: viewId() !== 'all' ? viewId() : null, ...(fundId ? { fundId } : {}), createdAt: Date.now() };
         state.savings.push(record);
     }
     saveState();
@@ -6494,6 +6533,18 @@ const submitFunds = () => {
     if (!(amount > 0)) return fieldError($('funds-amount'), 'Enter an amount greater than zero.');
     const delta = convertAmount(amount, currency, goal.currency);
     if (fundsMode === 'withdraw' && delta > goal.saved + 0.005) return fieldError($('funds-amount'), `You can withdraw up to ${formatCurrency(goal.saved, goal.currency)} from this goal.`);
+    // The goal keeps its money in a fund: the money goes into (or comes out of) that fund, from money in no fund.
+    const gFund = goal.fundId && secById(goal.fundId);
+    const inDisp = round2(toDisplay(amount, currency));
+    if (gFund) {
+        if (fundsMode === 'deposit') {
+            const free = fundFreeAll(gFund);
+            if (inDisp > free + 0.004) return fieldError($('funds-amount'), `Only ${formatCurrency(free, dcur())} of your money is not in a fund. Take some out of another fund first, or add the income.`);
+        }
+        const fb = sectionBalances()[gFund.id] || 0;
+        const amt = fundsMode === 'deposit' ? inDisp : Math.min(inDisp, Math.max(0, fb));
+        if (amt > 0.004) state.config.sectionMoves = [...secMoves(), { id: generateId(), date: todayISO(), kind: fundsMode === 'deposit' ? 'add' : 'out', incomeId: null, from: fundsMode === 'deposit' ? null : gFund.id, to: fundsMode === 'deposit' ? gFund.id : null, amount: amt, currency: dcur(), note: `Goal: ${goal.name}`.slice(0, 120) }];
+    }
     const wasDone = goal.saved >= goal.target;
     goal.saved = round2(Math.max(0, goal.saved + (fundsMode === 'withdraw' ? -delta : delta)));
     goal.months = { ...(goal.months || {}) };
@@ -7983,6 +8034,21 @@ const renderSectionsInsights = (list) => {
 /* ---- The entry form: which section an expense comes out of ---- */
 let txSectionId = null;
 let txSectionTouched = false;
+let txCover = null; // null = not asked yet; a fund id, 'below' (let it go under zero) or 'none' (not from a fund)
+const resetTxCover = () => { txCover = null; if ($('tx-fund-cover')) $('tx-fund-cover').hidden = true; };
+// The chosen fund hasn't got enough: say how much is missing and offer the funds that can cover it.
+const showTxCover = (fund, have, need, accountId) => {
+    const cur = dcur();
+    const bal = sectionBalances();
+    const others = fundsFor(accountId).filter((x) => x.id !== fund.id && (bal[x.id] || 0) > 0.004).sort((a, b) => (bal[b.id] || 0) - (bal[a.id] || 0));
+    $('tx-fund-cover').innerHTML = `<p class="cover-msg">${icon('i-alert', 'ic ic-sm')}<span><strong>${escapeHtml(fund.name)}</strong> has ${escapeHtml(formatCurrency(Math.max(0, have), cur))}. This needs <strong>${escapeHtml(formatCurrency(need, cur))}</strong> more. Take it from:</span></p>
+        <div class="cover-list">${others.map((x) => { const b = bal[x.id] || 0; const ok = b + 0.004 >= need; return `<button type="button" class="cover-opt" data-tx-cover="${escapeHtml(x.id)}" ${ok ? '' : 'disabled'}>${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span>${escapeHtml(formatCurrency(b, cur))}${ok ? '' : ' · not enough'}</span></span>${icon('i-chevron', 'ic ic-sm')}</button>`; }).join('')}
+        <button type="button" class="cover-opt" data-tx-cover="none"><span class="row-icon tint">${icon('i-wallet')}</span><span><span>Not from a fund</span><span>Pay it from money that isn't in any fund</span></span>${icon('i-chevron', 'ic ic-sm')}</button>
+        <button type="button" class="cover-opt" data-tx-cover="below"><span class="row-icon tint">${icon('i-alert')}</span><span><span>Let ${escapeHtml(fund.name)} go below zero</span><span>The next income fills it first</span></span>${icon('i-chevron', 'ic ic-sm')}</button></div>`;
+    $('tx-fund-cover').hidden = false;
+    $('tx-fund-cover').scrollIntoView({ block: 'center', behavior: 'smooth' });
+    haptic('HEAVY');
+};
 const renderTxSections = () => {
     const field = $('tx-section-field');
     const accId = $('tx-account').value || (state.accounts[0] && state.accounts[0].id);
@@ -7996,7 +8062,7 @@ const renderTxSections = () => {
     $('tx-section-picker').innerHTML = list.map((x) => `<button type="button" class="sec-pick" data-tx-section="${escapeHtml(x.id)}" aria-pressed="${txSectionId === x.id}">${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span class="${bal[x.id] < 0 ? 'text-expense' : ''}">${escapeHtml(formatCompact(bal[x.id] || 0, cur))}</span></span></button>`).join('')
         + `<button type="button" class="sec-pick is-none" data-tx-section="" aria-pressed="${!txSectionId}"><span><span>Unallocated</span></span></button>`;
 };
-const pickTxSection = (id) => { txSectionId = id || null; txSectionTouched = true; renderTxSections(); haptic(); };
+const pickTxSection = (id) => { txSectionId = id || null; txSectionTouched = true; resetTxCover(); renderTxSections(); haptic(); };
 const syncTxSectionToCategory = () => {
     if (txSectionTouched || $('tx-id').value) return;
     const cat = (document.querySelector('input[name="tx-category"]:checked') || {}).value;
@@ -9922,6 +9988,7 @@ const initEvents = () => {
         const d = el.dataset;
 
         if (d.lockKey) { onLockKey(d.lockKey); return; }
+        if (d.txCover) { txCover = d.txCover; $('tx-fund-cover').hidden = true; submitTx(); return; }
         if (el.id === 'debt-moved') { debtMoved = !debtMoved; updateDebtMovedRow(); return; }
         if (d.smsBill) { const [sid, bid] = d.smsBill.split(':'); smsBillPick[sid] = bid; renderSmsSheet(); return; }
         if (d.smsFee) { const [sid, pick] = d.smsFee.split(':'); smsFeePick[sid] = pick; renderSmsSheet(); return; }
@@ -10324,6 +10391,7 @@ const initEvents = () => {
         if ($('sec-split-total')) $('sec-split-total').textContent = formatCurrency(t, dcur());
     });
     ['section-name', 'section-value'].forEach((id) => $(id).addEventListener('input', updateSectionPreview));
+    $('goal-name').addEventListener('change', () => { const v = $('goal-fund').value; const g = state.savings.find((x) => x.id === $('goal-id').value); fillGoalFundSelect(g); if (v) $('goal-fund').value = v; });
     ['goal-target', 'goal-saved', 'goal-deadline', 'goal-monthly', 'goal-currency'].forEach((id) => $(id).addEventListener(id === 'goal-deadline' || id === 'goal-currency' ? 'change' : 'input', updateGoalMonthlyHint));
     $('goal-monthly-suggest').addEventListener('click', () => { $('goal-monthly').value = $('goal-monthly-suggest').dataset.v; updateGoalMonthlyHint(); });
     $('section-accounts').addEventListener('change', renderSectionShares);
@@ -10346,6 +10414,7 @@ const initEvents = () => {
     });
     $('tx-trip').addEventListener('click', () => { txTripId = txTripId ? null : $('tx-trip').dataset.trip; updateTripRow(); });
     $('tx-before').addEventListener('click', () => { txBefore = !txBefore; txBeforeTouched = true; updateBeforeRow(); });
+    $('tx-amount').addEventListener('input', resetTxCover);
     $('tx-inbudget').addEventListener('click', () => { txInBudget = !isOn($('tx-inbudget')); updateInBudgetRow(); });
     document.addEventListener('change', (e) => { if (e.target && e.target.name === 'tx-category') updateInBudgetRow(); });
     $('tx-date').addEventListener('change', updateBeforeRow);
