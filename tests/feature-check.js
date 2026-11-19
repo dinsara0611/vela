@@ -194,6 +194,8 @@ export async function run() {
             { type: 'income', kind: 'refund', amount: 2500, desc: 'Refund: Daraz', date: '2026-11-15' }],
         ['reversal', 'Reversal of LKR 2,500.00 transaction at KEELLS SUPER on card ending 4321 on 16/11/2026',
             { type: 'reversal', kind: 'reversal', amount: 2500 }],
+        ['"credit ed" split across lines, Remarks :KOKO, time with seconds', 'A Transaction for LKR 2,599.67 has been credit ed to Ac No:14202XXXX83 on 19/11/26 16:39:03 . Remarks :KOKO.Bal: LKR 20,445.17',
+            { type: 'income', amount: 2599.67, time: '16:39', desc: 'Refund: Koko' }],
         ['BOC transfer credit (money in)', 'Transfer Credit Rs 5000.00 To A/C No XXXXXXXXXX559. Balance available Rs 5878.90 - Thank you for banking with BOC',
             { type: 'income', kind: 'transfer_in', amount: 5000 }],
         ['BOC CEFT transfer debit (money out)', 'CEFT Transfer Debit Rs 1025.00 From A/C No XXXXXXXXXX559. Balance available Rs 146.90 - Thank you for banking with BOC',

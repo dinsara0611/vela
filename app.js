@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.56.1';
+const APP_VERSION = '4.56.2';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -3179,7 +3179,10 @@ const smsLearn = (i, ok) => {
 let smsLastReason = '';
 const parseBankSms = (msg) => {
     smsLastReason = '';
-    const body = String(msg.body || '').replace(/\s+/g, ' ').trim();
+    // Some banks' SMS split words across lines ("credit ed", "debit ed", "with drawn"): put them back together.
+    const body = String(msg.body || '').replace(/\s+/g, ' ').trim()
+        .replace(/\b(credit|debit|deposit|transferr|withdraw|deduct|charg|revers|authoris|authoriz|process)\s+(ed)\b/gi, '$1$2')
+        .replace(/\bwith\s+drawn\b/gi, 'withdrawn').replace(/\bwith\s+drawal\b/gi, 'withdrawal');
     const address = String(msg.address || '').trim();
     const no = (why) => { smsLastReason = why; return null; };
     if (!body) return no('empty');
@@ -3231,6 +3234,11 @@ const parseBankSms = (msg) => {
     const ref = refM && /\d/.test(refM[1]) ? refM[1].replace(/[\-\/.]+$/, '') : null;
     const last4 = smsLast4(body);
     let merchant = smsMerchant(body, kind);
+    // "Remarks :KOKO." / "Narration: Salary ABC": who it was from or what it was for, when no name was found.
+    if (!merchant) {
+        const rm = body.match(/\b(?:remarks?|narration|description|desc|details?|purpose)\s*[:\-]\s*([A-Za-z][A-Za-z0-9 &'.\-\/]{1,40}?)\s*(?:\.\s*(?:bal|avl|available)\b|[.;,]\s|[.;,]?$|\s+(?:bal|avl|available)\b)/i);
+        if (rm && !/^(n\/?a|nil|none|-+)$/i.test(rm[1].trim())) merchant = titleCase(rm[1].trim().replace(/[.\-\/]+$/, '')).slice(0, 40);
+    }
     const brand = merchant ? brandFor(merchant, true) : null;
     if (brand) merchant = brand.name;
     // Money coming back from a shop is a refund, not income.
