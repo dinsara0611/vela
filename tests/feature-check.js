@@ -2642,6 +2642,45 @@ export async function run() {
         return (leftIsBalance && shown && off && btn && filled) || `left = balance ${leftIsBalance} (${m.budget} - ${m.spent}), switch shown ${shown}, income off ${off}, add-all button ${btn}, filled ${filled}`;
     });
 
+    await T('Bank charges: own ATM free, other bank ATM Rs. 30 (or your account charge), fee in the SMS used, CEFT Rs. 25 replaced by the real charge SMS', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-fee2', name: 'Fee Two', kind: 'bank', currency: 'LKR', opening: 100000, createdAt: 0 });
+        g('saveState')();
+        const t0 = Date.now();
+        const msg = (n, address, body) => g('parseBankSms')({ id: `sms-${t0}-${n}`, source: 'sms', address, body, date: t0 + n * 1000 });
+        const fees = () => s().transactions.filter((t) => t.accountId === 'acc-fee2' && t.type === 'expense' && /charges/.test(t.desc));
+        // 1. Own bank's ATM: free.
+        const own = msg(1, 'COMBANK', 'ATM Cash Withdrawal LKR 10,000.00 from A/C ...1234 at COMBANK ATM KOLLUPITIYA on 16/11/2026 11:02');
+        g('smsApply')(own, 'acc-fee2'); await wait(150);
+        const ownFree = own.feeWhere === 'own' && fees().length === 0;
+        // 2. Another bank's ATM: the typical Rs. 30, estimated.
+        const other = msg(2, 'BOC', 'Cash withdrawal Rs 5000.00 at HNB ATM MAHARAGAMA from A/C No XXXXXXXXXX559. Balance available Rs 878.90');
+        g('smsApply')(other, 'acc-fee2'); await wait(150);
+        const f2 = fees();
+        const otherFee = other.feeWhere === 'other' && f2.length === 1 && f2[0].amount === 30 && f2[0].feeEstimated === true;
+        // 3. This account's own charge (Rs. 60) is used instead.
+        s().accounts.find((a) => a.id === 'acc-fee2').atmFee = 60;
+        const other2 = msg(3, 'BOC', 'Cash withdrawal Rs 2000.00 at SAMPATH BANK ATM from A/C No XXXXXXXXXX559. Balance available Rs 500.00');
+        g('smsApply')(other2, 'acc-fee2'); await wait(150);
+        const accFee = fees().some((t) => t.amount === 60);
+        // 4. The charge written in the SMS is used exactly.
+        const inSms = msg(4, 'SAMPATH', 'ATM withdrawal of LKR 3,000.00 from A/C ...5678 at BOC ATM. Charges Rs 30.00. Avl Bal LKR 10,000.00');
+        g('smsApply')(inSms, 'acc-fee2'); await wait(150);
+        const exact = inSms.feeInSms === 30 && fees().some((t) => t.amount === 30 && !t.feeEstimated);
+        // 5. CEFT transfer: Rs. 25 estimated, then the bank's charge SMS replaces it (not added twice).
+        const ceft = msg(5, 'BOC', 'CEFT Transfer Debit Rs 1025.00 From A/C No XXXXXXXXXX559. Balance available Rs 146.90 - Thank you for banking with BOC');
+        g('smsApply')(ceft, 'acc-fee2'); await wait(150);
+        const ceftEst = fees().filter((t) => t.feeEstimated && t.amount === 25).length === 1;
+        const before = fees().length;
+        const charge = msg(6, 'BOC', 'Service charge of Rs 30.00 debited from A/C No XXXXXXXXXX559 for CEFT transfer. Balance available Rs 116.90');
+        g('smsApply')(charge, 'acc-fee2'); await wait(150);
+        const replaced = fees().length === before && fees().some((t) => t.amount === 30 && t.note === 'Bank charge (from the bank SMS)');
+        st.transactions = st.transactions.filter((t) => t.accountId !== 'acc-fee2' && t.toAccountId !== 'acc-fee2');
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-fee2');
+        g('saveState')();
+        return (ownFree && otherFee && accFee && exact && ceftEst && replaced) || `own free ${ownFree} (${own.feeWhere}), other 30 ${otherFee} (${other.feeWhere}, ${f2.map((t) => t.amount)}), account 60 ${accFee}, in SMS ${exact} (${inSms.feeInSms}), CEFT 25 ${ceftEst}, replaced ${replaced}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

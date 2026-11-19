@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.53.1';
+const APP_VERSION = '4.54.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -715,6 +715,8 @@ const normalizeTx = (t, forcedType) => {
         // (without these, a restart forgot an entry came from a bank SMS and the same SMS could be added again).
         ...(cleanDate(t.dueDate) ? { dueDate: cleanDate(t.dueDate) } : {}),
         ...(cleanTime(t.time) ? { time: cleanTime(t.time) } : {}),
+        ...(type === 'expense' && t.feeFor ? { feeFor: String(t.feeFor).slice(0, 64) } : {}),
+        ...(type === 'expense' && t.feeEstimated === true ? { feeEstimated: true } : {}),
         ...(type === 'income' && typeof t.inBudget === 'boolean' ? { inBudget: t.inBudget } : {}),
         ...(typeof t.paidAt === 'string' && !isNaN(Date.parse(t.paidAt)) ? { paidAt: t.paidAt } : {}),
         ...(normalizeBankMeta(t.bank) ? { bank: normalizeBankMeta(t.bank) } : {}),
@@ -816,6 +818,8 @@ const normalizeAccount = (a) => {
         createdAt: stamp(a.createdAt),
         ...(cleanDate(a.balanceDate) ? { balanceDate: cleanDate(a.balanceDate) } : {}),
         ...(cleanTime(a.balanceTime) ? { balanceTime: cleanTime(a.balanceTime) } : {}),
+        ...(Number.isFinite(Number(a.atmFee)) && a.atmFee !== null && a.atmFee !== '' ? { atmFee: round2(Math.max(0, Number(a.atmFee))) } : {}),
+        ...(Number.isFinite(Number(a.ceftFee)) && a.ceftFee !== null && a.ceftFee !== '' ? { ceftFee: round2(Math.max(0, Number(a.ceftFee))) } : {}),
         ...(Number.isFinite(Number(a.fxFee)) && a.fxFee !== null && a.fxFee !== '' ? { fxFee: round2(Number(a.fxFee)) } : {})
     };
 };
@@ -3260,10 +3264,75 @@ const parseBankSms = (msg) => {
         source, sources: [source], sourceIds: [String(msg.id)], bodyKeys: [hashToInt(body.toLowerCase())],
         shape: hashToInt(body.toLowerCase().replace(/\d+/g, '#')), // the wording without its numbers
         arrivedAt: Number(msg.date) || Date.now(), fromMessage: when.fromMessage || !shared,
+        ...smsFeeFacts(type, kind.kind, t, body, bankName),
         refKeys: [...new Set((body.match(/\d[\d -]{4,18}\d/g) || []).map((n) => n.replace(/\D/g, '')).filter((n) => n.length >= 6 && n.length <= 16).map((n) => hashToInt(n)))].slice(0, 8)
     };
 };
 
+// Bank charges on cash from an ATM and on transfers to other banks. Many banks don't put the charge in the SMS
+// (or send it in another message later), so Vela knows the usual Sri Lankan charges and lets you correct them:
+//   your own bank's ATM: free; another bank's ATM: about Rs. 30 on the LankaPay shared network (Rs. 60 through
+//   Visa/Mastercard); online CEFT transfer to another bank: at most Rs. 25 (Central Bank cap, March 2025); same bank: free.
+const ATM_FEE_TYPICAL = 30;
+const CEFT_FEE_TYPICAL = 25;
+const smsFeeFacts = (type, kind, t, body, bankName) => {
+    if (!(type === 'atm' || kind === 'transfer_out')) return {};
+    const m = t.match(/\b(?:charges?|fee|commission|service charge)\s*(?:of|:|-|is)?\s*(?:rs\.?|lkr)\s*([\d,]+(?:\.\d{1,2})?)/) || t.match(/(?:rs\.?|lkr)\s*([\d,]+(?:\.\d{1,2})?)\s*(?:as\s+)?(?:charges?|fee)\b/);
+    const feeInSms = m ? round2(toNumber(m[1].replace(/,/g, ''), 0)) : null;
+    const others = SMS_BANKS.filter((b) => b.name !== bankName && b.body.test(body));
+    const own = SMS_BANKS.find((b) => b.name === bankName);
+    let where = null;
+    if (type === 'atm') {
+        if (/\b(other bank|another bank|shared atm|lankapay|non-?[a-z]* ?atm|foreign atm)\b/.test(t) || others.length) where = 'other';
+        else if (own && own.body.test(body.replace(/thank you for banking with [a-z ]+/i, ''))) where = 'own';
+    } else {
+        if (/\b(cefts?|slips|interbank|inter-bank|other bank|another bank|lankapay)\b/.test(t) || others.length) where = 'other';
+        else if (/\b(own (account|a\/c)|same bank|intra[- ]?bank|between your accounts)\b/.test(t)) where = 'own';
+    }
+    return { feeKind: type === 'atm' ? 'atm' : 'transfer', feeWhere: where, ...(feeInSms > 0 ? { feeInSms } : {}) };
+};
+// The charge for this ATM withdrawal / transfer: written in the SMS, or the account's (or typical) charge.
+const smsFeePick = {};
+const feeChoice = (i) => smsFeePick[i.id] || i.feeWhere || (i.feeKind === 'transfer' ? 'other' : 'own');
+const accountFee = (acc, kind) => {
+    const v = acc && (kind === 'atm' ? acc.atmFee : acc.ceftFee);
+    return typeof v === 'number' && v >= 0 ? v : kind === 'atm' ? ATM_FEE_TYPICAL : CEFT_FEE_TYPICAL;
+};
+const smsFeeFor = (i, acc) => {
+    if (!i || !i.feeKind) return null;
+    if (i.feeInSms > 0) return { amount: i.feeInSms, exact: true };
+    if (feeChoice(i) !== 'other') return { amount: 0, exact: false };
+    return { amount: accountFee(acc, i.feeKind), exact: false };
+};
+// Adds the charge as its own expense (so it shows as a bank charge, not inside the cash or the transfer).
+const addBankFee = (i, acc, forId) => {
+    const f = smsFeeFor(i, acc);
+    if (!f || !(f.amount > 0)) return null;
+    // A charge SMS for it already came in: don't add it twice.
+    const dup = state.transactions.find((t) => t.type === 'expense' && t.accountId === acc.id && t.bank && t.bank.kind === 'fee' && Math.abs(daysBetween(parseDate(t.date), parseDate(i.date))) <= 2 && Math.abs(t.amount - f.amount) < 0.01);
+    if (dup) return null;
+    const what = i.feeKind === 'atm' ? 'cash from another bank\'s ATM' : 'transfer to another bank';
+    const rec = quickSaveTx({ type: 'expense', desc: `${i.bank} charges`, amount: f.amount, currency: acc.currency, category: 'Other', date: i.date, time: i.time, accountId: acc.id,
+        note: f.exact ? `Charge for ${what} (in the bank SMS)` : `Estimated charge for ${what}. Your bank's SMS didn't show it; edit if your bank charged differently.` });
+    rec.feeFor = forId;
+    if (!f.exact) rec.feeEstimated = true;
+    return rec;
+};
+// A charge SMS that arrives later replaces Vela's estimate instead of being added again.
+const replaceEstimatedFee = (i, accountId) => {
+    if (!(i.kind === 'fee' && i.type === 'expense')) return null;
+    const est = state.transactions.find((t) => t.feeEstimated && t.accountId === accountId && Math.abs(daysBetween(parseDate(t.date), parseDate(i.date))) <= 3);
+    if (!est) return null;
+    est.amount = i.amount;
+    est.currency = i.currency;
+    delete est.feeEstimated;
+    est.note = 'Bank charge (from the bank SMS)';
+    est.bank = bankMeta(i);
+    queueSync('transaction', est.id, 'upsert');
+    saveState();
+    renderActive();
+    return est;
+};
 const SMS_CHECK_SHARED = 'pasted or shared message, so check it matches your bank app';
 const SOURCE_NAMES = { sms: 'SMS', notification: 'Bank notification', shared: 'Shared or pasted' };
 const sourceList = (i) => (i && i.sources && i.sources.length ? i.sources : [i && i.source ? i.source : 'sms']);
@@ -3441,6 +3510,15 @@ const smsCardHtml = (i) => {
             if (i.fx || i.type !== 'expense' || !acc || !fxApplies(acc) || i.currency === acc.currency) return [];
             return [['From your account', `≈ ${escapeHtml(formatCurrency(fxCharge(i.amount, i.currency, acc), acc.currency))} <span class="faint">(market rate + ${fxFeeFor(acc)}% ${fxFeeLearned(acc) ? 'your bank\'s charge' : 'typical bank charge'})</span>`]];
         })(),
+        ...(i.feeKind ? (() => {
+            const acc = state.accounts.find((a) => a.id === smsAccountMatch(i).id) || state.accounts.find((a) => a.id === state.config.lastAccount);
+            if (i.feeInSms > 0) return [['Bank charge', `${escapeHtml(formatCurrency(i.feeInSms, i.currency))} <span class="faint">(in the SMS, added as a bank charge)</span>`]];
+            const ch = feeChoice(i);
+            const fee = accountFee(acc, i.feeKind);
+            const own = i.feeKind === 'atm' ? 'My bank\'s ATM' : 'Same bank';
+            const other = i.feeKind === 'atm' ? 'Another bank\'s ATM' : 'Another bank';
+            return [['Bank charge', `<span class="fee-pick" role="group" aria-label="Bank charge"><button type="button" class="chip-btn" data-sms-fee="${escapeHtml(i.id)}:own" aria-pressed="${ch === 'own'}">${own} · free</button><button type="button" class="chip-btn" data-sms-fee="${escapeHtml(i.id)}:other" aria-pressed="${ch === 'other'}">${other} · ${escapeHtml(formatCurrency(fee, acc ? acc.currency : i.currency))}</button></span>`]];
+        })() : []),
         ...(i.ref ? [['Reference', escapeHtml(i.ref)]] : []),
         ['Detected through', `<span class="sms-sources">${sourceList(i).map((s) => `<span class="sms-source" data-source="${s}">${escapeHtml(SOURCE_NAMES[s] || s)}</span>`).join('<span class="faint" aria-hidden="true">+</span>')}</span>`]
     ];
@@ -3585,7 +3663,9 @@ const smsApply = (i, accountId) => {
         if (!hadWallet) showToast('Made a "Cash" wallet: cash you take out is kept there', 'info');
         if (cash) {
             const record = { id: generateId(), type: 'transfer', desc: 'ATM withdrawal', amount: i.amount, currency: i.currency, accountId: from.id, toAccountId: cash.id, toAmount: round2(convertAmount(i.amount, i.currency, cash.currency)), toCurrency: cash.currency, category: 'Transfer', date: i.date, note: `From ${i.bank} (${sourceShort(i.sources)})`, createdAt: Date.now(), recurringId: null, receipt: null, bank: bankMeta(i) };
+            if (cleanTime(i.time)) record.time = i.time;
             state.transactions.push(record);
+            addBankFee(i, from, record.id);
             saveState();
             queueSync('transaction', record.id, 'upsert');
             renderActive();
@@ -3593,10 +3673,13 @@ const smsApply = (i, accountId) => {
         }
         const rec = quickSaveTx({ type: 'expense', desc: 'ATM withdrawal', amount: i.amount, currency: i.currency, category: 'Other', date: i.date, accountId, note: `From ${i.bank} (${sourceShort(i.sources)})` });
         rec.bank = bankMeta(i);
+        addBankFee(i, from, rec.id);
         saveState();
         queueSync('transaction', rec.id, 'upsert');
         return rec;
     }
+    const replaced = replaceEstimatedFee(i, accountId);
+    if (replaced) { setTimeout(() => showToast(`Bank charge updated to ${formatCurrency(replaced.amount, replaced.currency)} from the bank SMS`, 'success'), 300); return replaced; }
     const acc = state.accounts.find((a) => a.id === accountId);
     let amount = i.amount;
     let currency = i.currency;
@@ -3615,6 +3698,7 @@ const smsApply = (i, accountId) => {
     if (fx) rec.fx = fx;
     rec.pending = false; // it already happened: the bank says so
     rec.bank = bankMeta(i);
+    if (i.feeKind === 'transfer' && acc) addBankFee(i, acc, rec.id);
     const matched = settleExpectedWith(rec, i.refKeys || []);
     if (matched && rec.recurringId) { const b = state.recurring.find((x) => x.id === rec.recurringId); if (b && b.ref) rec.note = [rec.note, `Acc ${b.ref}`].filter(Boolean).join(' · '); }
     if (matched) setTimeout(() => showToast(`Matched to ${matched}: no longer waiting for it`, 'success'), 300);
@@ -9777,6 +9861,7 @@ const initEvents = () => {
         const d = el.dataset;
 
         if (d.lockKey) { onLockKey(d.lockKey); return; }
+        if (d.smsFee) { const [sid, pick] = d.smsFee.split(':'); smsFeePick[sid] = pick; renderSmsSheet(); return; }
         if (d.pinKey) { onPinKey(d.pinKey); return; }
         if (d.tab) { switchTab(d.tab); return; }
         if (d.goto) { switchTab(d.goto); return; }
@@ -10670,6 +10755,10 @@ const openAccountEditor = (id) => {
     $('account-balance-date').value = a ? (balanceDateOf(a) || todayISO()) : todayISO();
     const feeAcc = a || { kind: $('account-kind').value || 'bank', currency: dcur() };
     $('account-fee').value = a && fxFeeLearned(a) ? a.fxFee : '';
+    $('account-atm-fee').value = a && typeof a.atmFee === 'number' ? a.atmFee : '';
+    $('account-ceft-fee').value = a && typeof a.ceftFee === 'number' ? a.ceftFee : '';
+    $('account-atm-fee').placeholder = String(ATM_FEE_TYPICAL);
+    $('account-ceft-fee').placeholder = String(CEFT_FEE_TYPICAL);
     $('account-fee').placeholder = String(FX_FEE_TYPICAL[feeAcc.currency] ?? 3);
     $('account-fee-hint').textContent = a && fxFeeLearned(a)
         ? `Learned from what your bank charged. Foreign purchases from this account cost the market rate + ${a.fxFee}%.`
@@ -10724,6 +10813,13 @@ const submitAccount = () => {
             if (feeNew === null) delete a.fxFee; else a.fxFee = round2(feeNew);
             const n = reestimateFx(a);
             if (n) setTimeout(() => showToast(`${plural(n, 'estimated foreign purchase')} worked out again with the new charge`, 'success'), 400);
+        }
+        for (const [field, key] of [['account-atm-fee', 'atmFee'], ['account-ceft-fee', 'ceftFee']]) {
+            const raw = $(field).value.trim();
+            if (raw === '') { delete a[key]; continue; }
+            const v = toNumber(raw.replace(/,/g, ''), NaN);
+            if (!(v >= 0 && v <= 1000)) return fieldError($(field), 'Enter a charge between 0 and 1,000.');
+            a[key] = round2(v);
         }
         const before = accountBalance(a);
         a.opening = round2(a.opening + (balance - before));
