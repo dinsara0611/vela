@@ -2681,6 +2681,68 @@ export async function run() {
         return (ownFree && otherFee && accFee && exact && ceftEst && replaced) || `own free ${ownFree} (${own.feeWhere}), other 30 ${otherFee} (${other.feeWhere}, ${f2.map((t) => t.amount)}), account 60 ${accFee}, in SMS ${exact} (${inSms.feeInSms}), CEFT 25 ${ceftEst}, replaced ${replaced}`;
     });
 
+    await T('Reset funds: "Empty all funds" keeps them at Rs. 0, "Delete all funds" (after a confirm) removes them; balances unchanged', async () => {
+        const st = s();
+        const keep = { sections: st.config.sections, moves: st.config.sectionMoves, map: st.config.sectionCatMap, since: st.config.sectionSince };
+        st.config.sections = [{ id: 'rn', name: 'Needs', mode: 'percent', value: 50, currency: 'LKR', color: 'cyan', icon: 'i-wallet', accountIds: [] },
+            { id: 'rw', name: 'Wants', mode: 'rest', value: 0, currency: 'LKR', color: 'pink', icon: 'i-wallet', accountIds: [] }];
+        st.config.sectionMoves = [{ id: 'rm', date: today, kind: 'add', from: null, to: 'rn', amount: 5000, currency: 'LKR' }];
+        st.config.sectionCatMap = { Food: 'rw' };
+        st.transactions.push({ id: 'rs-ex', type: 'expense', desc: 'Dinner', amount: 9000, currency: 'LKR', category: 'Food', date: today, note: '', createdAt: 1, accountId: 'acc-cash', sectionId: 'rw' });
+        g('saveState')();
+        const before = Math.round(g('netWorth')());
+        g('goToPlan')('sections'); await wait(300);
+        document.querySelector('[data-action="fund-reset"]').click(); await wait(300);
+        document.querySelector('[data-action="fund-reset-empty"]').click(); await wait(300);
+        const bal = g('sectionBalances')();
+        const emptied = s().config.sections.length === 2 && bal.rn === 0 && bal.rw === 0 && !s().transactions.find((t) => t.id === 'rs-ex').sectionId;
+        g('goToPlan')('sections'); await wait(300);
+        document.querySelector('[data-action="fund-reset"]').click(); await wait(300);
+        document.querySelector('[data-action="fund-reset-all"]').click(); await wait(200);
+        await confirmOk(); await wait(300);
+        const gone = s().config.sections.length === 0 && !Object.keys(s().config.sectionCatMap || {}).length;
+        const same = Math.round(g('netWorth')()) === before;
+        st.transactions = st.transactions.filter((t) => t.id !== 'rs-ex');
+        Object.assign(st.config, { sections: keep.sections, sectionMoves: keep.moves, sectionCatMap: keep.map, sectionSince: keep.since });
+        g('saveState')();
+        return (emptied && gone && same) || `emptied ${emptied} (${JSON.stringify(bal)}), deleted ${gone}, balance same ${same}`;
+    });
+
+    await T('CEB SMS without an account number: "Which bill?" lists the CEB bills, the picked one is paid; drop-downs are styled pickers', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-cb', name: 'Ceb Bank', kind: 'bank', currency: 'LKR', opening: 50000, createdAt: 0 });
+        const due = iso(addDays(new Date(), 4));
+        st.recurring.push(
+            { id: 'cb-home', type: 'expense', name: 'CEB home', amount: 4500, currency: 'LKR', category: 'Utilities', frequency: 'monthly', nextDate: due, anchorDay: 1, autoLog: false, accountId: 'acc-cb', ref: '1111111111', createdAt: 1 },
+            { id: 'cb-shop', type: 'expense', name: 'CEB shop', amount: 3000, currency: 'LKR', category: 'Utilities', frequency: 'monthly', nextDate: due, anchorDay: 1, autoLog: false, accountId: 'acc-cb', ref: '2222222222', createdAt: 1 });
+        g('saveState')();
+        const t0 = Date.now();
+        const sms = g('parseBankSms')({ id: `sms-${t0}-cebpick`, source: 'sms', address: 'COMBANK', body: 'Dear Customer, your bill payment of LKR 5,320.00 to CEB was successful from A/C ...1234 on 16/11/2026.', date: t0 });
+        const html = g('smsCardHtml')(sms);
+        const asks = /Which bill\?/.test(html) && /CEB home/.test(html) && /CEB shop/.test(html);
+        (0, eval)('smsBillPick')[sms.id] = 'cb-shop';
+        const rec = g('smsApply')(sms, 'acc-cb'); await wait(300);
+        const shop = s().recurring.find((b) => b.id === 'cb-shop');
+        const home = s().recurring.find((b) => b.id === 'cb-home');
+        const paid = rec && rec.recurringId === 'cb-shop' && rec.amount === 5320 && shop.nextDate > due && home.nextDate === due;
+        // Drop-downs in sheets: a styled button, the real select underneath still works.
+        g('openAddTx')('expense'); await wait(300);
+        const btn = $('tx-account').parentElement.querySelector('.vp-btn');
+        const other = [...$('tx-account').options].find((o) => !o.selected);
+        $('tx-account').value = other.value;
+        const follows = !!btn && btn.textContent.includes(other.text);
+        btn.click(); await wait(250);
+        const list = !$('vp-overlay').hidden && document.querySelectorAll('#vp-list [data-vp-value]').length >= 2;
+        document.querySelector('#vp-list [data-vp-value="acc-cash"]').click(); await wait(250);
+        const picked = $('tx-account').value === 'acc-cash' && $('vp-overlay').hidden;
+        await close('modal-tx');
+        st.transactions = st.transactions.filter((t) => t.accountId !== 'acc-cb');
+        st.recurring = st.recurring.filter((b) => !/^cb-/.test(b.id));
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-cb');
+        g('saveState')();
+        return (asks && paid && follows && list && picked) || `asks ${asks}, paid picked bill ${paid} (${rec && rec.recurringId}), button follows ${follows}, list ${list}, picked ${picked}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

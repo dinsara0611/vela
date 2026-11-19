@@ -4963,3 +4963,42 @@ body.approve-waiting { overflow: hidden; }
 .fee-pick { display: flex; flex-wrap: wrap; gap: 6px; }
 .fee-pick .chip-btn[aria-pressed="true"] { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
 #account-bankfees { margin-bottom: 0; }
+
+.fund-reset-btn { margin: var(--sp-2) 0 var(--sp-4); }
+.row-btn.is-danger .row-label > span:first-child { color: var(--danger); }
+#modal-fund-reset .fund-actions { margin-bottom: var(--sp-3); }
+
+.bill-pick .chip-btn .faint { font-weight: 500; }
+
+/* Styled pickers (instead of the phone's plain drop-down menu) */
+.vp-hidden { position: absolute !important; opacity: 0 !important; pointer-events: none !important; width: 1px !important; height: 1px !important; overflow: hidden; }
+.select:has(.vp-btn)::after { display: none; }
+.vp-btn { display: flex; align-items: center; gap: 10px; width: 100%; text-align: left; cursor: pointer; padding-right: 14px !important; color: var(--text); font: inherit; }
+.vp-btn .vp-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vp-btn .vp-chev { color: var(--text-3); flex: none; transition: transform var(--dur) var(--ease-out); }
+.vp-btn:active { background: var(--surface-pressed); }
+.vp-btn .row-icon, .vp-btn .cat-badge { width: 28px; height: 28px; flex: none; }
+.vp-btn:disabled { opacity: 0.6; cursor: default; }
+.vp-overlay { position: fixed; inset: 0; z-index: 1100; display: flex; align-items: flex-end; justify-content: center; background: var(--scrim); opacity: 0; transition: opacity 200ms ease; }
+.vp-overlay[hidden] { display: none; }
+.vp-overlay.open { opacity: 1; }
+.vp-card { width: 100%; max-width: 560px; max-height: 72vh; display: flex; flex-direction: column; background: var(--bg-elevated); border-radius: var(--r-xl) var(--r-xl) 0 0; border-top: 1px solid var(--border-strong); box-shadow: var(--shadow-sheet); padding: 6px var(--sp-4) calc(var(--sp-4) + var(--safe-bottom)); transform: translateY(24px); transition: transform 240ms var(--ease-out); }
+.vp-overlay.open .vp-card { transform: none; }
+.vp-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 4px 0 8px; }
+.vp-head h2 { margin: 0; font-family: var(--font-display); font-size: var(--fs-lg); font-weight: 700; }
+.vp-search { margin-bottom: 8px; }
+.vp-list { overflow-y: auto; display: grid; gap: 4px; padding-bottom: 4px; }
+.vp-opt { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 52px; padding: 8px 12px; border: 1px solid transparent; border-radius: 14px; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
+.vp-opt:active { background: var(--surface-pressed); }
+.vp-opt[aria-selected="true"] { background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 40%, transparent); }
+.vp-opt .vp-label { flex: 1; min-width: 0; font-weight: 600; }
+.vp-opt .row-icon, .vp-opt .cat-badge { width: 34px; height: 34px; flex: none; }
+.vp-dot { width: 10px; height: 10px; border-radius: 50%; margin: 0 12px; background: var(--surface-pressed); flex: none; }
+.vp-opt[aria-selected="true"] .vp-dot { background: var(--primary); }
+.vp-tick { color: var(--primary); flex: none; }
+:root[data-theme="light"] .vp-card { background: #fff; }
+@media (prefers-reduced-motion: reduce) { .vp-overlay, .vp-card { transition: none; } }
+/* The picker button draws the account's logo itself */
+.select:has(.vp-btn) > .select-logo { display: none; }
+.select.has-logo-pad .vp-btn { padding-left: 12px; }
+.vp-btn { padding-left: 12px; }

@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.54.0';
+const APP_VERSION = '4.55.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -3485,6 +3485,15 @@ const smsMatchFor = (i) => {
     return t ? { how: 'link', tx: t } : null;
 };
 
+const smsBillPick = {};
+const smsBillCandidates = (i) => {
+    if (!i || i.type !== 'expense') return [];
+    const word = (x) => String(x || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)[0] || '';
+    const bSlug = (brandFor(i.merchant || i.desc) || {}).slug;
+    const w = word(i.merchant || i.desc);
+    return state.recurring.filter((b) => b.type === 'expense' && !b.autoLog
+        && ((bSlug && (brandFor(b.name) || {}).slug === bSlug) || (w.length >= 3 && word(b.name) === w)));
+};
 const smsCardHtml = (i) => {
     const match = smsMatchFor(i);
     const typeText = i.type === 'atm' ? 'Cash taken out at an ATM' : i.type === 'reversal' ? 'Reversal (cancels an earlier payment)'
@@ -3519,6 +3528,12 @@ const smsCardHtml = (i) => {
             const other = i.feeKind === 'atm' ? 'Another bank\'s ATM' : 'Another bank';
             return [['Bank charge', `<span class="fee-pick" role="group" aria-label="Bank charge"><button type="button" class="chip-btn" data-sms-fee="${escapeHtml(i.id)}:own" aria-pressed="${ch === 'own'}">${own} · free</button><button type="button" class="chip-btn" data-sms-fee="${escapeHtml(i.id)}:other" aria-pressed="${ch === 'other'}">${other} · ${escapeHtml(formatCurrency(fee, acc ? acc.currency : i.currency))}</button></span>`]];
         })() : []),
+        ...(() => {
+            const bills = smsBillCandidates(i);
+            if (!bills.length || (i.refKeys || []).some((k) => bills.some((b) => b.ref && billRefKey(b.ref) === k))) return [];
+            const pick = smsBillPick[i.id];
+            return [['Which bill?', `<span class="fee-pick bill-pick" role="group" aria-label="Which bill was paid">${bills.map((b) => `<button type="button" class="chip-btn" data-sms-bill="${escapeHtml(i.id)}:${escapeHtml(b.id)}" aria-pressed="${pick === b.id}">${escapeHtml(b.name)}${b.ref ? ` <span class="faint">· ${escapeHtml(b.ref)}</span>` : ''}</button>`).join('')}<button type="button" class="chip-btn" data-sms-bill="${escapeHtml(i.id)}:none" aria-pressed="${pick === 'none'}">None of these</button></span>`]];
+        })(),
         ...(i.ref ? [['Reference', escapeHtml(i.ref)]] : []),
         ['Detected through', `<span class="sms-sources">${sourceList(i).map((s) => `<span class="sms-source" data-source="${s}">${escapeHtml(SOURCE_NAMES[s] || s)}</span>`).join('<span class="faint" aria-hidden="true">+</span>')}</span>`]
     ];
@@ -3699,7 +3714,7 @@ const smsApply = (i, accountId) => {
     rec.pending = false; // it already happened: the bank says so
     rec.bank = bankMeta(i);
     if (i.feeKind === 'transfer' && acc) addBankFee(i, acc, rec.id);
-    const matched = settleExpectedWith(rec, i.refKeys || []);
+    const matched = settleExpectedWith(rec, i.refKeys || [], smsBillPick[i.id] || null);
     if (matched && rec.recurringId) { const b = state.recurring.find((x) => x.id === rec.recurringId); if (b && b.ref) rec.note = [rec.note, `Acc ${b.ref}`].filter(Boolean).join(' · '); }
     if (matched) setTimeout(() => showToast(`Matched to ${matched}: no longer waiting for it`, 'success'), 300);
     saveState();
@@ -3724,8 +3739,9 @@ const expectedMatchFor = (rec, refKeys = []) => {
     const tx = state.transactions.find((t) => t.id !== rec.id && t.pending && t.type === rec.type && near(t.date) && same(t.amount, t.currency) && (!t.accountId || t.accountId === rec.accountId));
     return tx ? { kind: 'tx', tx } : null;
 };
-const settleExpectedWith = (rec, refKeys = []) => {
-    const m = expectedMatchFor(rec, refKeys);
+const settleExpectedWith = (rec, refKeys = [], billId = null) => {
+    const forced = billId && state.recurring.find((b) => b.id === billId);
+    const m = forced ? { kind: 'bill', bill: forced } : billId === 'none' ? null : expectedMatchFor(rec, refKeys);
     if (!m) return null;
     if (m.kind === 'bill') {
         const b = m.bill;
@@ -7163,6 +7179,24 @@ const repairShortFunds = (onlyId = null) => {
     });
     return n;
 };
+// Start the funds again. Expenses and account balances never change: only what the funds hold.
+const resetFunds = (how) => {
+    let n = 0;
+    state.transactions.forEach((t) => { if (t.sectionId) { delete t.sectionId; queueSync('transaction', t.id, 'upsert', false); n++; } });
+    state.config.sectionMoves = [];
+    state.config.sectionSkipped = [];
+    // From now on: incomes before today are not offered for allocation again.
+    state.config.sectionSince = todayISO();
+    if (how === 'all') {
+        state.config.sections = [];
+        state.config.sectionCatMap = {};
+    }
+    if (!commitState('The funds')) return;
+    flushSync();
+    closeSheet('modal-fund-reset');
+    showToast(how === 'all' ? 'All funds deleted. Your entries and balances are unchanged.' : `Every fund is now Rs. 0${n ? ` (${plural(n, 'expense')} no longer paid from a fund)` : ''}`, 'success');
+    renderActive();
+};
 const askRepairShort = (onlyId = null) => {
     const bal = sectionBalances();
     const short = secList().filter((x) => (!onlyId || x.id === onlyId) && bal[x.id] < -0.004);
@@ -7881,6 +7915,7 @@ const planSectionsHtml = () => {
         </article>`;
     }).join('')}
         ${shown.length ? '<p class="field-hint sec-hold-hint">Tap a fund to see its history and where its money is.</p>' : ''}
+        ${secList().length ? `<button type="button" class="btn btn-secondary btn-block fund-reset-btn" data-action="fund-reset">${icon('i-refresh', 'ic ic-sm')} Reset funds</button>` : ''}
         ${fundIncomeChooserHtml()}
         ${loose.length ? `<button type="button" class="card sec-loose" data-action="sec-unassigned"><span class="sec-loose-icon">${icon('i-alert')}</span><span><strong>${plural(loose.length, 'unallocated expense')}</strong><span>${escapeHtml(formatCurrency(sumDisplay(loose), cur))} · tap to assign them to funds</span></span>${icon('i-chevron', 'ic chev')}</button>` : ''}`;
 };
@@ -9861,6 +9896,7 @@ const initEvents = () => {
         const d = el.dataset;
 
         if (d.lockKey) { onLockKey(d.lockKey); return; }
+        if (d.smsBill) { const [sid, bid] = d.smsBill.split(':'); smsBillPick[sid] = bid; renderSmsSheet(); return; }
         if (d.smsFee) { const [sid, pick] = d.smsFee.split(':'); smsFeePick[sid] = pick; renderSmsSheet(); return; }
         if (d.pinKey) { onPinKey(d.pinKey); return; }
         if (d.tab) { switchTab(d.tab); return; }
@@ -9946,6 +9982,12 @@ const initEvents = () => {
         if (d.fundAdd) { openSecMove(d.fundAdd, 'add'); return; }
         if (d.fundOut) { openSecMove(d.fundOut, 'out'); return; }
         if (d.fundMore) { openFundActions(d.fundMore); return; }
+        if (d.action === 'fund-reset') { openOrSwap('modal-fund-reset'); return; }
+        if (d.action === 'fund-reset-empty') { resetFunds('empty'); return; }
+        if (d.action === 'fund-reset-all') {
+            showConfirm({ title: 'Delete all funds?', message: `All ${plural(secList().length, 'fund')} and their history will be removed. Your entries and account balances stay the same. This can't be undone.`, confirmLabel: 'Delete all funds', onConfirm: () => resetFunds('all') });
+            return;
+        }
         if (d.fundRepair) { askRepairShort(d.fundRepair === 'all' ? null : d.fundRepair); return; }
         if (d.secDivide) { openDivide(d.secDivide); return; }
         if (d.secSkip) { skipDivide(d.secSkip); return; }
@@ -11183,7 +11225,105 @@ const runSplash = () => {
     setTimeout(() => { el.classList.add('play'); setTimeout(endSplash, SPLASH_MS); }, 120);
 };
 
+/* ---- Styled pickers: every drop-down in a sheet opens a list in Vela's own look (accounts, funds and categories
+   with their icons) instead of the phone's plain menu. The real <select> stays underneath, so forms work as before. ---- */
+const pickerIconFor = (sel, value) => {
+    const acc = state.accounts.find((a) => a.id === value);
+    if (acc) return accountBadge(acc, 'is-row', 'row-icon tint');
+    const fund = secById(value);
+    if (fund) return secBadge(fund, ' is-mini');
+    if (/categor/.test(sel.id || '') && catById(value)) return catBadge(value, (catById(value) || {}).type || 'expense');
+    return '';
+};
+const pickerTitleFor = (sel) => {
+    const lab = sel.id && document.querySelector(`label[for="${sel.id}"]`);
+    return (lab && lab.textContent.replace(/\(optional\)/i, '').trim()) || sel.getAttribute('aria-label') || 'Choose';
+};
+const enhanceSelect = (sel) => {
+    if (sel._vpBtn || !sel.closest('.select')) return;
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'input vp-btn';
+    sel.classList.add('vp-hidden');
+    sel.tabIndex = -1;
+    sel.after(btn);
+    sel._vpBtn = btn;
+    const refresh = () => {
+        const o = sel.options[sel.selectedIndex];
+        btn.innerHTML = `${o ? pickerIconFor(sel, o.value) : ''}<span class="vp-label">${escapeHtml(o ? o.text : 'Choose')}</span>${icon('i-chevron-down', 'ic ic-sm vp-chev')}`;
+        btn.disabled = sel.disabled;
+        btn.setAttribute('aria-label', `${pickerTitleFor(sel)}: ${o ? o.text : 'not chosen'}`);
+    };
+    sel._vpRefresh = refresh;
+    refresh();
+    new MutationObserver(refresh).observe(sel, { childList: true, subtree: true, attributes: true, attributeFilter: ['disabled'] });
+    sel.addEventListener('change', refresh);
+    btn.addEventListener('click', () => openPicker(sel));
+};
+// Setting .value / .selectedIndex in code also updates the button.
+(() => {
+    for (const prop of ['value', 'selectedIndex']) {
+        const d = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, prop);
+        if (!d || !d.set) continue;
+        Object.defineProperty(HTMLSelectElement.prototype, prop, {
+            configurable: true, enumerable: d.enumerable,
+            get() { return d.get.call(this); },
+            set(v) { d.set.call(this, v); if (this._vpRefresh) this._vpRefresh(); }
+        });
+    }
+})();
+let pickerSel = null;
+const closePicker = () => {
+    const ov = $('vp-overlay');
+    if (!ov) return;
+    ov.classList.remove('open');
+    const back = pickerSel && pickerSel._vpBtn;
+    pickerSel = null;
+    setTimeout(() => { if (!ov.classList.contains('open')) ov.hidden = true; }, 200);
+    if (back) back.focus();
+};
+const openPicker = (sel) => {
+    let ov = $('vp-overlay');
+    if (!ov) {
+        ov = document.createElement('div');
+        ov.id = 'vp-overlay';
+        ov.className = 'vp-overlay';
+        ov.hidden = true;
+        ov.innerHTML = '<div class="vp-card" role="dialog" aria-modal="true" aria-labelledby="vp-title"><div class="sheet-grabber" aria-hidden="true"></div><div class="vp-head"><h2 id="vp-title"></h2><button type="button" class="icon-btn" data-vp-close aria-label="Close">' + icon('i-x') + '</button></div><input type="search" class="input vp-search" id="vp-search" placeholder="Search" autocomplete="off" hidden><div class="vp-list" id="vp-list" role="listbox"></div></div>';
+        document.body.appendChild(ov);
+        ov.addEventListener('click', (e) => {
+            if (e.target === ov || e.target.closest('[data-vp-close]')) { closePicker(); return; }
+            const opt = e.target.closest('[data-vp-value]');
+            if (!opt || !pickerSel) return;
+            const sel = pickerSel;
+            sel.value = opt.dataset.vpValue;
+            sel.dispatchEvent(new Event('input', { bubbles: true }));
+            sel.dispatchEvent(new Event('change', { bubbles: true }));
+            haptic();
+            closePicker();
+        });
+        ov.querySelector('#vp-search').addEventListener('input', (e) => {
+            const q = e.target.value.trim().toLowerCase();
+            ov.querySelectorAll('[data-vp-value]').forEach((b) => { b.hidden = !!q && !b.textContent.toLowerCase().includes(q); });
+        });
+        document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !ov.hidden) closePicker(); });
+    }
+    pickerSel = sel;
+    $('vp-title').textContent = pickerTitleFor(sel);
+    const opts = [...sel.options].filter((o) => !o.disabled || o.selected);
+    $('vp-search').hidden = opts.length < 9;
+    $('vp-search').value = '';
+    $('vp-list').innerHTML = opts.map((o) => `<button type="button" class="vp-opt" role="option" data-vp-value="${escapeHtml(o.value)}" aria-selected="${o.selected}">${pickerIconFor(sel, o.value) || '<span class="vp-dot" aria-hidden="true"></span>'}<span class="vp-label">${escapeHtml(o.text)}</span>${o.selected ? icon('i-check', 'ic ic-sm vp-tick') : ''}</button>`).join('');
+    ov.hidden = false;
+    requestAnimationFrame(() => ov.classList.add('open'));
+    const cur = $('vp-list').querySelector('[aria-selected="true"]');
+    if (cur) cur.scrollIntoView({ block: 'nearest' });
+};
+const enhanceAllSelects = () => document.querySelectorAll('.select > select').forEach(enhanceSelect);
 const init = () => {
+    enhanceAllSelects();
+    let vpTimer = null;
+    new MutationObserver(() => { clearTimeout(vpTimer); vpTimer = setTimeout(enhanceAllSelects, 50); }).observe(document.body, { childList: true, subtree: true });
     runSplash();
     loadState();
     repairAccountKinds();

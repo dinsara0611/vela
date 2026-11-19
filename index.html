@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.54.0">
+    <link rel="stylesheet" href="style.css?v=4.55.0">
 </head>
 <body data-view="dashboard">
 
@@ -1341,6 +1341,25 @@
         </div>
     </div>
 
+    <!-- Reset the funds -->
+    <div class="sheet-overlay" id="modal-fund-reset" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="fund-reset-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <h2 class="sheet-title" id="fund-reset-title">Reset funds</h2>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body">
+                <p class="card-sub">Your entries and account balances stay exactly as they are. Only the funds change.</p>
+                <div class="fund-actions">
+                    <button type="button" class="row-btn" data-action="fund-reset-empty"><span class="row-icon tint"><svg class="ic"><use href="#i-refresh"/></svg></span><span class="row-label"><span>Empty all funds</span><span>Keep your funds and their rules; every fund goes back to Rs. 0. Fixes funds below zero.</span></span></button>
+                    <button type="button" class="row-btn is-danger" data-action="fund-reset-all"><span class="row-icon tint"><svg class="ic"><use href="#i-trash"/></svg></span><span class="row-label"><span>Delete all funds</span><span>Start from nothing: remove every fund, its history and which categories it pays.</span></span></button>
+                </div>
+                <button type="button" class="btn btn-secondary btn-block" data-close-sheet>Cancel</button>
+            </div>
+        </div>
+    </div>
+
     <!-- A payment that doesn't happen this time -->
     <div class="sheet-overlay" id="modal-pay-later" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="pay-later-title">
@@ -1967,7 +1986,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.54.0"></script>
+    <script src="app.js?v=4.55.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
