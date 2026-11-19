@@ -2865,6 +2865,28 @@ export async function run() {
         return (retried && clear) || `retried ${retried} (calls ${calls}), message "${msg}"`;
     });
 
+    await T('New install: "Approve on your other phone" shows ON TOP of the sign-in page; only this phone (reinstalled) -> says use the code', async () => {
+        const { client } = fakeCloud(null);
+        client.rpc = async (fn) => {
+            if (fn === 'vela_device_check') return { data: 'pending', error: null };
+            if (fn === 'vela_request_login') return { data: [{ request_id: 'r7', number: 97 }], error: null };
+            return { data: null, error: null };
+        };
+        const realFrom = client.from;
+        client.from = (t) => (t === 'vela_devices' ? { select: () => ({ order: () => Promise.resolve({ data: [{ device_id: 'old', name: g('deviceName')(), approved: true, last_seen: new Date(Date.now() - 8 * 3600e3).toISOString() }], error: null }) }) } : realFrom(t));
+        window.__fakeClient = client; (0, eval)('supabaseClient = window.__fakeClient');
+        g('showAuth')(1); await wait(200);
+        const p = g('handleSession')({ user: { id: 'u7', email: 'seven@example.com', user_metadata: {} } });
+        await wait(700);
+        const top = document.elementFromPoint(window.innerWidth / 2, window.innerHeight / 2);
+        const onTop = !!top && !!top.closest('#approve-wait');
+        const mfaAbove = Number(getComputedStyle($('modal-mfa')).zIndex) > Number(getComputedStyle($('approve-wait')).zIndex) && Number(getComputedStyle($('approve-wait')).zIndex) > Number(getComputedStyle($('auth-overlay-container')).zIndex);
+        const said = /no other phone/i.test($('approve-wait-note').textContent) && /reinstalled/.test($('approve-phones').textContent);
+        g('endApproveWait')(false, null); await p; await wait(300);
+        (0, eval)('supabaseClient = window.__realClient');
+        return (onTop && mfaAbove && said) || `approval on top ${onTop} (top is ${top && (top.id || top.className)}), code box above ${mfaAbove}, says use the code ${said}`;
+    });
+
     await T('No errors logged during the run', () => (window.__velaErrors || []).length === 0 || window.__velaErrors.join(' | '));
 
     window.removeEventListener('error', onErr);

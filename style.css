@@ -4940,3 +4940,6 @@ body.approve-waiting { overflow: hidden; }
 .auth-problem > strong { color: var(--danger); }
 .auth-problem summary { cursor: pointer; color: var(--text-2); font-weight: 600; }
 .auth-problem pre { margin: 6px 0 0; white-space: pre-wrap; font-size: 11px; color: var(--text-2); font-family: ui-monospace, monospace; }
+/* The phone-approval screen and the code box must sit above the sign-in page (a new install shows it underneath) */
+.approve-wait { z-index: 600; }
+.mfa-overlay { z-index: 650; }

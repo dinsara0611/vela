@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.51.2';
+const APP_VERSION = '4.51.3';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -8400,9 +8400,18 @@ const showApproveWait = () => {
             if (approvalGate !== g) return;
             const me = deviceKey().id;
             const list = (data || []).filter((d) => d.approved && d.device_id !== me);
+            // A phone with this phone's name is usually this same phone before Vela was reinstalled: it can't say yes.
+            const sameName = (d) => (d.name || '') === deviceName();
+            const others = list.filter((d) => !sameName(d));
             $('approve-phones').innerHTML = list.length
-                ? `<span class="approve-phones-title">Open Vela on one of these:</span>${list.slice(0, 4).map((d) => `<span class="approve-phone">${icon('x-phone', 'ic ic-sm')}<span>${escapeHtml(d.name || 'Phone')}</span><span>used ${escapeHtml(relTime(new Date(d.last_seen).getTime()))}</span></span>`).join('')}`
+                ? `<span class="approve-phones-title">Open Vela on one of these:</span>${list.slice(0, 4).map((d) => `<span class="approve-phone">${icon('x-phone', 'ic ic-sm')}<span>${escapeHtml(d.name || 'Phone')}${sameName(d) ? ' (probably this phone before you reinstalled)' : ''}</span><span>used ${escapeHtml(relTime(new Date(d.last_seen).getTime()))}</span></span>`).join('')}`
                 : '<span class="approve-phones-title">No other approved phone was found for this account.</span>';
+            // No other real phone to approve: say so and open the help (use the authenticator code, or turn approval off).
+            if (!others.length) {
+                $('approve-wait-note').textContent = 'You have no other phone to approve this one. Use the code from your authenticator app below, or turn phone approval off.';
+                const help = document.querySelector('#approve-wait details');
+                if (help) help.open = true;
+            }
         }).catch(() => {});
 };
 const endApproveWait = (ok, message, via = 'phone') => {
