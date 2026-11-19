@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.55.0">
+    <link rel="stylesheet" href="style.css?v=4.55.1">
 </head>
 <body data-view="dashboard">
 
@@ -1263,6 +1263,10 @@
                         <label class="field-label" for="debt-due">Due date <span class="faint">(optional)</span></label>
                         <input type="date" id="debt-due" class="input">
                     </div>
+                    <div class="setting-row" id="debt-moved-row" hidden>
+                        <div class="setting-text"><span class="setting-title" id="debt-moved-title">Paid from my account</span><span class="setting-desc" id="debt-moved-desc"></span></div>
+                        <button class="switch" type="button" role="switch" aria-checked="false" id="debt-moved" aria-labelledby="debt-moved-title"></button>
+                    </div>
                     <div class="field">
                         <label class="field-label" for="debt-note">Note <span class="faint">(optional)</span></label>
                         <textarea id="debt-note" class="input" maxlength="240" placeholder="What was it for?"></textarea>
@@ -1986,7 +1990,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.55.0"></script>
+    <script src="app.js?v=4.55.1"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

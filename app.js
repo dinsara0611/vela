@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.55.0';
+const APP_VERSION = '4.55.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -6729,11 +6729,24 @@ const deleteBill = (id) => {
 };
 
 let debtDir = 'lent';
+let debtMoved = false;
+let debtAccId = null;
+const updateDebtMovedRow = () => {
+    const acc = state.accounts.find((a) => a.id === debtAccId);
+    $('debt-moved-row').hidden = !acc;
+    if (!acc) return;
+    setSwitch($('debt-moved'), debtMoved);
+    $('debt-moved-title').textContent = debtDir === 'lent' ? `Paid from ${acc.name}` : `Received into ${acc.name}`;
+    $('debt-moved-desc').textContent = debtMoved
+        ? (debtDir === 'lent' ? `The open amount comes off ${acc.name}'s balance (${formatCurrency(toDisplay(accountBalance(acc), acc.currency), dcur())} now); repayments add it back.` : `The open amount is added to ${acc.name}'s balance; paying it back takes it off.`)
+        : 'Your account balance is not changed: use this for money given or borrowed before, or not through this account.';
+};
 
 const setDebtDir = (dir) => {
     debtDir = dir;
     setPressed('[data-debt-dir]', (b) => b.dataset.debtDir === dir);
     $('debt-person-label').textContent = dir === 'lent' ? 'Who did you lend to?' : 'Who did you borrow from?';
+    if ($('debt-moved-row')) updateDebtMovedRow();
 };
 
 const openAddDebt = () => {
@@ -6742,6 +6755,8 @@ const openAddDebt = () => {
     $('debt-title').textContent = 'New debt';
     $('btn-delete-debt').hidden = true;
     fillCurrencySelect($('debt-currency'), dcur());
+    debtAccId = viewId() !== 'all' ? viewId() : null;
+    debtMoved = false; // off unless you say the money went through the account
     setDebtDir('lent');
     openOrSwap('modal-debt');
 };
@@ -6759,6 +6774,8 @@ const openEditDebt = (id) => {
     $('debt-repaid').value = d.repaid ? round2(d.repaid) : '';
     $('debt-due').value = d.dueDate || '';
     $('debt-note').value = d.note || '';
+    debtAccId = d.accountId || null;
+    debtMoved = d.moved === true;
     setDebtDir(d.direction);
     openOrSwap('modal-debt');
 };
@@ -6773,7 +6790,16 @@ const submitDebt = () => {
     if (!person) return fieldError($('debt-person'), 'Add a name.');
     if (!(amount > 0)) return fieldError($('debt-amount'), 'Enter an amount greater than zero.');
     if (!(repaid >= 0) || repaid > amount) return fieldError($('debt-repaid'), `Paid back must be between 0 and ${formatCurrency(amount, currency)}.`);
-    const data = { direction: debtDir, person, amount, currency, repaid, dueDate: $('debt-due').value || null, note: $('debt-note').value.trim() };
+    // Lending from an account: not more than the account has (unless it was already counted before this change).
+    const acc = state.accounts.find((a) => a.id === debtAccId);
+    if (debtMoved && acc && debtDir === 'lent') {
+        const prev = id ? state.debts.find((d) => d.id === id) : null;
+        const already = prev && prev.moved && prev.accountId === acc.id && prev.direction === 'lent' ? convertAmount(Math.max(0, prev.amount - prev.repaid), prev.currency, acc.currency) : 0;
+        const have = round2(accountBalance(acc) + already);
+        const open = round2(convertAmount(amount - repaid, currency, acc.currency));
+        if (open > have + 0.004) return fieldError($('debt-amount'), `${acc.name} has only ${formatCurrency(have, acc.currency)}, so ${formatCurrency(open, acc.currency)} can't have come from it. Turn off "Paid from ${acc.name}" if you gave this money earlier or another way.`);
+    }
+    const data = { direction: debtDir, person, amount, currency, repaid, dueDate: $('debt-due').value || null, note: $('debt-note').value.trim(), moved: !!(debtMoved && acc), accountId: acc ? acc.id : null };
     let record;
     if (id) {
         const idx = state.debts.findIndex((d) => d.id === id);
@@ -6781,14 +6807,14 @@ const submitDebt = () => {
         record = { ...state.debts[idx], ...data };
         state.debts[idx] = record;
     } else {
-        record = { id: generateId(), ...data, accountId: viewId() !== 'all' ? viewId() : null, moved: true, createdAt: Date.now() };
+        record = { id: generateId(), ...data, createdAt: Date.now() };
         state.debts.push(record);
     }
     saveState();
     queueSync('debt', record.id, 'upsert');
     closeSheet('modal-debt');
     const accName = (state.accounts.find((a) => a.id === record.accountId) || {}).name;
-    showToast(id ? 'Saved' : `${debtDir === 'lent' ? `${person} owes you` : `You owe ${person}`} ${formatCurrency(amount, currency)}${accName ? `. ${accName} balance updated` : ''}`, 'success');
+    showToast(id ? 'Saved' : `${debtDir === 'lent' ? `${person} owes you` : `You owe ${person}`} ${formatCurrency(amount, currency)}${accName && record.moved ? `. ${accName} balance updated` : ''}`, 'success');
     renderActive();
     return true;
 };
@@ -9896,6 +9922,7 @@ const initEvents = () => {
         const d = el.dataset;
 
         if (d.lockKey) { onLockKey(d.lockKey); return; }
+        if (el.id === 'debt-moved') { debtMoved = !debtMoved; updateDebtMovedRow(); return; }
         if (d.smsBill) { const [sid, bid] = d.smsBill.split(':'); smsBillPick[sid] = bid; renderSmsSheet(); return; }
         if (d.smsFee) { const [sid, pick] = d.smsFee.split(':'); smsFeePick[sid] = pick; renderSmsSheet(); return; }
         if (d.pinKey) { onPinKey(d.pinKey); return; }

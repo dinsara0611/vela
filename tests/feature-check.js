@@ -2743,6 +2743,34 @@ export async function run() {
         return (asks && paid && follows && list && picked) || `asks ${asks}, paid picked bill ${paid} (${rec && rec.recurringId}), button follows ${follows}, list ${list}, picked ${picked}`;
     });
 
+    await T('Debt someone owes you: balance unchanged unless "Paid from" is on; lending more than the account has is refused', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-dm', name: 'Debt Bank', kind: 'bank', currency: 'LKR', opening: 22354.5, createdAt: 0 });
+        g('saveState')(); g('setViewAccount')('acc-dm'); await wait(150);
+        const bal = () => Math.round(g('accountBalance')(s().accounts.find((a) => a.id === 'acc-dm')) * 100) / 100;
+        // Like on the phone: PS5 Pro, Rs. 400,000, switch left off -> the balance stays Rs. 22,354.50.
+        g('openAddDebt')(); await wait(250);
+        const shown = !$('debt-moved-row').hidden && $('debt-moved').getAttribute('aria-checked') === 'false';
+        $('debt-person').value = 'PS5 Pro'; $('debt-amount').value = '400000';
+        g('submitDebt')(); await wait(300);
+        const off = bal() === 22354.5 && s().debts.some((d) => d.person === 'PS5 Pro' && d.moved === false);
+        // Switch on with more than the account has: refused.
+        g('openAddDebt')(); await wait(250);
+        $('debt-person').value = 'Too much'; $('debt-amount').value = '50000';
+        $('debt-moved').click(); await wait(100);
+        const before = s().debts.length;
+        g('submitDebt')(); await wait(250);
+        const refused = s().debts.length === before && g('isSheetOpen')('modal-debt');
+        // Switch on with what it has: Rs. 5,000 comes off.
+        $('debt-amount').value = '5000';
+        g('submitDebt')(); await wait(300);
+        const moved = bal() === 17354.5;
+        st.debts = st.debts.filter((d) => !['PS5 Pro', 'Too much'].includes(d.person));
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-dm');
+        g('setViewAccount')('all'); g('saveState')();
+        return (shown && off && refused && moved) || `switch shown off ${shown}, off keeps balance ${off} (${bal()}), too much refused ${refused}, 5,000 moved ${moved}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };
