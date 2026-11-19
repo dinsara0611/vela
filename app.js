@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.52.0';
+const APP_VERSION = '4.52.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2903,7 +2903,8 @@ const brandFor = (text, startOnly = false) => {
     const key = (startOnly ? '1' : '0') + s;
     if (brandMemo.has(key)) return brandMemo.get(key);
     if (brandMemo.size > 3000) brandMemo.clear();
-    const found = findBrand(s, startOnly);
+    // Banks write "&" in many ways: "PERERA - SONS", "PERERA AND SONS", "PERERA N SONS", "PERERA+SONS".
+    const found = findBrand(s, startOnly) || (/[-+]|\bn\b/i.test(s) ? findBrand(s.replace(/\s*[-+]\s*|\s+n\s+/gi, ' & '), startOnly) : null);
     brandMemo.set(key, found);
     return found;
 };

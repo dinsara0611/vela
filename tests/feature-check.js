@@ -1650,6 +1650,13 @@ export async function run() {
             || `Commercial ${bal('acc-com')}, HNB ${bal('acc-hnb')}, transfers ${trs.length}, spent ${ms0.spent}->${ms1.spent}, income ${ms0.income}->${ms1.income}, logos ${logos}`;
     });
 
+    await T('Brand names written with a dash, "and" or "n" still get their logo (Perera - Sons Bakers)', () => {
+        const slug = (t) => (g('brandFor')(t) || {}).slug;
+        const got = ['Perera - Sons Bakers', 'PERERA AND SONS', 'Perera n Sons', 'PERERA+SONS COLOMBO 03', 'Perera & Sons'].map(slug);
+        const noFalse = !g('brandFor')('Coca-Cola Sri Lanka') || (g('brandFor')('Coca-Cola Sri Lanka') || {}).slug !== 'pereraandsons';
+        return (got.every((x) => x === 'pereraandsons') && noFalse) || `got ${got.join(', ')}`;
+    });
+
     await T('HNB Assurance is the insurance company (not HNB Bank) and goes to your Insurance category', async () => {
         g('openCategoryEditor')(null, 'expense'); await wait(250);
         $('category-name').value = 'Insurance';
