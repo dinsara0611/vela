@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.51.1';
+const APP_VERSION = '4.51.2';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -10316,11 +10316,8 @@ const submitMfa = async () => {
         if (error) { fieldError($('mfa-code'), 'That code didn’t work. Check the time on your phone and try the newest code.'); return; }
         if (g.mode === 'approve') {
             // The code proves it's you, so the server lets this phone in without the other phone.
-            const k = deviceKey();
-            try { await deviceRpc('vela_approve_with_code', { p_device: k.id, p_secret: k.secret }); } catch (e) {
-                fieldError($('mfa-code'), 'The code is right, but the Vela server needs its setup updated (run device-approval.sql again).');
-                return;
-            }
+            const err = await approveWithCode();
+            if (err) { fieldError($('mfa-code'), approveCodeError(err)); return; }
         }
         mfaGate = null;
         closeSheet('modal-mfa');
@@ -10339,6 +10336,28 @@ const cancelMfa = async () => {
     try { await supabaseClient.auth.signOut(); } catch (e) { /* offline */ }
     resetToSignedOut();
     showToast('Signed out: the code is needed to open this account.', 'info');
+};
+// Lets this phone in with the authenticator code. Fixes the two usual hiccups by itself: the phone not
+// registered on the server yet, and the server not seeing the code's stronger sign-in yet.
+const approveWithCode = async () => {
+    const once = () => { const k = deviceKey(); return deviceRpc('vela_approve_with_code', { p_device: k.id, p_secret: k.secret }); };
+    try { await once(); return null; } catch (e1) {
+        const m = String((e1 && (e1.message || e1.code)) || '');
+        try {
+            if (/unknown device/i.test(m)) { await deviceCheck(); await once(); return null; }
+            if (/authenticator code needed|aal/i.test(m)) { await supabaseClient.auth.refreshSession(); await once(); return null; }
+        } catch (e2) { return e2; }
+        return e1;
+    }
+};
+const approveCodeError = (e) => {
+    const m = String((e && (e.message || '')) || '');
+    const code = String((e && e.code) || '');
+    if (code === 'PGRST202' || code === '42883' || /could not find the function|does not exist/i.test(m)) return 'The code is right, but the Vela server doesn’t have the code check yet. In Supabase › SQL Editor, run device-approval.sql once more (it adds it), then type the newest code again.';
+    if (/authenticator code needed|aal/i.test(m)) return 'The code is right, but the server didn’t see it yet. Wait 30 seconds and type the newest code.';
+    if (/unknown device/i.test(m)) return 'The server doesn’t know this phone yet. Close this, sign in again, then use the code.';
+    if (/not signed in|jwt|401/i.test(m)) return 'You were signed out while typing. Sign in again, then use the code.';
+    return `The code is right, but the server said: ${m || code || 'unknown error'}`;
 };
 const useCodeInstead = async () => {
     const factor = await mfaFactor();

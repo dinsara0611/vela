@@ -2842,6 +2842,29 @@ export async function run() {
         return (google && said && steps && notStuck && second) || `google error shown ${google}, approval reason ${said} ("${$('auth-problem-text').textContent}"), steps ${steps}, not stuck ${notStuck}, second try ${second}`;
     });
 
+    await T('Approve this phone with the authenticator code: retries an unknown phone, clear message when the server lacks the check', async () => {
+        const { client } = fakeCloud(null);
+        let calls = 0; let registered = false; let missing = false;
+        client.rpc = async (fn) => {
+            if (fn === 'vela_device_check') { registered = true; return { data: 'ok', error: null }; }
+            if (fn === 'vela_approve_with_code') {
+                calls++;
+                if (missing) return { data: null, error: { code: 'PGRST202', message: 'Could not find the function public.vela_approve_with_code' } };
+                return registered ? { data: 'approved', error: null } : { data: null, error: { message: 'unknown device' } };
+            }
+            return { data: null, error: null };
+        };
+        window.__fakeClient = client; (0, eval)('supabaseClient = window.__fakeClient');
+        const first = await g('approveWithCode')();
+        const retried = first === null && calls === 2 && registered;
+        missing = true;
+        const err = await g('approveWithCode')();
+        const msg = err ? g('approveCodeError')(err) : '';
+        const clear = /SQL Editor/.test(msg) && /device-approval\.sql/.test(msg);
+        (0, eval)('supabaseClient = window.__realClient');
+        return (retried && clear) || `retried ${retried} (calls ${calls}), message "${msg}"`;
+    });
+
     await T('No errors logged during the run', () => (window.__velaErrors || []).length === 0 || window.__velaErrors.join(' | '));
 
     window.removeEventListener('error', onErr);
