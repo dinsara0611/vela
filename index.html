@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.52.1">
+    <link rel="stylesheet" href="style.css?v=4.53.0">
 </head>
 <body data-view="dashboard">
 
@@ -1133,6 +1133,7 @@
                             <button type="button" data-budget-save="20" aria-pressed="false">20%</button>
                             <button type="button" data-budget-save="30" aria-pressed="false">30%</button>
                         </div>
+                        <div class="inc-parts" id="budget-income-parts"></div>
                         <span class="field-hint" id="budget-income-hint"></span>
                     </div>
                     <div class="field amount-field" id="budget-amount-field">
@@ -1190,6 +1191,11 @@
                             <label class="field-label" for="bill-frequency">Repeats</label>
                             <div class="select"><select id="bill-frequency" class="input"><option value="monthly">Monthly</option><option value="weekly">Weekly</option><option value="yearly">Yearly</option></select></div>
                         </div>
+                    </div>
+                    <div class="field">
+                        <label class="field-label" for="bill-ref">Account / reference no. <span class="faint">(optional)</span></label>
+                        <input type="text" id="bill-ref" class="input" placeholder="e.g. CEB account 1234567890" maxlength="40" autocomplete="off" inputmode="text">
+                        <span class="field-hint">For bills like CEB or water with several account numbers. A bank SMS with this number is matched to this bill.</span>
                     </div>
                     <div class="field" id="bill-account-field">
                         <label class="field-label" for="bill-account">Account</label>
@@ -1951,7 +1957,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.52.1"></script>
+    <script src="app.js?v=4.53.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

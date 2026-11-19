@@ -2569,6 +2569,43 @@ export async function run() {
         return (settled && notExpected && early && !late && order === 'ba') || `settled ${settled} (${rec && rec.type}, ${rec && rec.recurringId}, next ${bill && bill.nextDate}, time ${rec && rec.time}), not expected any more ${notExpected}, 8am before ${early}, noon before ${late}, order ${order}`;
     });
 
+    await T('Budget from income: salary counts, a cash deposit and a refund do not (changeable); CEB bill found by its account number', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-in', name: 'Income Bank', kind: 'bank', currency: 'LKR', opening: 100000, createdAt: 0 });
+        st.transactions.push(
+            { id: 'in-sal', type: 'income', desc: 'Salary', amount: 70000, currency: 'LKR', category: 'Salary', date: today, note: '', createdAt: 1, accountId: 'acc-in' },
+            { id: 'in-dep', type: 'income', desc: 'Cash deposit', amount: 4000, currency: 'LKR', category: 'OtherIncome', date: today, note: '', createdAt: 2, accountId: 'acc-in', bank: { bank: 'BOC', kind: 'deposit', sources: ['sms'] } },
+            { id: 'in-ref', type: 'income', desc: 'Refund', amount: 591.51, currency: 'LKR', category: 'OtherIncome', date: today, note: '', createdAt: 3, accountId: 'acc-in', bank: { bank: 'BOC', kind: 'refund', sources: ['sms'] } });
+        const keep = { mode: st.config.budgetMode, skip: st.config.budgetSkipIncome };
+        g('saveState')(); g('setViewAccount')('acc-in'); await wait(150);
+        st.config.budgetMode = 'income'; st.config.budgetSkipIncome = null;
+        const planned = Math.round(g('monthStats')().plannedIncome * 100) / 100;
+        // In the editor: three kinds listed; tap the deposit to count it too.
+        g('openBudget')('__overall'); await wait(300);
+        const parts = document.querySelectorAll('[data-budget-inc]').length;
+        document.querySelector('[data-budget-inc="sms:deposit"]').click(); await wait(100);
+        const hint = $('budget-income-hint').textContent;
+        await close('modal-budget');
+        // CEB: two bills, the SMS names one account number.
+        const due = iso(addDays(new Date(), 5));
+        st.recurring.push(
+            { id: 'ceb-home', type: 'expense', name: 'CEB home', amount: 4500, currency: 'LKR', category: 'Utilities', frequency: 'monthly', nextDate: due, anchorDay: 1, autoLog: false, accountId: 'acc-in', ref: '1234567890', createdAt: 1 },
+            { id: 'ceb-shop', type: 'expense', name: 'CEB shop', amount: 4500, currency: 'LKR', category: 'Utilities', frequency: 'monthly', nextDate: due, anchorDay: 1, autoLog: false, accountId: 'acc-in', ref: '5550001112', createdAt: 1 });
+        g('saveState')();
+        const t0 = Date.now();
+        const sms = g('parseBankSms')({ id: `sms-${t0}-ceb`, source: 'sms', address: 'COMBANK', body: 'Dear Customer, your bill payment of LKR 6,210.00 to CEB A/C 5550001112 was successful on your A/C ...1234.', date: t0 });
+        const rec = sms && g('smsApply')(sms, 'acc-in'); await wait(300);
+        const shopNext = s().recurring.find((b) => b.id === 'ceb-shop').nextDate;
+        const homeNext = s().recurring.find((b) => b.id === 'ceb-home').nextDate;
+        const byRef = rec && rec.recurringId === 'ceb-shop' && shopNext > due && homeNext === due;
+        st.transactions = st.transactions.filter((t) => t.accountId !== 'acc-in');
+        st.recurring = st.recurring.filter((b) => !/^ceb-/.test(b.id));
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-in');
+        st.config.budgetMode = keep.mode; st.config.budgetSkipIncome = keep.skip;
+        g('setViewAccount')('all'); g('saveState')();
+        return (planned === 70000 && parts === 3 && /74,000/.test(hint) && byRef) || `counted ${planned}, kinds ${parts}, hint "${hint}", CEB by account no ${byRef} (${rec && rec.recurringId}, shop ${shopNext}, home ${homeNext})`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

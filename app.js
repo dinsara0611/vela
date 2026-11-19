@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.52.1';
+const APP_VERSION = '4.53.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -104,6 +104,7 @@ const createDefaultState = () => ({
         budgetCurrency: null,      // currency the budgets were typed in (null = old data, US dollars)
         budgetMode: 'fixed',       // 'fixed' = the amount typed in; 'income' = this month's income; 'balance' = the money in the account
         budgetSavePct: 0,          // with 'income': the part of income kept aside for saving
+        budgetSkipIncome: null,    // with 'income': income kinds not counted (null = refunds and cash deposits left out)
         lastCategory: { expense: 'Food', income: 'Salary' },
         priceBook: {},             // currency -> item name -> { price, added?, category? } (your own prices)
         lock: { enabled: false, hash: null, salt: null, biometric: false },
@@ -777,6 +778,7 @@ const normalizeBill = (b) => {
         accountId: b.accountId ? String(b.accountId) : null,
         autoLog: b.autoLog !== false,
         createdAt: stamp(b.createdAt),
+        ...(typeof b.ref === 'string' && b.ref.trim() ? { ref: b.ref.trim().slice(0, 40) } : {}),
         ...(toNumber(b.carry, 0) > 0 ? { carry: round2(toNumber(b.carry, 0)), ...(cleanDate(b.carryFrom) ? { carryFrom: cleanDate(b.carryFrom) } : {}) } : {}),
         ...(b.sub === true ? { sub: true } : {})
     };
@@ -942,6 +944,7 @@ const normalizeState = (raw) => {
     base.config.budgetCurrency = isCurrency(cfg.budgetCurrency) ? cfg.budgetCurrency : null;
     base.config.budgetMode = ['income', 'balance'].includes(cfg.budgetMode) ? cfg.budgetMode : 'fixed';
     base.config.budgetSavePct = Math.min(90, Math.max(0, Math.round(toNumber(cfg.budgetSavePct, 0))));
+    base.config.budgetSkipIncome = Array.isArray(cfg.budgetSkipIncome) ? cfg.budgetSkipIncome.map((x) => String(x).slice(0, 64)).slice(0, 60) : null;
     if (cfg.categoryBudgets && typeof cfg.categoryBudgets === 'object') {
         Object.keys(cfg.categoryBudgets).forEach((k) => {
             const v = toNumber(cfg.categoryBudgets[k], 0);
@@ -1032,6 +1035,7 @@ const settingsPayload = () => {
         budgetCurrency: c.budgetCurrency,
         budgetMode: c.budgetMode,
         budgetSavePct: c.budgetSavePct,
+        budgetSkipIncome: c.budgetSkipIncome,
         accountBudgets: c.accountBudgets || {},
         currency: c.currency,
         currencies: c.currencies,
@@ -1071,6 +1075,7 @@ const applyCloudSettings = (d) => {
     c.budgetCurrency = isCurrency(d.budgetCurrency) ? d.budgetCurrency : null;
     if (['income', 'fixed', 'balance'].includes(d.budgetMode)) c.budgetMode = d.budgetMode;
     if (d.budgetSavePct !== undefined) c.budgetSavePct = Math.min(90, Math.max(0, Math.round(toNumber(d.budgetSavePct, 0))));
+    if (Array.isArray(d.budgetSkipIncome)) c.budgetSkipIncome = d.budgetSkipIncome.map((x) => String(x).slice(0, 64)).slice(0, 60);
     if (d.accountBudgets && typeof d.accountBudgets === 'object') c.accountBudgets = cleanAccountBudgets(d.accountBudgets);
     if (Array.isArray(d.trips)) c.trips = normalizeTrips(d.trips);
     if (typeof d.budgetOn === 'boolean') c.budgetOn = d.budgetOn;
@@ -1806,7 +1811,7 @@ function allAccountsBudget(y, m) {
         };
         if (b.budgetMode === 'balance') return sum + balanceWay();
         if (b.budgetMode === 'income') {
-            const inc = sumDisplay(state.transactions.filter((t) => t.type === 'income' && t.accountId === a.id && inMonth(t, y, m) && !isUpcoming(t)));
+            const inc = sumDisplay(state.transactions.filter((t) => t.type === 'income' && t.accountId === a.id && inMonth(t, y, m) && !isUpcoming(t) && countsForBudget(t)));
             return sum + (inc > 0 ? inc * (1 - (b.budgetSavePct || 0) / 100) : balanceWay());
         }
         return sum + convertAmount(b.budget, b.budgetCurrency || 'USD', cur);
@@ -1838,6 +1843,13 @@ const setBudgetCurrency = (to) => {
 
 // From income: income already spent before Vela tracked it (or already part of an older balance) can't be spent again.
 // This month, the budget is at most what the account has now plus what was spent from it this month.
+// The group an income belongs to for the budget: a refund or a cash deposit (your own money going back in) from a
+// bank SMS, otherwise its category.
+const incomeGroup = (t) => (t.bank && (t.bank.kind === 'refund' || t.bank.kind === 'deposit') ? `sms:${t.bank.kind}` : t.category);
+const DEFAULT_SKIP_INCOME = ['sms:refund', 'sms:deposit'];
+const budgetSkips = () => (Array.isArray(state.config.budgetSkipIncome) ? state.config.budgetSkipIncome : DEFAULT_SKIP_INCOME);
+const countsForBudget = (t, skip = budgetSkips()) => !skip.includes(incomeGroup(t));
+const incomeGroupName = (g) => (g === 'sms:refund' ? 'Refunds' : g === 'sms:deposit' ? 'Cash deposits (your own cash)' : (catById(g) || {}).name || g);
 const incomeCap = (y, m, spent, spentList) => {
     const now = new Date();
     if (y !== now.getFullYear() || m !== now.getMonth()) return Infinity;
@@ -1857,7 +1869,7 @@ const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => 
 
     // From income: only income that has arrived this month counts (money you can actually spend). Income still
     // expected is shown beside it and joins the budget once you mark it received or the bank SMS confirms it.
-    const plannedIncome = income;
+    const plannedIncome = sumDisplay(incomeList.filter((t) => countsForBudget(t)));
     const expectedIncome = sumDisplay(viewTx().filter((t) => t.type === 'income' && inMonth(t, y, m) && isUpcoming(t)));
     const fromIncome = state.config.budgetMode === 'income';
     // From income, but no income in this account this month (yet): the account's balance is used, not nothing.
@@ -3246,7 +3258,8 @@ const parseBankSms = (msg) => {
         cardSide: /\bdebited\b/.test(t) ? 'from' : 'to',
         source, sources: [source], sourceIds: [String(msg.id)], bodyKeys: [hashToInt(body.toLowerCase())],
         shape: hashToInt(body.toLowerCase().replace(/\d+/g, '#')), // the wording without its numbers
-        arrivedAt: Number(msg.date) || Date.now(), fromMessage: when.fromMessage || !shared
+        arrivedAt: Number(msg.date) || Date.now(), fromMessage: when.fromMessage || !shared,
+        refKeys: [...new Set((body.match(/\d[\d -]{4,18}\d/g) || []).map((n) => n.replace(/\D/g, '')).filter((n) => n.length >= 6 && n.length <= 16).map((n) => hashToInt(n)))].slice(0, 8)
     };
 };
 
@@ -3601,7 +3614,8 @@ const smsApply = (i, accountId) => {
     if (fx) rec.fx = fx;
     rec.pending = false; // it already happened: the bank says so
     rec.bank = bankMeta(i);
-    const matched = settleExpectedWith(rec);
+    const matched = settleExpectedWith(rec, i.refKeys || []);
+    if (matched && rec.recurringId) { const b = state.recurring.find((x) => x.id === rec.recurringId); if (b && b.ref) rec.note = [rec.note, `Acc ${b.ref}`].filter(Boolean).join(' · '); }
     if (matched) setTimeout(() => showToast(`Matched to ${matched}: no longer waiting for it`, 'success'), 300);
     saveState();
     queueSync('transaction', rec.id, 'upsert');
@@ -3609,8 +3623,14 @@ const smsApply = (i, accountId) => {
     return rec;
 };
 // Same type and amount as an expected payment due within two weeks either side: it's that payment, early or late.
-const expectedMatchFor = (rec) => {
+const billRefKey = (ref) => { const n = String(ref || '').replace(/\D/g, ''); return n.length >= 6 ? hashToInt(n) : null; };
+const expectedMatchFor = (rec, refKeys = []) => {
     if (!rec || !(rec.type === 'income' || rec.type === 'expense')) return null;
+    // A bill with its account number in the bank message (CEB account no.): that bill, whatever the amount.
+    if (refKeys.length) {
+        const byRef = state.recurring.find((b) => b.type === rec.type && b.ref && refKeys.includes(billRefKey(b.ref)));
+        if (byRef) return { kind: 'bill', bill: byRef };
+    }
     const near = (due) => Math.abs(daysBetween(parseDate(rec.date), parseDate(due))) <= 14;
     const same = (amt, cur) => Math.abs(toDisplay(amt, cur) - toDisplay(rec.amount, rec.currency)) <= Math.max(1, toDisplay(rec.amount, rec.currency) * 0.01);
     const bill = state.recurring.find((b) => !b.autoLog && b.type === rec.type && b.nextDate && near(b.nextDate) && same(billDue(b), b.currency)
@@ -3619,8 +3639,8 @@ const expectedMatchFor = (rec) => {
     const tx = state.transactions.find((t) => t.id !== rec.id && t.pending && t.type === rec.type && near(t.date) && same(t.amount, t.currency) && (!t.accountId || t.accountId === rec.accountId));
     return tx ? { kind: 'tx', tx } : null;
 };
-const settleExpectedWith = (rec) => {
-    const m = expectedMatchFor(rec);
+const settleExpectedWith = (rec, refKeys = []) => {
+    const m = expectedMatchFor(rec, refKeys);
     if (!m) return null;
     if (m.kind === 'bill') {
         const b = m.bill;
@@ -4668,7 +4688,7 @@ const billRow = (b) => {
     return `<div class="plan-row">
         <button type="button" class="plan-row-main" data-edit-bill="${escapeHtml(b.id)}" aria-label="Edit ${escapeHtml(b.name)}">
             ${entryBadge(b.name, b.category, b.type)}
-            <span class="row-main"><span class="row-title">${escapeHtml(b.name)}</span><span class="row-sub">${FREQ_PHRASE[b.frequency]}, ${how}</span></span>
+            <span class="row-main"><span class="row-title">${escapeHtml(b.name)}</span><span class="row-sub">${b.ref ? `Acc ${escapeHtml(b.ref)} · ` : ''}${FREQ_PHRASE[b.frequency]}, ${how}</span></span>
             <span class="row-end"><span class="amount ${b.type === 'income' ? 'text-income' : ''}">${escapeHtml(formatDisplay(billDue(b), b.currency))}</span>${b.carry ? `<span class="row-sub">incl. ${escapeHtml(formatDisplay(b.carry, b.currency))} carried</span>` : ''}<span class="badge-due" data-tone="${dl.tone}">${escapeHtml(label)}</span></span>
         </button>
         ${b.autoLog ? '' : `<div class="bill-actions"><button type="button" class="btn btn-secondary btn-sm paid-btn" data-bill-paid="${escapeHtml(b.id)}">${icon('i-check', 'ic ic-sm')} ${b.type === 'income' ? 'Mark received' : 'Mark paid'}</button><button type="button" class="link-btn pay-later-btn" data-pay-later="bill:${escapeHtml(b.id)}">Not this time</button></div>`}
@@ -6377,6 +6397,7 @@ const submitFunds = () => {
    ========================================================================= */
 let budgetModeDraft = 'fixed';
 let budgetSaveDraft = 0;
+let budgetSkipDraft = [];
 const syncBudgetModeUi = () => {
     const overall = $('budget-category').value === '__overall';
     const income = overall && budgetModeDraft === 'income';
@@ -6392,10 +6413,17 @@ const syncBudgetModeUi = () => {
         const now = new Date();
         const s = monthStats(now.getFullYear(), now.getMonth());
         const cur = dcur();
-        const budget = s.plannedIncome * (1 - budgetSaveDraft / 100);
-        $('budget-income-hint').textContent = s.plannedIncome > 0
-            ? `This month's income is ${formatCurrency(s.plannedIncome, cur)}, so your budget is ${formatCurrency(budget, cur)}${budgetSaveDraft ? ` and ${formatCurrency(s.plannedIncome - budget, cur)} goes to saving` : ''}. It grows by itself when you add income.`
-            : 'No income added this month yet. Add your salary or rent and your budget fills in by itself.';
+        // Each kind of income received this month, with its total; tap one to leave it out of the budget.
+        const groups = {};
+        s.incomeList.forEach((t) => { const k = incomeGroup(t); groups[k] = (groups[k] || 0) + toDisplay(t.amount, t.currency); });
+        const counted = round2(Object.entries(groups).filter(([k]) => !budgetSkipDraft.includes(k)).reduce((a, [, v]) => a + v, 0));
+        const budget = counted * (1 - budgetSaveDraft / 100);
+        $('budget-income-parts').innerHTML = Object.keys(groups).length > 0
+            ? `<span class="field-label">Counted as income for the budget <span class="faint">(tap to change)</span></span>${Object.entries(groups).sort((a, b) => b[1] - a[1]).map(([k, v]) => `<button type="button" class="inc-part" data-budget-inc="${escapeHtml(k)}" aria-pressed="${!budgetSkipDraft.includes(k)}">${icon(budgetSkipDraft.includes(k) ? 'i-x' : 'i-check', 'ic ic-sm')}<span>${escapeHtml(incomeGroupName(k))}</span><strong>${escapeHtml(formatCurrency(v, cur))}</strong></button>`).join('')}`
+            : '';
+        $('budget-income-hint').textContent = counted > 0
+            ? `Income counted this month: ${formatCurrency(counted, cur)}, so your budget is ${formatCurrency(budget, cur)}${budgetSaveDraft ? ` and ${formatCurrency(counted - budget, cur)} goes to saving` : ''}. It grows by itself when you add income.`
+            : 'No income counted this month yet. Add your salary or rent and your budget fills in by itself.';
     }
 };
 
@@ -6414,6 +6442,7 @@ const openBudget = (catId) => {
     $('btn-delete-budget').hidden = !(existing && !isOverall);
     budgetModeDraft = state.config.budgetMode;
     budgetSaveDraft = state.config.budgetSavePct;
+    budgetSkipDraft = [...budgetSkips()];
     syncBudgetModeUi();
     openOrSwap('modal-budget');
 };
@@ -6432,6 +6461,7 @@ const submitBudget = () => {
     if (catId === '__overall' && budgetModeDraft === 'income') {
         state.config.budgetMode = 'income';
         state.config.budgetSavePct = budgetSaveDraft;
+        state.config.budgetSkipIncome = [...budgetSkipDraft];
         saveState();
         flushSync();
         closeSheet('modal-budget');
@@ -6512,6 +6542,7 @@ const openEditBill = (id) => {
     fillCurrencySelect($('bill-currency'), b.currency);
     $('bill-frequency').value = b.frequency;
     $('bill-next').value = b.nextDate;
+    $('bill-ref').value = b.ref || '';
     setSwitch($('bill-auto'), b.autoLog);
     fillAccountSelect($('bill-account'), b.accountId);
     $('bill-account-field').hidden = state.accounts.length < 2;
@@ -6538,11 +6569,14 @@ const submitBill = () => {
         anchorDay: parseDate(nextDate).getDate(),
         autoLog: isOn($('bill-auto')),
         accountId: $('bill-account').value || state.accounts[0].id,
-        ...($('bill-form').dataset.sub === '1' ? { sub: true } : {})
+        ...($('bill-form').dataset.sub === '1' ? { sub: true } : {}),
+        ref: $('bill-ref').value.trim().slice(0, 40)
     };
+    if (!data.ref) delete data.ref;
     let record;
     if (id) {
         const idx = state.recurring.findIndex((b) => b.id === id);
+        if (idx >= 0 && !data.ref) delete state.recurring[idx].ref;
         if (idx === -1) return false;
         record = { ...state.recurring[idx], ...data };
         state.recurring[idx] = record;
@@ -9845,6 +9879,7 @@ const initEvents = () => {
         if (d.starterPick) { starterPick(d.starterPick); return; }
         if (d.budgetMode) { budgetModeDraft = d.budgetMode; syncBudgetModeUi(); return; }
         if (d.budgetSave !== undefined) { budgetSaveDraft = Number(d.budgetSave); syncBudgetModeUi(); return; }
+        if (d.budgetInc !== undefined) { budgetSkipDraft = budgetSkipDraft.includes(d.budgetInc) ? budgetSkipDraft.filter((x) => x !== d.budgetInc) : [...budgetSkipDraft, d.budgetInc]; syncBudgetModeUi(); return; }
         if (d.botChip) { botHandle(d.botChip); return; }
         if (d.botSay) { botHandle(d.botSay); return; }
         if (d.botAdd) { botAdd(d.botAdd, el); return; }

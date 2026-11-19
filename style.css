@@ -4946,3 +4946,12 @@ body.approve-waiting { overflow: hidden; }
 .budget-source.is-short { color: var(--warning); }
 /* Date and time side by side in the entry form */
 .date-time { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 8px; }
+
+/* Budget from income: which income counts */
+.inc-parts { display: grid; gap: 6px; margin-top: var(--sp-3); }
+.inc-part { display: flex; align-items: center; gap: 8px; padding: 9px 12px; border-radius: 12px; border: 1px solid var(--border); background: var(--surface-2); color: var(--text); font: inherit; font-size: var(--fs-sm); text-align: left; cursor: pointer; }
+.inc-part > span { flex: 1; min-width: 0; }
+.inc-part .ic { color: var(--income); flex: none; }
+.inc-part[aria-pressed="false"] { opacity: 0.6; }
+.inc-part[aria-pressed="false"] .ic { color: var(--text-3); }
+.inc-part[aria-pressed="false"] strong { text-decoration: line-through; }
