@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.51.5';
+const APP_VERSION = '4.52.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -615,11 +615,21 @@ const reestimateFx = (acc) => {
 };
 const fxNote = (t) => (t.fx ? `${formatCurrency(t.fx.amount, t.fx.currency)}${t.fx.estimated ? ' · estimated charge' : ''}` : '');
 // The day an account's balance was typed in (when it was added, or when its balance was last corrected).
+const cleanTime = (v) => (typeof v === 'string' && /^([01]\d|2[0-3]):[0-5]\d$/.test(v) ? v : null);
+const nowTime = () => { const d = new Date(); return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; };
+// When an entry happened in the day: its own time, or the time on the bank SMS.
+const txTime = (t) => (t && (cleanTime(t.time) || (t.bank && cleanTime(t.bank.time)))) || null;
+const fmtTime = (hm) => { if (!hm) return ''; const [hh, mm] = hm.split(':').map(Number); return new Date(2000, 0, 1, hh, mm).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }); };
 const balanceDateOf = (acc) => (acc ? acc.balanceDate || (acc.createdAt ? toISODate(new Date(acc.createdAt)) : null) : null);
 // An entry dated before that day is already inside that balance.
-const beforeBalanceFor = (accountId, date) => {
-    const d = balanceDateOf(state.accounts.find((a) => a.id === accountId));
-    return !!(d && date && date < d);
+const beforeBalanceFor = (accountId, date, time = null) => {
+    const acc = state.accounts.find((a) => a.id === accountId);
+    const d = balanceDateOf(acc);
+    if (!(d && date)) return false;
+    if (date < d) return true;
+    // Same day as the balance: an entry from earlier that day (8 AM purchase, balance typed at 11 AM) is already in it.
+    const bt = acc && (cleanTime(acc.balanceTime) || (!acc.balanceDate && acc.createdAt ? new Date(acc.createdAt).toTimeString().slice(0, 5) : null));
+    return !!(date === d && time && bt && time < bt);
 };
 // Entries added (by hand, from bank SMS, ...) after an account was set up but dated before it were taken off the
 // balance a second time. Fixed once: they're marked as already in the balance. Only accounts given a balance.
@@ -703,6 +713,7 @@ const normalizeTx = (t, forcedType) => {
         // Kept across restarts and sync: when it was due and actually paid, and the bank details it was matched with
         // (without these, a restart forgot an entry came from a bank SMS and the same SMS could be added again).
         ...(cleanDate(t.dueDate) ? { dueDate: cleanDate(t.dueDate) } : {}),
+        ...(cleanTime(t.time) ? { time: cleanTime(t.time) } : {}),
         ...(typeof t.paidAt === 'string' && !isNaN(Date.parse(t.paidAt)) ? { paidAt: t.paidAt } : {}),
         ...(normalizeBankMeta(t.bank) ? { bank: normalizeBankMeta(t.bank) } : {}),
         ...(type === 'expense' && t.tripId ? { tripId: String(t.tripId).slice(0, 64) } : {}),
@@ -801,6 +812,7 @@ const normalizeAccount = (a) => {
         opening: toNumber(a.opening, 0),
         createdAt: stamp(a.createdAt),
         ...(cleanDate(a.balanceDate) ? { balanceDate: cleanDate(a.balanceDate) } : {}),
+        ...(cleanTime(a.balanceTime) ? { balanceTime: cleanTime(a.balanceTime) } : {}),
         ...(Number.isFinite(Number(a.fxFee)) && a.fxFee !== null && a.fxFee !== '' ? { fxFee: round2(Number(a.fxFee)) } : {})
     };
 };
@@ -1774,7 +1786,8 @@ const setViewAccount = (id) => {
     // No pop-up: the account bar at the top already shows which account you're looking at.
     haptic();
 };
-const sortByNewest = (list) => [...list].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
+const sortByNewest = (list) => [...list].sort((a, b) => (b.date > a.date ? 1 : b.date < a.date ? -1
+    : (txTime(b) || '') > (txTime(a) || '') ? 1 : (txTime(b) || '') < (txTime(a) || '') ? -1 : (b.createdAt || 0) - (a.createdAt || 0)));
 const sumDisplay = (list) => list.reduce((s, e) => s + toDisplay(e.amount, e.currency), 0);
 const inMonth = (t, y, m) => { const d = parseDate(t.date); return d.getFullYear() === y && d.getMonth() === m; };
 
@@ -2006,7 +2019,8 @@ const logBill = (bill, date, times = 1) => {
         receipt: null
     };
     if (tx.type === 'expense' && autoFundFor(tx.category, tx.amount, tx.currency)) tx.sectionId = autoFundFor(tx.category, tx.amount, tx.currency);
-    if (beforeBalanceFor(tx.accountId, tx.date)) tx.beforeBalance = true;
+    if (date === todayISO()) tx.time = nowTime();
+    if (beforeBalanceFor(tx.accountId, tx.date, tx.time)) tx.beforeBalance = true;
     if (carried) { tx.note = `Includes ${formatCurrency(carried, bill.currency)} carried from ${bill.carryFrom ? shortDate(bill.carryFrom) : 'last time'}`; delete bill.carry; delete bill.carryFrom; }
     if (times > 1) {
         const dates = [bill.nextDate];
@@ -2189,7 +2203,7 @@ const transferLine = (t) => `${accountById(t.accountId).name} to ${accountById(t
 
 const txRow = (t, { showDate = true, withAccount = viewId() === 'all' && state.accounts.length > 1 } = {}) => {
     const accName = withAccount ? (() => { const a = state.accounts.find((x) => x.id === t.accountId); return a ? a.name : ''; })() : '';
-    const when = showDate ? `<span class="tx-when">${escapeHtml(relativeDayLabel(t.date))}</span>` : '';
+    const when = showDate ? `<span class="tx-when">${escapeHtml(relativeDayLabel(t.date))}${txTime(t) ? ` · ${escapeHtml(fmtTime(txTime(t)))}` : ''}</span>` : (txTime(t) ? `<span class="tx-when">${escapeHtml(fmtTime(txTime(t)))}</span>` : '');
     if (t.type === 'transfer') {
         return `<li><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
             <span class="cat-badge" style="--cat:var(--text-2)">${icon('i-swap')}</span>
@@ -3582,14 +3596,51 @@ const smsApply = (i, accountId) => {
             currency = acc.currency;
         }
     }
-    const rec = quickSaveTx({ type: i.type, desc: i.desc, amount, currency, category: i.category, date: i.date, accountId, note });
+    const rec = quickSaveTx({ type: i.type, desc: i.desc, amount, currency, category: i.category, date: i.date, time: i.time || (i.arrivedAt ? new Date(i.arrivedAt).toTimeString().slice(0, 5) : null), accountId, note });
     if (fx) rec.fx = fx;
     rec.pending = false; // it already happened: the bank says so
     rec.bank = bankMeta(i);
+    const matched = settleExpectedWith(rec);
+    if (matched) setTimeout(() => showToast(`Matched to ${matched}: no longer waiting for it`, 'success'), 300);
     saveState();
     queueSync('transaction', rec.id, 'upsert');
     renderActive();
     return rec;
+};
+// Same type and amount as an expected payment due within two weeks either side: it's that payment, early or late.
+const expectedMatchFor = (rec) => {
+    if (!rec || !(rec.type === 'income' || rec.type === 'expense')) return null;
+    const near = (due) => Math.abs(daysBetween(parseDate(rec.date), parseDate(due))) <= 14;
+    const same = (amt, cur) => Math.abs(toDisplay(amt, cur) - toDisplay(rec.amount, rec.currency)) <= Math.max(1, toDisplay(rec.amount, rec.currency) * 0.01);
+    const bill = state.recurring.find((b) => !b.autoLog && b.type === rec.type && b.nextDate && near(b.nextDate) && same(billDue(b), b.currency)
+        && (!b.accountId || b.accountId === rec.accountId));
+    if (bill) return { kind: 'bill', bill };
+    const tx = state.transactions.find((t) => t.id !== rec.id && t.pending && t.type === rec.type && near(t.date) && same(t.amount, t.currency) && (!t.accountId || t.accountId === rec.accountId));
+    return tx ? { kind: 'tx', tx } : null;
+};
+const settleExpectedWith = (rec) => {
+    const m = expectedMatchFor(rec);
+    if (!m) return null;
+    if (m.kind === 'bill') {
+        const b = m.bill;
+        rec.recurringId = b.id;
+        rec.dueDate = b.nextDate;
+        rec.paidAt = new Date().toISOString();
+        if (b.type === 'expense') rec.fixed = true;
+        if (b.carry) { delete b.carry; delete b.carryFrom; }
+        cancelPaymentReminders(`bill:${b.id}`);
+        const due = b.nextDate;
+        b.nextDate = advanceDate(b.nextDate, b.frequency, b.anchorDay);
+        queueSync('recurring', b.id, 'upsert', false);
+        return `${b.name} (expected ${shortDate(due)})`;
+    }
+    const t = m.tx;
+    state.transactions = state.transactions.filter((x) => x.id !== t.id);
+    queueSync('transaction', t.id, 'delete', false);
+    cancelPaymentReminders(`tx:${t.id}`);
+    rec.dueDate = t.date;
+    rec.paidAt = new Date().toISOString();
+    return `${t.desc} (expected ${shortDate(t.date)})`;
 };
 const smsAdd = (id) => {
     const i = smsQueue.find((x) => x.id === id);
@@ -3685,6 +3736,7 @@ const smsEdit = (id, asMove = false) => {
     $('tx-amount').value = i.amount;
     $('tx-desc').value = i.desc;
     $('tx-date').value = i.date;
+    $('tx-time').value = i.time || '';
     $('tx-note').value = `From ${i.bank} (${sourceShort(i.sources)})`;
     updateDescLogo();
     selectTxCategory(i.category);
@@ -5121,7 +5173,7 @@ const updateBeforeRow = () => {
     const show = !!(acc && isISODate(date) && (date < todayISO() || (bd && date <= bd)) && (txType === 'expense' || txType === 'income'));
     $('tx-before-row').hidden = !show;
     if (!show) { if (!txBeforeTouched) txBefore = false; return; }
-    if (!txBeforeTouched) txBefore = !!(bd && date < bd);
+    if (!txBeforeTouched) txBefore = beforeBalanceFor(acc.id, date, cleanTime($('tx-time').value));
     setSwitch($('tx-before'), txBefore);
     const what = txBefore ? `It's kept in your history and spending without changing ${acc.name}'s balance again.` : `It will be ${txType === 'income' ? 'added to' : 'taken off'} ${acc.name}'s balance.`;
     $('tx-before-desc').textContent = bd
@@ -5186,6 +5238,7 @@ const openAddTx = (type = 'expense') => {
     setReceiptDraft(null);
     fillCurrencySelect($('tx-currency'), dcur());
     $('tx-date').value = todayISO();
+    $('tx-time').value = nowTime();
     txWaiting = false;
     txTripId = tripIdFor(todayISO());
     txBefore = false;
@@ -5220,6 +5273,7 @@ const openEditTx = (id) => {
     $('tx-charged').value = t.fx ? t.amount : '';
     $('tx-desc').value = t.desc;
     $('tx-date').value = t.date;
+    $('tx-time').value = txTime(t) || '';
     $('tx-note').value = t.note || '';
     txWaiting = t.pending === true;
     txTripId = t.tripId || null;
@@ -5315,6 +5369,7 @@ const submitTx = async () => {
         const idx = state.transactions.findIndex((t) => t.id === id);
         const waiting = date > todayISO() || txWaiting;
         record = { ...prev, type: txType, desc, amount: saveAmount, currency: saveCurrency, category, date, note, accountId, receipt, fixed: txKind === 'fixed' || !!prev.recurringId, pending: waiting };
+        if (cleanTime($('tx-time').value)) record.time = $('tx-time').value; else delete record.time;
         if (fx) record.fx = fx; else delete record.fx;
         if (txType === 'expense' && txTripId) record.tripId = txTripId; else delete record.tripId;
         if (txType === 'expense' && txSectionId && secById(txSectionId)) record.sectionId = txSectionId; else delete record.sectionId;
@@ -5326,6 +5381,7 @@ const submitTx = async () => {
         state.transactions[idx] = record;
     } else {
         record = { id: generateId(), type: txType, desc, amount: saveAmount, currency: saveCurrency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txKind === 'fixed', pending: date > todayISO() || txWaiting };
+        if (cleanTime($('tx-time').value)) record.time = $('tx-time').value;
         if (fx) record.fx = fx;
         if (txType === 'expense' && txTripId) record.tripId = txTripId;
         if (txType === 'expense' && txSectionId && secById(txSectionId) && (txSectionTouched || (sectionBalances()[txSectionId] || 0) + 0.004 >= toDisplay(saveAmount, saveCurrency))) record.sectionId = txSectionId;
@@ -6020,8 +6076,10 @@ const quickSaveTx = (d) => {
     if (!state.accounts.length) ensureAccounts(state);
     const acc = state.accounts.find((a) => a.id === d.accountId) || state.accounts.find((a) => a.id === state.config.lastAccount) || state.accounts[0];
     const record = { id: generateId(), type: d.type, desc: d.desc, amount: d.amount, currency: d.currency, category: d.category, date: d.date, note: d.note || '', createdAt: Date.now(), recurringId: null, accountId: acc.id, receipt: null, fixed: d.type === 'expense' && !!d.fixed, pending: d.date > todayISO() };
+    const tm = cleanTime(d.time) || (d.date === todayISO() ? nowTime() : null);
+    if (tm) record.time = tm;
     if (d.type === 'expense' && tripIdFor(d.date)) record.tripId = tripIdFor(d.date);
-    if (beforeBalanceFor(acc.id, d.date)) record.beforeBalance = true;
+    if (beforeBalanceFor(acc.id, d.date, record.time)) record.beforeBalance = true;
     if (d.type === 'expense' && autoFundFor(d.category, d.amount, d.currency)) record.sectionId = autoFundFor(d.category, d.amount, d.currency);
     state.transactions.push(record);
     state.config.lastCategory[d.type] = d.category;
@@ -6065,6 +6123,7 @@ const botEdit = (id) => {
     $('tx-desc').value = d.desc;
     if (d.amount > 0) $('tx-amount').value = d.amount;
     $('tx-date').value = d.date;
+    $('tx-time').value = cleanTime(d.time) || (d.date === todayISO() ? nowTime() : '');
     updateDateHint();
     selectTxCategory(d.category);
     txCatTouched = true;
@@ -10054,6 +10113,7 @@ const initEvents = () => {
     $('tx-trip').addEventListener('click', () => { txTripId = txTripId ? null : $('tx-trip').dataset.trip; updateTripRow(); });
     $('tx-before').addEventListener('click', () => { txBefore = !txBefore; txBeforeTouched = true; updateBeforeRow(); });
     $('tx-date').addEventListener('change', updateBeforeRow);
+    $('tx-time').addEventListener('change', updateBeforeRow);
     $('tx-account').addEventListener('change', () => { updateBeforeRow(); txChargedTouched = false; updateChargedRow(); renderTxSections(); });
     $('tx-date').addEventListener('change', () => { if (!$('tx-id').value && txType === 'expense') { txTripId = tripIdFor($('tx-date').value); updateTripRow(); } });
     $('mfa-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitMfa(); } });
@@ -10587,12 +10647,13 @@ const submitAccount = () => {
         a.opening = round2(a.opening + (balance - before));
         const chosen = $('account-balance-date').value;
         // The day this balance is correct on: what you picked, or today when you corrected the amount.
-        if (isISODate(chosen) && chosen <= todayISO() && chosen !== balanceDateOf(a)) a.balanceDate = chosen;
-        else if (Math.abs(balance - before) > 0.004) a.balanceDate = todayISO();
+        if (isISODate(chosen) && chosen <= todayISO() && chosen !== balanceDateOf(a)) { a.balanceDate = chosen; if (chosen === todayISO()) a.balanceTime = nowTime(); else delete a.balanceTime; }
+        else if (Math.abs(balance - before) > 0.004) { a.balanceDate = todayISO(); a.balanceTime = nowTime(); }
         showToast('Account saved', 'success');
     } else {
         const chosen = $('account-balance-date').value;
-        state.accounts.push({ id: generateId(), name, kind, currency, opening: round2(balance), createdAt: Date.now(), balanceDate: isISODate(chosen) && chosen <= todayISO() ? chosen : todayISO() });
+        const bd = isISODate(chosen) && chosen <= todayISO() ? chosen : todayISO();
+        state.accounts.push({ id: generateId(), name, kind, currency, opening: round2(balance), createdAt: Date.now(), balanceDate: bd, ...(bd === todayISO() ? { balanceTime: nowTime() } : {}) });
         showToast(`${name} added`, 'success');
     }
     afterAccountChange();

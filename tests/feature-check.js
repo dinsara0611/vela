@@ -2536,6 +2536,32 @@ export async function run() {
         return (suggested && kept && said && saveBtn && prefilled && month && done) || `suggested ${suggested}, kept ${kept} (${after.goalKeep}, ${before.budget} -> ${after.budget}), said ${said}, save button ${saveBtn}, prefilled ${prefilled}, month ${month}, done ${done}`;
     });
 
+    await T('Times: Rent arrives early by SMS and settles the expected Rent; 8 AM purchase before an 11 AM balance; newest by time', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-tm', name: 'Time Bank', kind: 'bank', currency: 'LKR', opening: 1000, createdAt: 0, balanceDate: today, balanceTime: '11:00' });
+        const due = iso(addDays(new Date(), 3));
+        st.recurring.push({ id: 'rent-in', type: 'income', name: 'Rent', amount: 31000, currency: 'LKR', category: 'OtherIncome', frequency: 'monthly', nextDate: due, anchorDay: addDays(new Date(), 3).getDate(), autoLog: false, accountId: 'acc-tm', createdAt: 1 });
+        g('saveState')();
+        // The bank SMS comes today at 11:05, three days before it was expected.
+        const t0 = Date.now();
+        const sms = g('parseBankSms')({ id: `sms-${t0}-rent`, source: 'sms', address: 'BOC', body: 'Transfer Credit Rs 31000.00 To A/C No XXXXXXXXXX559. Balance available Rs 32000.00 - Thank you for banking with BOC', date: t0 });
+        sms.time = '11:05';
+        const rec = g('smsApply')(sms, 'acc-tm'); await wait(400);
+        const bill = s().recurring.find((b) => b.id === 'rent-in');
+        const settled = rec && rec.type === 'income' && rec.recurringId === 'rent-in' && bill.nextDate > due && rec.time === '11:05';
+        const notExpected = !g('paymentItems')().some((i) => i.key === 'bill:rent-in' && i.due === due);
+        // An 8 AM purchase entered later is already in the 11 AM balance; one at noon is not.
+        const early = g('beforeBalanceFor')('acc-tm', today, '08:00');
+        const late = g('beforeBalanceFor')('acc-tm', today, '12:00');
+        // Lists: newest first by time on the same day.
+        const order = g('sortByNewest')([{ id: 'a', date: today, time: '08:00', createdAt: 9 }, { id: 'b', date: today, time: '11:05', createdAt: 1 }]).map((x) => x.id).join('');
+        st.transactions = st.transactions.filter((t) => t.accountId !== 'acc-tm');
+        st.recurring = st.recurring.filter((b) => b.id !== 'rent-in');
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-tm');
+        g('saveState')();
+        return (settled && notExpected && early && !late && order === 'ba') || `settled ${settled} (${rec && rec.type}, ${rec && rec.recurringId}, next ${bill && bill.nextDate}, time ${rec && rec.time}), not expected any more ${notExpected}, 8am before ${early}, noon before ${late}, order ${order}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

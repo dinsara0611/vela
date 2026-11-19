@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.51.5">
+    <link rel="stylesheet" href="style.css?v=4.52.0">
 </head>
 <body data-view="dashboard">
 
@@ -811,8 +811,8 @@
                         <button class="switch" type="button" role="switch" aria-checked="false" id="tx-trip" aria-labelledby="tx-trip-name"></button>
                     </div>
                     <div class="field">
-                        <label class="field-label" for="tx-date">Date</label>
-                        <input type="date" id="tx-date" class="input" required>
+                        <label class="field-label" for="tx-date">Date and time</label>
+                        <div class="date-time"><input type="date" id="tx-date" class="input" required><input type="time" id="tx-time" class="input" aria-label="Time (optional)"></div>
                         <span class="field-hint date-hint" id="tx-date-hint" hidden></span>
                     </div>
                     <div class="field" id="tx-status-field">
@@ -1951,7 +1951,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.51.5"></script>
+    <script src="app.js?v=4.52.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

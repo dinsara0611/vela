@@ -4944,3 +4944,5 @@ body.approve-waiting { overflow: hidden; }
 .approve-wait { z-index: 600; }
 .mfa-overlay { z-index: 650; }
 .budget-source.is-short { color: var(--warning); }
+/* Date and time side by side in the entry form */
+.date-time { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr); gap: 8px; }
