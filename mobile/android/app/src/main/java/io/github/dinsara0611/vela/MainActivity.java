@@ -15,6 +15,8 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(SmsReaderPlugin.class);
         // Screen privacy: black in screenshots, recent apps and Circle to Search (Settings can turn it off).
         registerPlugin(ScreenPrivacyPlugin.class);
+        // Home-screen widget with balances (the app sends it the figures).
+        registerPlugin(BalanceWidgetPlugin.class);
         ScreenPrivacyPlugin.apply(this, ScreenPrivacyPlugin.isOn(this));
         // Android 15+ draws apps edge to edge; Vela's layout pads for the status and navigation bars.
         EdgeToEdge.enable(this);

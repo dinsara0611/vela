@@ -2837,6 +2837,24 @@ export async function run() {
         return (notLogged && expected && counted) || `not logged ${notLogged}, expected ${expected}, counted ${counted} (${rec && rec.recurringId}, before ${rec && rec.beforeBalance}, time ${rec && rec.time}, balance ${bal})`;
     });
 
+    await T('Goal says when it will be reached (Rs. 2,000 a month for Rs. 400,000 = 200 months); entries of a bill show its account number', async () => {
+        const st = s();
+        const keepSav = st.savings;
+        st.savings = [...keepSav, { id: 'eta-g', name: 'PS5 Pro', target: 400000, saved: 0, currency: 'LKR', deadline: null, accountId: null, monthly: 2000, months: {}, createdAt: 1 }];
+        st.recurring.push({ id: 'eta-ceb', type: 'expense', name: 'CEB', amount: 1560, currency: 'LKR', category: 'Utilities', frequency: 'monthly', nextDate: iso(addDays(new Date(), 20)), anchorDay: 1, autoLog: false, accountId: 'acc-cash', ref: '0412345678', createdAt: 1 });
+        st.transactions.push({ id: 'eta-tx', type: 'expense', desc: 'CEB', amount: 1560, currency: 'LKR', category: 'Utilities', date: today, note: '', createdAt: 1, accountId: 'acc-cash', recurringId: 'eta-ceb' });
+        g('saveState')();
+        g('goToPlan')('goals'); await wait(300);
+        const eta = /reached in 200 months/.test($('plan-content').textContent);
+        const row = g('txRow')(s().transactions.find((t) => t.id === 'eta-tx'));
+        const acc = /Acc 0412345678/.test(row);
+        st.savings = keepSav;
+        st.recurring = st.recurring.filter((b) => b.id !== 'eta-ceb');
+        st.transactions = st.transactions.filter((t) => t.id !== 'eta-tx');
+        g('saveState')();
+        return (eta && acc) || `finish date shown ${eta}, account number on the entry ${acc}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

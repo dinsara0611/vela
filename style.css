@@ -5016,3 +5016,4 @@ body.approve-waiting { overflow: hidden; }
 .cover-opt:disabled { opacity: 0.5; cursor: default; }
 .cover-opt .row-icon { width: 30px; height: 30px; }
 .cover-opt > .ic { color: var(--text-3); }
+.goal-eta[data-late="true"] .ic { color: var(--warning); }

@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.57.0';
+const APP_VERSION = '4.58.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1583,6 +1583,31 @@ const renderActive = () => {
     balanceMemo = new Map();
     viewTxMemo = new Map();
     try { renderActiveNow(); } finally { balanceMemo = null; viewTxMemo = null; }
+    pushWidget();
+};
+// The Android home-screen widget: total and the four biggest accounts, already formatted. The widget hides
+// the amounts itself (eye button, hidden by default). Sent a moment after the screen settles.
+let widgetTimer = null;
+const pushWidget = () => {
+    const w = nativePlugin('BalanceWidget');
+    if (!w) return;
+    clearTimeout(widgetTimer);
+    widgetTimer = setTimeout(() => {
+        try {
+            if (state.auth.isMock && !state.auth.completedOnboarding) { w.clear().catch(() => {}); return; }
+            const cur = dcur();
+            const accs = state.accounts.map((a) => { const v = toDisplay(accountBalance(a), a.currency); return { name: a.name, amount: formatCurrency(v, cur), minus: v < -0.004, v }; })
+                .sort((x, y) => Math.abs(y.v) - Math.abs(x.v)).slice(0, 4).map(({ v, ...r }) => r);
+            const total = netWorth();
+            const data = {
+                title: state.accounts.length > 1 ? 'All accounts' : ((state.accounts[0] || {}).name || 'Vela'),
+                total: formatCurrency(total, cur), minus: total < -0.004,
+                accounts: state.accounts.length > 1 ? accs : [],
+                updated: `Updated ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
+            };
+            w.update({ data: JSON.stringify(data) }).catch(() => {});
+        } catch (e) { /* the widget is extra: never break the app */ }
+    }, 800);
 };
 const renderActiveNow = () => {
     renderViewBar();
@@ -2235,7 +2260,7 @@ const txRow = (t, { showDate = true, withAccount = viewId() === 'all' && state.a
     const signed = formatSigned(t.type === 'income' ? value : -value, dcur());
     const orig = t.fx ? `<span class="tx-orig-inline">${escapeHtml(fxNote(t))}</span>` : t.currency !== dcur() ? `<span class="tx-orig-inline">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>` : '';
     const sec = t.sectionId ? secById(t.sectionId) : null;
-    const label = `${accName ? `${t.type === 'income' ? 'Into' : 'From'} ${accName} · ` : ''}${showDate ? cat.name : (t.note || cat.name)}${sec ? ` · ${sec.name}` : ''}${t.beforeBalance ? ' · before balance date' : ''}`;
+    const label = `${accName ? `${t.type === 'income' ? 'Into' : 'From'} ${accName} · ` : ''}${showDate ? cat.name : (t.note || cat.name)}${sec ? ` · ${sec.name}` : ''}${(() => { const b = t.recurringId && state.recurring.find((x) => x.id === t.recurringId); return b && b.ref ? ` · Acc ${b.ref}` : ''; })()}${t.beforeBalance ? ' · before balance date' : ''}`;
     const st = t.pending ? payStatus(t.date) : null;
     const waitingStrip = t.pending ? `<div class="tx-confirm" data-status="${st}"><span>${st === 'overdue' ? `${t.type === 'income' ? 'Expected' : 'Was due'} ${escapeHtml(shortDate(t.date))}` : st === 'due' ? (t.type === 'income' ? 'Expected today' : 'Due today') : `Due ${escapeHtml(shortDate(t.date))}`}</span><button type="button" class="btn btn-xs ${t.type === 'income' ? 'btn-income' : 'btn-primary'}" data-pay="tx:${escapeHtml(t.id)}">${icon('i-check', 'ic ic-sm')} ${t.type === 'income' ? 'Mark as received' : 'Mark as paid'}</button></div>` : '';
     return `<li class="${t.pending ? 'tx-li-pending' : ''}"><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
@@ -4892,6 +4917,15 @@ const planGoalsHtml = () => {
             else if (daysBetween(now, end) >= 0) hint = `${icon('i-calendar')} Due ${escapeHtml(shortDate(g.deadline))}: ${escapeHtml(formatDisplay(remaining, g.currency))} to go`;
             else hint = `${icon('i-alert')} Target date passed`;
         } else hint = `${icon('i-target')} ${escapeHtml(formatDisplay(remaining, g.currency))} to go`;
+        // Saving every month: when it will be reached at this pace.
+        const eta = !done && g.monthly > 0 ? (() => {
+            const n = Math.ceil(remaining / g.monthly);
+            const d = new Date();
+            d.setMonth(d.getMonth() + n);
+            const when = d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+            const ahead = g.deadline && toISODate(d) > g.deadline;
+            return `<div class="goal-hint goal-eta" data-late="${!!ahead}">${icon('i-calendar')} At ${escapeHtml(formatDisplay(g.monthly, g.currency))} a month: reached in ${plural(n, 'month')}, around <strong>${escapeHtml(when)}</strong>${ahead ? ` (after your date: save ${escapeHtml(formatDisplay(goalSuggestMonthly(g.target, g.saved, g.deadline), g.currency))} a month to make it)` : ''}</div>`;
+        })() : '';
         const mon = goalMonthly(g);
         const inMon = goalSavedThisMonth(g);
         const monLine = mon > 0 ? `<div class="goal-month" data-done="${inMon >= mon - 0.004}">${icon(inMon >= mon - 0.004 ? 'i-check' : 'i-calendar', 'ic ic-sm')}<span>${inMon >= mon - 0.004 ? `Saved ${escapeHtml(formatDisplay(inMon, g.currency))} this month. Done for ${escapeHtml(new Date().toLocaleDateString(undefined, { month: 'long' }))}` : `${escapeHtml(formatDisplay(mon, g.currency))} a month from your budget · ${escapeHtml(formatDisplay(inMon, g.currency))} saved this month`}</span></div>` : '';
@@ -4900,6 +4934,7 @@ const planGoalsHtml = () => {
             <div class="goal-figures"><span class="amount">${escapeHtml(formatDisplay(g.saved, g.currency))}</span><span>of ${escapeHtml(formatDisplay(g.target, g.currency))}</span></div>
             ${meterHtml(p, done ? 'done' : null, `${g.name} progress`)}
             <div class="goal-hint">${hint}</div>
+            ${eta}
             ${monLine}
             ${g.fundId && secById(g.fundId) ? `<div class="goal-hint">${icon('i-wallet')} Kept in the ${escapeHtml(secById(g.fundId).name)} fund · ${escapeHtml(formatCurrency(sectionBalances()[g.fundId] || 0, cur))} there</div>` : ''}
             <div class="row-actions">
@@ -9045,6 +9080,7 @@ const finishSession = async (user) => {
 };
 
 const resetToSignedOut = () => {
+    { const w = nativePlugin('BalanceWidget'); if (w) w.clear().catch(() => {}); }
     handledUserId = null;
     state.transactions = [];
     state.savings = [];

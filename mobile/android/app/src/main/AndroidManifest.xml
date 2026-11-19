@@ -52,6 +52,14 @@
         <!-- "Ignore" on a bank notification (only Vela's own notifications can reach it). -->
         <receiver android:name=".NotificationActionReceiver" android:exported="false" />
 
+        <!-- Home-screen widget: balances with a button that hides the amounts. -->
+        <receiver android:name=".BalanceWidget" android:exported="false" android:label="Vela balances">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/balance_widget_info" />
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
