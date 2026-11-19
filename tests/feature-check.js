@@ -2909,6 +2909,30 @@ export async function run() {
         return (autoPicked && made && started && shows && two && ended) || `3 picked for Koko ${autoPicked}, plan made ${made}, started last month ${started}, shows part 2 of 3 ${shows}, part 2 counted ${two}, ended after part 3 ${ended}`;
     });
 
+    await T('Bill number read from the SMS itself: phone number of a phone bill / reload, CEB account; shown, saved, learned by the bill', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-br', name: 'Ref Bank', kind: 'bank', currency: 'LKR', opening: 50000, createdAt: 0 });
+        st.recurring.push({ id: 'br-dlg', type: 'expense', name: 'Dialog', amount: 1742, currency: 'LKR', category: 'Utilities', frequency: 'monthly', nextDate: iso(addDays(new Date(), 3)), anchorDay: 1, autoLog: false, accountId: 'acc-br', createdAt: 1 });
+        g('saveState')();
+        const t0 = Date.now();
+        const P2 = (n, a, b) => g('parseBankSms')({ id: `sms-${t0}-${n}`, source: 'sms', address: a, body: b, date: t0 + n });
+        const a = P2(1, 'COMBANK', 'Your bill payment of LKR 1,742.00 to DIALOG for 0771234567 was successful from A/C ...1234.');
+        const b = P2(2, 'COMBANK', 'Bill payment of LKR 2,100.00 to Mobitel mobile +94 71 234 5678 successful. A/C 8001XXXX567');
+        const c = P2(3, 'BOC', 'CEB bill payment Rs 1560.00 for account 0412345678 from A/C No XXXXXXXXXX559. Balance available Rs 878.90');
+        const d = P2(4, 'COMBANK', 'Purchase at KEELLS SUPER for LKR 3,450.00 on card ending 4321');
+        const read = a.billRef === '0771234567' && b.billRef === '0712345678' && c.billRef === '0412345678' && !d.billRef;
+        const card = /Phone 0771234567/.test(g('smsCardHtml')(a));
+        const rec = g('smsApply')(a, 'acc-br'); await wait(300);
+        const saved = rec && rec.billRef === '0771234567';
+        const learned = s().recurring.find((x) => x.id === 'br-dlg').ref === '0771234567' && rec.recurringId === 'br-dlg';
+        const row = /Phone 0771234567/.test(g('txRow')(rec));
+        st.transactions = st.transactions.filter((t) => t.accountId !== 'acc-br');
+        st.recurring = st.recurring.filter((x) => x.id !== 'br-dlg');
+        st.accounts = st.accounts.filter((x) => x.id !== 'acc-br');
+        g('saveState')();
+        return (read && card && saved && learned && row) || `read ${read} (${a.billRef}, ${b.billRef}, ${c.billRef}, shop ${d.billRef}), card ${card}, saved ${saved}, bill learned ${learned}, row ${row}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

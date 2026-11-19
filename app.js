@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.59.0';
+const APP_VERSION = '4.59.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -716,6 +716,7 @@ const normalizeTx = (t, forcedType) => {
         ...(cleanDate(t.dueDate) ? { dueDate: cleanDate(t.dueDate) } : {}),
         ...(cleanTime(t.time) ? { time: cleanTime(t.time) } : {}),
         ...(type === 'expense' && t.feeFor ? { feeFor: String(t.feeFor).slice(0, 64) } : {}),
+        ...(type === 'expense' && typeof t.billRef === 'string' && t.billRef.trim() ? { billRef: t.billRef.trim().slice(0, 40) } : {}),
         ...(type === 'expense' && t.feeEstimated === true ? { feeEstimated: true } : {}),
         ...(type === 'income' && typeof t.inBudget === 'boolean' ? { inBudget: t.inBudget } : {}),
         ...(typeof t.paidAt === 'string' && !isNaN(Date.parse(t.paidAt)) ? { paidAt: t.paidAt } : {}),
@@ -2291,7 +2292,7 @@ const txRow = (t, { showDate = true, withAccount = viewId() === 'all' && state.a
     const signed = formatSigned(t.type === 'income' ? value : -value, dcur());
     const orig = t.fx ? `<span class="tx-orig-inline">${escapeHtml(fxNote(t))}</span>` : t.currency !== dcur() ? `<span class="tx-orig-inline">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>` : '';
     const sec = t.sectionId ? secById(t.sectionId) : null;
-    const label = `${accName ? `${t.type === 'income' ? 'Into' : 'From'} ${accName} · ` : ''}${showDate ? cat.name : (t.note || cat.name)}${sec ? ` · ${sec.name}` : ''}${(() => { const b = t.recurringId && state.recurring.find((x) => x.id === t.recurringId); return b && b.ref ? ` · ${refLabel(b.ref)}` : ''; })()}${t.beforeBalance ? ' · before balance date' : ''}`;
+    const label = `${accName ? `${t.type === 'income' ? 'Into' : 'From'} ${accName} · ` : ''}${showDate ? cat.name : (t.note || cat.name)}${sec ? ` · ${sec.name}` : ''}${(() => { const b = t.recurringId && state.recurring.find((x) => x.id === t.recurringId); return b && b.ref ? ` · ${refLabel(b.ref)}` : t.billRef ? ` · ${refLabel(t.billRef)}` : ''; })()}${t.beforeBalance ? ' · before balance date' : ''}`;
     const st = t.pending ? payStatus(t.date) : null;
     const waitingStrip = t.pending ? `<div class="tx-confirm" data-status="${st}"><span>${st === 'overdue' ? `${t.type === 'income' ? 'Expected' : 'Was due'} ${escapeHtml(shortDate(t.date))}` : st === 'due' ? (t.type === 'income' ? 'Expected today' : 'Due today') : `Due ${escapeHtml(shortDate(t.date))}`}</span><button type="button" class="btn btn-xs ${t.type === 'income' ? 'btn-income' : 'btn-primary'}" data-pay="tx:${escapeHtml(t.id)}">${icon('i-check', 'ic ic-sm')} ${t.type === 'income' ? 'Mark as received' : 'Mark as paid'}</button></div>` : '';
     return `<li class="${t.pending ? 'tx-li-pending' : ''}"><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
@@ -3370,6 +3371,7 @@ const parseBankSms = (msg) => {
         shape: hashToInt(body.toLowerCase().replace(/\d+/g, '#')), // the wording without its numbers
         arrivedAt: Number(msg.date) || Date.now(), fromMessage: when.fromMessage || !shared,
         ...smsFeeFacts(type, kind.kind, t, body, bankName),
+        ...(smsBillRef(type, kind.kind, t, body) ? { billRef: smsBillRef(type, kind.kind, t, body) } : {}),
         refKeys: [...new Set((body.match(/\d[\d -]{4,18}\d/g) || []).map((n) => refDigits(n)).filter((n) => n.length >= 6 && n.length <= 16).map((n) => hashToInt(n)))].slice(0, 8)
     };
 };
@@ -3437,6 +3439,28 @@ const replaceEstimatedFee = (i, accountId) => {
     saveState();
     renderActive();
     return est;
+};
+// The number a bill payment was for: a phone number (reload, Dialog / Mobitel / SLT bill) or the utility's account
+// number (CEB, LECO, Water Board). Your own bank account (written with X's) and amounts or dates are never taken.
+const BILL_WORDS = /\b(bill|reload|top-?up|recharge|ceb|leco|nwsdb|water ?board|water|electricity|dialog|mobitel|slt|hutch|airtel|telecom|peo ?tv|broadband|utility)\b/i;
+const smsBillRef = (type, kind, t, body) => {
+    if (type !== 'expense' || !(kind === 'bill' || kind === 'online' || kind === 'debit' || BILL_WORDS.test(t))) return null;
+    if (!BILL_WORDS.test(t)) return null;
+    // A mobile number in any form: 0771234567, 077 123 4567, +94 77 123 4567, 94771234567.
+    const ph = body.match(/(?:\+?94[\s-]?|0)7\d[\s-]?\d{3}[\s-]?\d{4}\b/);
+    if (ph) { const d = ph[0].replace(/\D/g, ''); return `0${d.slice(-9)}`; }
+    // An account number after "a/c", "acc", "account", "for", "no", "ref" (not the bank account with X's).
+    const re = /\b(?:a\/?c(?:count)?|acc(?:ount)?|acct|for|no|number|ref(?:erence)?|consumer|customer)\.?\s*(?:no\.?|number|#)?\s*[:\-]?\s*((?:\d[\d\s\/-]{4,20}\d))(?![\d.,]*\s*(?:lkr|rs))/gi;
+    let m;
+    while ((m = re.exec(body))) {
+        const raw = m[1];
+        const d = raw.replace(/\D/g, '');
+        if (d.length < 6 || d.length > 16) continue;
+        if (/[xX*]/.test(body.slice(Math.max(0, m.index), m.index + m[0].length + 2))) continue;
+        if (/^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/.test(raw.trim())) continue; // a date
+        return raw.trim().replace(/\s+/g, ' ');
+    }
+    return null;
 };
 const SMS_CHECK_SHARED = 'pasted or shared message, so check it matches your bank app';
 const SOURCE_NAMES = { sms: 'SMS', notification: 'Bank notification', shared: 'Shared or pasted' };
@@ -3592,7 +3616,7 @@ const smsMatchFor = (i) => {
 
 const smsBillPick = {};
 const smsPartsPick = {};
-const smsBillCandidates = (i) => {
+const smsBillCandidatesBase = (i) => {
     // (bills that wait for you: income always, expenses that don't log themselves)
     if (!i || i.type !== 'expense') return [];
     const word = (x) => String(x || '').toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)[0] || '';
@@ -3600,6 +3624,11 @@ const smsBillCandidates = (i) => {
     const w = word(i.merchant || i.desc);
     return state.recurring.filter((b) => b.type === 'expense' && !b.autoLog
         && ((bSlug && (brandFor(b.name) || {}).slug === bSlug) || (w.length >= 3 && word(b.name) === w)));
+};
+const smsBillCandidates = (i) => {
+    const list = smsBillCandidatesBase(i);
+    const key = i && i.billRef ? billRefKey(i.billRef) : null;
+    return key ? list.sort((a, b) => (billRefKey(b.ref) === key) - (billRefKey(a.ref) === key)) : list;
 };
 const smsCardHtml = (i) => {
     const match = smsMatchFor(i);
@@ -3645,6 +3674,7 @@ const smsCardHtml = (i) => {
             const pick = smsPartsPick[i.id] || 0;
             return [['Paid in parts?', `<span class="fee-pick" role="group" aria-label="Paid in parts">${[0, 3, 4, 6].map((n) => `<button type="button" class="chip-btn" data-sms-parts="${escapeHtml(i.id)}:${n}" aria-pressed="${pick === n}">${n ? `${n} parts` : 'No, one payment'}</button>`).join('')}</span>`]];
         })() : []),
+        ...(i.billRef ? [['Paid for', `<strong>${escapeHtml(refLabel(i.billRef))}</strong>`]] : []),
         ...(i.ref ? [['Reference', escapeHtml(i.ref)]] : []),
         ['Detected through', `<span class="sms-sources">${sourceList(i).map((s) => `<span class="sms-source" data-source="${s}">${escapeHtml(SOURCE_NAMES[s] || s)}</span>`).join('<span class="faint" aria-hidden="true">+</span>')}</span>`]
     ];
@@ -3825,7 +3855,13 @@ const smsApply = (i, accountId) => {
     rec.pending = false; // it already happened: the bank says so
     rec.bank = bankMeta(i);
     if (i.feeKind === 'transfer' && acc) addBankFee(i, acc, rec.id);
+    if (i.billRef) rec.billRef = i.billRef;
     const matched = settleExpectedWith(rec, i.refKeys || [], smsBillPick[i.id] || null);
+    // The bill it paid didn't know its number yet: learn it, so next month's SMS finds it by itself.
+    if (i.billRef && rec.recurringId) {
+        const b = state.recurring.find((x) => x.id === rec.recurringId);
+        if (b && !b.ref) { b.ref = i.billRef; queueSync('recurring', b.id, 'upsert', false); }
+    }
     // Koko / Mintpay first part: the rest of the plan is expected every month.
     if (!matched && smsPartsPick[i.id] >= 2 && i.type === 'expense') {
         const plan = makePlan({ name: rec.desc, amount: rec.amount, currency: rec.currency, category: rec.category, accountId, firstDate: rec.date, count: smsPartsPick[i.id], done: 1 });
