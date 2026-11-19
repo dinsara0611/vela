@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.53.0">
+    <link rel="stylesheet" href="style.css?v=4.53.1">
 </head>
 <body data-view="dashboard">
 
@@ -806,6 +806,10 @@
                         <div class="setting-text"><span class="setting-title">Already in my balance</span><span class="setting-desc" id="tx-before-desc"></span></div>
                         <button class="switch" type="button" role="switch" aria-checked="false" id="tx-before" aria-label="Already in my balance"></button>
                     </div>
+                    <div class="setting-row tx-inbudget-row" id="tx-inbudget-row" hidden>
+                        <div class="setting-text"><span class="setting-title">Count in my budget</span><span class="setting-desc" id="tx-inbudget-desc"></span></div>
+                        <button class="switch" type="button" role="switch" aria-checked="true" id="tx-inbudget" aria-label="Count in my budget"></button>
+                    </div>
                     <div class="setting-row tx-trip-row" id="tx-trip-row" hidden>
                         <div class="setting-text"><span class="setting-title" id="tx-trip-name">Part of the trip</span><span class="setting-desc">Counts in the trip's total.</span></div>
                         <button class="switch" type="button" role="switch" aria-checked="false" id="tx-trip" aria-labelledby="tx-trip-name"></button>
@@ -1524,6 +1528,7 @@
                 <div class="field" id="sec-move-to-field"><label class="field-label" for="sec-move-to" id="sec-move-to-label">To</label><div class="select"><select id="sec-move-to" class="input"></select></div></div>
                 <div class="field" id="sec-move-amount-field"><label class="field-label" for="sec-move-amount">Amount</label><input type="text" id="sec-move-amount" class="input money-input" inputmode="decimal" placeholder="0.00" autocomplete="off"></div>
                 <div class="field sec-split" id="sec-move-split" hidden></div>
+                <button type="button" class="chip-btn sec-move-all" id="sec-move-all" hidden></button>
                 <div class="field-row">
                     <div class="field"><label class="field-label" for="sec-move-date">Date</label><input type="date" id="sec-move-date" class="input"></div>
                     <div class="field"><label class="field-label" for="sec-move-note">Note <span class="faint">(optional)</span></label><input type="text" id="sec-move-note" class="input" maxlength="120" placeholder="e.g. food money" autocomplete="off"></div>
@@ -1957,7 +1962,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.53.0"></script>
+    <script src="app.js?v=4.53.1"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

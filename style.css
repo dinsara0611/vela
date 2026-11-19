@@ -4955,3 +4955,6 @@ body.approve-waiting { overflow: hidden; }
 .inc-part[aria-pressed="false"] { opacity: 0.6; }
 .inc-part[aria-pressed="false"] .ic { color: var(--text-3); }
 .inc-part[aria-pressed="false"] strong { text-decoration: line-through; }
+
+.sec-move-all { justify-self: start; margin-top: -4px; }
+.sec-home .fund-short { margin: 0 0 var(--sp-3); }

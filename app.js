@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.53.0';
+const APP_VERSION = '4.53.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -715,6 +715,7 @@ const normalizeTx = (t, forcedType) => {
         // (without these, a restart forgot an entry came from a bank SMS and the same SMS could be added again).
         ...(cleanDate(t.dueDate) ? { dueDate: cleanDate(t.dueDate) } : {}),
         ...(cleanTime(t.time) ? { time: cleanTime(t.time) } : {}),
+        ...(type === 'income' && typeof t.inBudget === 'boolean' ? { inBudget: t.inBudget } : {}),
         ...(typeof t.paidAt === 'string' && !isNaN(Date.parse(t.paidAt)) ? { paidAt: t.paidAt } : {}),
         ...(normalizeBankMeta(t.bank) ? { bank: normalizeBankMeta(t.bank) } : {}),
         ...(type === 'expense' && t.tripId ? { tripId: String(t.tripId).slice(0, 64) } : {}),
@@ -1806,7 +1807,7 @@ function allAccountsBudget(y, m) {
         const b = a.id === v ? budgetSnapshot() : (state.config.accountBudgets || {})[a.id];
         if (!b) return sum;
         const balanceWay = () => {
-            const spentHere = sumDisplay(state.transactions.filter((t) => t.type === 'expense' && t.accountId === a.id && inMonth(t, y, m) && !isUpcoming(t) && !t.beforeBalance)); // only spending that came out of the balance
+            const spentHere = sumDisplay(state.transactions.filter((t) => t.type === 'expense' && t.accountId === a.id && inMonth(t, y, m) && !isUpcoming(t))); // everything spent this month: left = what the account has now
             return Math.max(0, toDisplay(accountBalance(a), a.currency) + spentHere);
         };
         if (b.budgetMode === 'balance') return sum + balanceWay();
@@ -1848,12 +1849,12 @@ const setBudgetCurrency = (to) => {
 const incomeGroup = (t) => (t.bank && (t.bank.kind === 'refund' || t.bank.kind === 'deposit') ? `sms:${t.bank.kind}` : t.category);
 const DEFAULT_SKIP_INCOME = ['sms:refund', 'sms:deposit'];
 const budgetSkips = () => (Array.isArray(state.config.budgetSkipIncome) ? state.config.budgetSkipIncome : DEFAULT_SKIP_INCOME);
-const countsForBudget = (t, skip = budgetSkips()) => !skip.includes(incomeGroup(t));
+const countsForBudget = (t, skip = budgetSkips()) => (typeof t.inBudget === 'boolean' ? t.inBudget : !skip.includes(incomeGroup(t)));
 const incomeGroupName = (g) => (g === 'sms:refund' ? 'Refunds' : g === 'sms:deposit' ? 'Cash deposits (your own cash)' : (catById(g) || {}).name || g);
 const incomeCap = (y, m, spent, spentList) => {
     const now = new Date();
     if (y !== now.getFullYear() || m !== now.getMonth()) return Infinity;
-    return Math.max(0, viewBalance() + spent - sumDisplay(spentList.filter((e) => e.beforeBalance)));
+    return Math.max(0, viewBalance() + spent);
 };
 const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => {
     const list = viewTx().filter((t) => inMonth(t, y, m) && !isUpcoming(t));
@@ -1877,7 +1878,7 @@ const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => 
     // From the balance: what you can spend this month is what's in the account now plus what you already spent.
     const fromBalance = !scopeAll && (state.config.budgetMode === 'balance' || incomeFallback);
     const baseBudget = scopeAll ? allAccountsBudget(y, m)
-        : fromBalance ? Math.max(0, viewBalance() + spent - sumDisplay(spentList.filter((e) => e.beforeBalance)))
+        : fromBalance ? Math.max(0, viewBalance() + spent)
         : fromIncome ? Math.min(plannedIncome * (1 - state.config.budgetSavePct / 100), incomeCap(y, m, spent, spentList)) : budgetIn(state.config.budget, dcur());
     // Goals with a monthly saving: that money is kept aside, so the budget to spend is what's left after it.
     const now0 = new Date();
@@ -5160,6 +5161,7 @@ const setTxType = (type, keepCategory) => {
     updateTripRow();
     renderTxSections();
     updateBeforeRow();
+    updateInBudgetRow();
     updateChargedRow();
 };
 let txChargedTouched = false;
@@ -5185,6 +5187,16 @@ const updateChargedRow = () => {
 // recorded in history and spending without changing the balance again.
 let txBefore = false;
 let txBeforeTouched = false;
+let txInBudget = null; // null = the usual rule for its kind of income
+const updateInBudgetRow = () => {
+    const show = txType === 'income' && budgetOn() && state.config.budgetMode === 'income';
+    $('tx-inbudget-row').hidden = !show;
+    if (!show) return;
+    const cat = (document.querySelector('input[name="tx-category"]:checked') || {}).value;
+    const on = typeof txInBudget === 'boolean' ? txInBudget : !budgetSkips().includes(cat);
+    setSwitch($('tx-inbudget'), on);
+    $('tx-inbudget-desc').textContent = on ? 'This income adds to your monthly budget.' : 'Kept out of the budget (still in your balance and income).';
+};
 const updateBeforeRow = () => {
     const accId = $('tx-account').value || (state.accounts[0] && state.accounts[0].id);
     const acc = state.accounts.find((a) => a.id === accId);
@@ -5264,6 +5276,7 @@ const openAddTx = (type = 'expense') => {
     txTripId = tripIdFor(todayISO());
     txBefore = false;
     txBeforeTouched = false;
+    txInBudget = null;
     txChargedTouched = false;
     txSectionId = null;
     txSectionTouched = false;
@@ -5300,6 +5313,7 @@ const openEditTx = (id) => {
     txTripId = t.tripId || null;
     txBefore = t.beforeBalance === true;
     txBeforeTouched = true;
+    txInBudget = typeof t.inBudget === 'boolean' ? t.inBudget : null;
     txSectionId = t.sectionId && secById(t.sectionId) ? t.sectionId : null;
     txSectionTouched = true;
     setTxType(t.type, t.category);
@@ -5391,6 +5405,7 @@ const submitTx = async () => {
         const waiting = date > todayISO() || txWaiting;
         record = { ...prev, type: txType, desc, amount: saveAmount, currency: saveCurrency, category, date, note, accountId, receipt, fixed: txKind === 'fixed' || !!prev.recurringId, pending: waiting };
         if (cleanTime($('tx-time').value)) record.time = $('tx-time').value; else delete record.time;
+        if (txType === 'income' && typeof txInBudget === 'boolean') record.inBudget = txInBudget; else delete record.inBudget;
         if (fx) record.fx = fx; else delete record.fx;
         if (txType === 'expense' && txTripId) record.tripId = txTripId; else delete record.tripId;
         if (txType === 'expense' && txSectionId && secById(txSectionId)) record.sectionId = txSectionId; else delete record.sectionId;
@@ -5403,6 +5418,7 @@ const submitTx = async () => {
     } else {
         record = { id: generateId(), type: txType, desc, amount: saveAmount, currency: saveCurrency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txKind === 'fixed', pending: date > todayISO() || txWaiting };
         if (cleanTime($('tx-time').value)) record.time = $('tx-time').value;
+        if (txType === 'income' && typeof txInBudget === 'boolean') record.inBudget = txInBudget;
         if (fx) record.fx = fx;
         if (txType === 'expense' && txTripId) record.tripId = txTripId;
         if (txType === 'expense' && txSectionId && secById(txSectionId) && (txSectionTouched || (sectionBalances()[txSectionId] || 0) + 0.004 >= toDisplay(saveAmount, saveCurrency))) record.sectionId = txSectionId;
@@ -7269,6 +7285,7 @@ const openSecMove = (fromId, mode = 'move') => {
     if (mode === 'move' && $('sec-move-to').value === $('sec-move-from').value && secList().length > 1) $('sec-move-to').selectedIndex = (($('sec-move-from').selectedIndex) + 1) % secList().length;
     $('sec-move-amount').value = '';
     renderSecSplit();
+    updateAllFreeBtn();
     secMoveToken = generateId();
     $('sec-move-note').value = '';
     $('sec-move-date').value = todayISO();
@@ -7298,6 +7315,31 @@ const renderSecSplit = () => {
         return `<div class="split-row">${accountBadge(a, 'is-row', 'row-icon tint')}<span class="split-name"><span>${escapeHtml(a.name)}</span><span>${mode === 'add' ? 'free' : 'in this fund'}: ${escapeHtml(formatCurrency(avail, cur))}</span></span>
             <input type="text" inputmode="decimal" class="input split-amount" data-split-acc="${escapeHtml(a.id)}" placeholder="0" aria-label="Amount from ${escapeHtml(a.name)}"></div>`;
     }).join('')}<div class="split-total">Total <strong id="sec-split-total">${escapeHtml(formatCurrency(0, cur))}</strong></div>`;
+};
+// "All of it": every rupee of this fund's account(s) that is not in a fund yet.
+const fundFreeAll = (fund) => {
+    const accs = fundAccs(fund);
+    if (accs.length === 1) return Math.max(0, accountFreeMoney(accs[0]));
+    if (accs.length > 1) return round2(accs.reduce((a, id) => a + Math.max(0, accountFreeMoney(id)), 0));
+    const bal = sectionBalances();
+    return Math.max(0, round2(netWorth() - secList().reduce((a, x) => a + Math.max(0, bal[x.id] || 0), 0)));
+};
+const fillAllFree = () => {
+    const fund = secMoveFund();
+    if (!fund) return;
+    const rows = $('sec-move-split').hidden ? [] : [...document.querySelectorAll('#sec-move-split [data-split-acc]')];
+    if (rows.length) {
+        rows.forEach((i) => { const v = Math.max(0, accountFreeMoney(i.dataset.splitAcc)); i.value = v > 0 ? round2(v) : ''; });
+        $('sec-move-split').dispatchEvent(new Event('input'));
+    } else $('sec-move-amount').value = fundFreeAll(fund) || '';
+};
+const updateAllFreeBtn = () => {
+    const b = $('sec-move-all');
+    if (!b) return;
+    const fund = secMoveFund();
+    const v = fund && $('sec-move-mode').value === 'add' ? fundFreeAll(fund) : 0;
+    b.hidden = !(v > 0.004);
+    if (v > 0.004) b.textContent = `Add all the rest: ${formatCurrency(v, dcur())}`;
 };
 const updateSecMoveHint = () => {
     const mode = $('sec-move-mode').value;
@@ -7772,6 +7814,7 @@ const renderSectionsHome = () => {
         ${waiting.length ? `<button type="button" class="btn btn-primary btn-block sec-home-divide" data-sec-divide="${escapeHtml(waiting[0].id)}">Allocate ${escapeHtml(waiting[0].desc)} · ${escapeHtml(formatCurrency(waiting[0].amount, waiting[0].currency))}</button>` : ''}
         ${mine.some((x) => (bal[x.id] || 0) > 0) ? secStackBar(mine.map((x) => [x, Math.max(0, bal[x.id] || 0)])) : `<p class="fund-home-empty">Nothing in your funds yet. <button type="button" class="link-btn" data-action="sec-add-money">Add money</button></p>`}
         ${!viewing ? (() => { const diff = round2(netWorth() - secList().reduce((a, x) => a + (bal[x.id] || 0), 0)); return Math.abs(diff) < 0.005 ? '' : `<p class="fund-home-diff ${diff < 0 ? 'text-expense' : ''}">${diff > 0 ? `${escapeHtml(formatCurrency(diff, cur))} not in any fund` : `Funds hold ${escapeHtml(formatCurrency(-diff, cur))} more than your accounts`}</p>`; })() : ''}
+        ${mine.some((x) => (bal[x.id] || 0) < -0.004) ? `<div class="fund-short">${icon('i-alert', 'ic ic-sm')}<span><strong>${escapeHtml(formatCurrency(-mine.reduce((a, x) => a + Math.min(0, bal[x.id] || 0), 0), cur))} short</strong>: expenses were paid from funds before money was put in.</span><button type="button" class="btn btn-secondary btn-xs" data-fund-repair="all">Fix</button></div>` : ''}
         <div class="sec-chips">${mine.map((x) => `<button type="button" class="sec-chip${bal[x.id] < 0 ? ' is-below' : ''}" data-sec-view="${escapeHtml(x.id)}">${secBadge(x, ' is-mini')}<span><span>${escapeHtml(x.name)}</span><span class="amount ${bal[x.id] < 0 ? 'text-expense' : ''}">${escapeHtml(formatCompact(bal[x.id] || 0, cur))}</span></span></button>`).join('')}</div>
     </section>`;
     animateIn(el);
@@ -10116,7 +10159,8 @@ const initEvents = () => {
     $('switch-approval').addEventListener('click', toggleApproval);
     $('switch-secure-screen').addEventListener('click', toggleSecureScreen);
     initFundHold();
-    ['sec-move-from', 'sec-move-to'].forEach((id) => $(id).addEventListener('change', () => { updateSecMoveHint(); renderSecSplit(); }));
+    ['sec-move-from', 'sec-move-to'].forEach((id) => $(id).addEventListener('change', () => { updateSecMoveHint(); renderSecSplit(); updateAllFreeBtn(); }));
+    $('sec-move-all').addEventListener('click', fillAllFree);
     $('sec-move-split').addEventListener('input', (e) => {
         if (e.target && e.target.id === 'sec-split-all') {
             const parts = splitByShares(secMoveFund(), round2(Math.max(0, toNumber(e.target.value, 0))));
@@ -10148,6 +10192,8 @@ const initEvents = () => {
     });
     $('tx-trip').addEventListener('click', () => { txTripId = txTripId ? null : $('tx-trip').dataset.trip; updateTripRow(); });
     $('tx-before').addEventListener('click', () => { txBefore = !txBefore; txBeforeTouched = true; updateBeforeRow(); });
+    $('tx-inbudget').addEventListener('click', () => { txInBudget = !isOn($('tx-inbudget')); updateInBudgetRow(); });
+    document.addEventListener('change', (e) => { if (e.target && e.target.name === 'tx-category') updateInBudgetRow(); });
     $('tx-date').addEventListener('change', updateBeforeRow);
     $('tx-time').addEventListener('change', updateBeforeRow);
     $('tx-account').addEventListener('change', () => { updateBeforeRow(); txChargedTouched = false; updateChargedRow(); renderTxSections(); });

@@ -2142,7 +2142,7 @@ export async function run() {
         return (first === 6240 && shown && again.amount === 6300 && again.fx.fee === 5) || `first ${first}, placeholder ${$('account-fee').placeholder}, after ${again.amount} (fee ${again.fx.fee})`;
     });
 
-    await T('Maths: entries already in a balance are left out of this month change and the from-balance budget', async () => {
+    await T('Maths: entries already in a balance are left out of this month change; from-balance budget leaves exactly the balance', async () => {
         const st = s();
         st.accounts.push({ id: 'acc-mb', name: 'Math Bank', kind: 'bank', currency: 'LKR', opening: 40000, createdAt: 0 });
         const b = { note: '', recurringId: null, receipt: null, fixed: false, pending: false, currency: 'LKR', accountId: 'acc-mb', createdAt: Date.now() };
@@ -2157,7 +2157,8 @@ export async function run() {
         st.config.budgetMode = keepMode; g('saveState')();
         const balNow = g('viewBalance')();
         g('setViewAccount')('acc-cash');
-        return (change === -1000 && balNow === 39000 && ms.budget === 40000) || `change ${change}, balance ${balNow}, budget ${ms.budget}`;
+        // From balance: everything spent this month on both sides, so what's left is exactly the balance.
+        return (change === -1000 && balNow === 39000 && ms.budget === 43000 && ms.budget - ms.spent === 39000) || `change ${change}, balance ${balNow}, budget ${ms.budget}, left ${ms.budget - ms.spent}`;
     });
 
     await T('Clear all data (this phone): nothing of Vela is left on the phone', async () => {
@@ -2604,6 +2605,41 @@ export async function run() {
         st.config.budgetMode = keep.mode; st.config.budgetSkipIncome = keep.skip;
         g('setViewAccount')('all'); g('saveState')();
         return (planned === 70000 && parts === 3 && /74,000/.test(hint) && byRef) || `counted ${planned}, kinds ${parts}, hint "${hint}", CEB by account no ${byRef} (${rec && rec.recurringId}, shop ${shopNext}, home ${homeNext})`;
+    });
+
+    await T('Budget from balance: left = what the account has (spending before the balance date counted on both sides); income switch; add all the rest', async () => {
+        const st = s();
+        const d0 = iso(addDays(new Date(), -1));
+        st.accounts.push({ id: 'acc-bb', name: 'Bal Bank', kind: 'bank', currency: 'LKR', opening: 21648.52, createdAt: 0, balanceDate: today });
+        st.transactions.push(
+            { id: 'bb-sal', type: 'income', desc: 'Salary', amount: 70791.51, currency: 'LKR', category: 'Salary', date: d0, note: '', createdAt: 1, accountId: 'acc-bb', beforeBalance: true },
+            { id: 'bb-ex', type: 'expense', desc: 'Old spending', amount: 52942.99, currency: 'LKR', category: 'Other', date: d0, note: '', createdAt: 2, accountId: 'acc-bb', beforeBalance: true });
+        const keep = { mode: st.config.budgetMode, skip: st.config.budgetSkipIncome, sections: st.config.sections, moves: st.config.sectionMoves };
+        g('saveState')(); g('setViewAccount')('acc-bb'); await wait(150);
+        st.config.budgetMode = 'balance';
+        const m = g('monthStats')();
+        const leftIsBalance = Math.round((m.budget - m.spent) * 100) === 2164852;
+        // An income switched off in the entry form stays out of an income budget.
+        st.config.budgetMode = 'income';
+        g('openEditTx')('bb-sal'); await wait(300);
+        const shown = !$('tx-inbudget-row').hidden;
+        $('tx-inbudget').click();
+        g('submitTx')(); await wait(400);
+        const off = s().transactions.find((t) => t.id === 'bb-sal').inBudget === false && g('monthStats')().plannedIncome === 0;
+        // Funds: "Add all the rest" fills what is in no fund.
+        st.config.sections = [{ id: 'rest', name: 'Fun', mode: 'rest', value: 0, currency: 'LKR', color: 'violet', icon: 'i-wallet', accountIds: ['acc-bb'] }];
+        st.config.sectionMoves = [];
+        g('saveState')();
+        g('openSecMove')('rest', 'add'); await wait(300);
+        const btn = !$('sec-move-all').hidden && /21,648\.52/.test($('sec-move-all').textContent);
+        $('sec-move-all').click();
+        const filled = String($('sec-move-amount').value).replace(/,/g, '') === '21648.52';
+        await close('modal-sec-move');
+        st.transactions = st.transactions.filter((t) => t.accountId !== 'acc-bb');
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-bb');
+        st.config.budgetMode = keep.mode; st.config.budgetSkipIncome = keep.skip; st.config.sections = keep.sections; st.config.sectionMoves = keep.moves;
+        g('setViewAccount')('all'); g('saveState')();
+        return (leftIsBalance && shown && off && btn && filled) || `left = balance ${leftIsBalance} (${m.budget} - ${m.spent}), switch shown ${shown}, income off ${off}, add-all button ${btn}, filled ${filled}`;
     });
 
     // Cloud sync against a fake account.
