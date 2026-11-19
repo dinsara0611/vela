@@ -335,3 +335,45 @@ starlink | starlink | Starlink | Utilities | starlink.com
 @standardchartered | sc.com
 @ezcash | ezcash.lk
 @sdb | sdb.lk
+
+# ---- 4.57: more brands people in Sri Lanka pay often ----
+siyapatha | siyapatha | Siyapatha Finance | - | siyapatha.lk
+vallibelfinance | vallibel finance | Vallibel Finance | - | vallibelfinance.com
+hnbfinance | hnb finance | HNB Finance | - | hnbfinance.lk
+senkadagala | senkadagala|senfin | Senkadagala Finance | - | senfin.com
+alliancefinance | alliance finance | Alliance Finance | - | alliancefinance.lk
+mercantileinv | mercantile investments | Mercantile Investments | - | mi.com.lk
+commercialcredit | commercial credit | Commercial Credit | - | cclk.lk
+mbsl | mbsl\b|merchant bank of sri lanka | MBSL | - | mbslbank.com
+softlogicfinance | softlogic finance | Softlogic Finance | - | softlogicfinance.lk
+ipay | ipay\b | iPay | - | ipay.lk
+peoplesinsurance | people'?s insurance | People's Insurance | Other | peoplesinsurance.lk
+lolclife | lolc life | LOLC Life | Other | lolclifeassurance.com
+arpicoinsurance | arpico insurance | Arpico Insurance | Other | arpicoinsurance.com
+continentalins | continental insurance | Continental Insurance | Other | cilanka.com
+amanatakaful | amana takaful | Amana Takaful | Other | takaful.lk
+medihelp | medihelp | Medihelp Hospitals | Health | medihelp.lk
+oasishospital | oasis hospital | Oasis Hospital | Health | oasishospital.lk
+cottoncollection | cotton collection | Cotton Collection | Shopping | cottoncollection.lk
+kellyfelder | kelly felder | Kelly Felder | Shopping | kellyfelder.com
+beverlystreet | beverly street | Beverly Street | Shopping | beverlystreet.lk
+moose | moose clothing | Moose | Shopping | mooseclothing.com
+barefoot | barefoot ceylon|barefoot gallery | Barefoot | Shopping | barefootceylon.com
+vijithayapa | vijitha yapa | Vijitha Yapa | Shopping | vijithayapa.com
+sarasavi | sarasavi | Sarasavi Bookshop | Shopping | sarasavi.lk
+wowlk | wow\.lk | WOW.lk | Shopping | wow.lk
+singhagiri | singhagiri | Singhagiri | Shopping | singhagiri.lk
+isso | isso\b | Isso | Food | isso.lk
+teaavenue | tea avenue | Tea Avenue | Food | teaavenue.lk
+shanmugas | shanmugas | Shanmugas | Food | shanmugas.lk
+greencabin | green cabin | Green Cabin | Food | greencabin.lk
+delifrance | delifrance | Delifrance | Food | delifrance.lk
+cinnabon | cinnabon | Cinnabon | Food | cinnabon.com
+garena | garena | Garena | Entertainment | garena.com
+infinix | infinix | Infinix | Shopping | infinixmobility.com
+tecno | tecno mobile|tecno\b | Tecno | Shopping | tecno-mobile.com
+skechers | skechers | Skechers | Shopping | skechers.com
+crocs | crocs\b | Crocs | Shopping | crocs.com
+gymshark | gymshark | Gymshark | Shopping | gymshark.com
+@pickmefood | pickme.lk
+@scb | sc.com
