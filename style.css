@@ -4943,3 +4943,4 @@ body.approve-waiting { overflow: hidden; }
 /* The phone-approval screen and the code box must sit above the sign-in page (a new install shows it underneath) */
 .approve-wait { z-index: 600; }
 .mfa-overlay { z-index: 650; }
+.budget-source.is-short { color: var(--warning); }

@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.51.3';
+const APP_VERSION = '4.51.4';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2342,8 +2342,9 @@ const smsKindOf = (t) => {
     if (/\b(revers(al|ed)|reverted|void(ed)?|cancell?ed transaction|transaction cancell?ed|(ecom|pos|atm|txn|trx|pur) ?rev)\b/.test(t)) return SMS_KIND.reversal;
     if (/\brefund(ed)?\b/.test(t)) return SMS_KIND.refund;
     if (/\bthank you for (your |the )?payment\b|\bpayment\b.{0,60}\b(to|towards|for) (your )?(cc-card|card)\b|\bcard (re)?payment\b|\bcc-card (bill )?(payment|settlement)\b/.test(t)) return SMS_KIND.card_payment;
-    const cr = t.search(/\b(credited|credit (for|of))\b/);
-    const dr = t.search(/\b(debited|debit (for|of)|deducted|charged|withdrawn)\b/);
+    // "Transfer Credit Rs 5000.00 To A/C …" (BOC) is money coming in; "CEFT Transfer Debit Rs …" money going out.
+    const cr = t.search(/\b(credited|credit (for|of)|(transfer|ceft|slips|fund|funds|inward|direct|online|ib) credit|credit (rs|lkr|usd|inr)\b)/);
+    const dr = t.search(/\b(debited|debit (for|of)|deducted|charged|withdrawn|(transfer|ceft|slips|fund|funds|outward|direct|online|ib) debit|debit (rs|lkr|usd|inr)\b)/);
     const dir = cr >= 0 && (dr < 0 || cr < dr) ? 'in' : dr >= 0 ? 'out' : null;
     if (/\b((service|annual|sms|alert|ledger|maintenance|card|stamp|commission|bank|atm)[ -]?(fee|fees|charge|charges)|charges? (of|debited|levied)|fee (of|debited))\b/.test(t)) return SMS_KIND.fee;
     if (dir !== 'out' && /\b(int\.? ?pd|interest (paid|credited|credit|payment))\b/.test(t)) return SMS_KIND.interest;
@@ -4330,9 +4331,15 @@ const renderDashboard = () => {
     $('dash-budget-meter').setAttribute('aria-valuenow', String(Math.round(Math.min(100, s.budgetPct))));
     $('dash-budget-desc').textContent = `${Math.round(s.budgetPct)}% of ${fitMoney(s.budget, cur, 11)} budget${s.fromBalance ? ' (from balance)' : s.fromIncome ? ' (from income)' : ''}`;
     const left = s.budget - s.spent;
-    $('dash-budget-left').innerHTML = left >= 0
-        ? `<strong>${escapeHtml(fitMoney(left, cur, 12))}</strong> left`
-        : `<strong>${escapeHtml(fitMoney(-left, cur, 12))}</strong> over`;
+    // A budget can't be spent before the money is there: until the income arrives, "left" is what the account has.
+    const haveNow = Math.max(0, round2(viewBalance()));
+    const shortOfMoney = left > 0 && haveNow < left - 0.004 && !s.fromBalance;
+    $('dash-budget-left').innerHTML = shortOfMoney
+        ? `<strong>${escapeHtml(fitMoney(haveNow, cur, 12))}</strong> to spend now`
+        : left >= 0
+            ? `<strong>${escapeHtml(fitMoney(left, cur, 12))}</strong> left`
+            : `<strong>${escapeHtml(fitMoney(-left, cur, 12))}</strong> over`;
+    $('dash-budget-left').title = shortOfMoney ? `${formatCurrency(left, cur)} of the budget is left, but only ${formatCurrency(haveNow, cur)} is in the account until your income arrives.` : '';
 
     const savedTotal = viewGoals().reduce((sum, g) => sum + toDisplay(g.saved, g.currency), 0);
     setMoney($('dash-total-savings'), savedTotal, cur, 12);
@@ -4577,6 +4584,7 @@ const planBudgetsHtml = () => {
         <div class="card-head"><h2 class="card-title">Monthly budget</h2><button type="button" class="btn btn-secondary btn-xs" data-edit-budget="__overall">${icon('i-edit', 'ic ic-sm')} Edit</button></div>
         <div class="big-number ${left < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(Math.abs(left), cur))}</div>
         <div class="card-sub" style="margin-bottom:var(--sp-3)">${left >= 0 ? `left of ${escapeHtml(formatCurrency(s.budget, cur))}. That's about ${escapeHtml(formatCurrency(perDay, cur))} a day for the next ${plural(daysLeft, 'day')}.` : `over your ${escapeHtml(formatCurrency(s.budget, cur))} budget`}</div>
+        ${!s.fromBalance && left > 0 && Math.max(0, viewBalance()) < left - 0.004 ? `<div class="budget-source is-short">${icon('i-alert', 'ic ic-sm')}<span>Only ${escapeHtml(formatCurrency(Math.max(0, viewBalance()), cur))} is in ${viewAccountObj() ? 'this account' : 'your accounts'} now. The rest of the budget needs your income first${s.expectedIncome > 0 ? ` (${escapeHtml(formatCurrency(s.expectedIncome, cur))} expected)` : ''}.</span></div>` : ''}
         ${state.config.budgetMode === 'balance' ? `<div class="budget-source">${icon('i-wallet', 'ic ic-sm')}<span>From your balance: ${escapeHtml(formatCurrency(viewBalance(), cur))} in this account now</span></div>` : ''}
         ${s.fromIncome ? `<div class="budget-source">${icon('i-arrow-down', 'ic ic-sm')}<span>${s.incomeFallback ? `No income has come in here this month yet, so your account balance is used until it does.` : `From your income received: ${escapeHtml(formatCurrency(s.plannedIncome, cur))} this month`}${state.config.budgetSavePct ? `, keeping ${state.config.budgetSavePct}% (${escapeHtml(formatCurrency(s.plannedIncome - s.budget, cur))}) for saving` : ''}</span></div>`
             : (s.plannedIncome > 0 ? `<button type="button" class="link-btn budget-switch" data-action="budget-from-income">${icon('i-arrow-down', 'ic ic-sm')} Use my income (${escapeHtml(formatCurrency(s.plannedIncome, cur))}) as the budget</button>` : '')}
