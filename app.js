@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.51.4';
+const APP_VERSION = '4.51.5';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1823,6 +1823,13 @@ const setBudgetCurrency = (to) => {
     state.config.budgetCurrency = to;
 };
 
+// From income: income already spent before Vela tracked it (or already part of an older balance) can't be spent again.
+// This month, the budget is at most what the account has now plus what was spent from it this month.
+const incomeCap = (y, m, spent, spentList) => {
+    const now = new Date();
+    if (y !== now.getFullYear() || m !== now.getMonth()) return Infinity;
+    return Math.max(0, viewBalance() + spent - sumDisplay(spentList.filter((e) => e.beforeBalance)));
+};
 const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => {
     const list = viewTx().filter((t) => inMonth(t, y, m) && !isUpcoming(t));
     const spentList = list.filter((t) => t.type === 'expense');
@@ -1846,14 +1853,14 @@ const monthStats = (y = new Date().getFullYear(), m = new Date().getMonth()) => 
     const fromBalance = !scopeAll && (state.config.budgetMode === 'balance' || incomeFallback);
     const baseBudget = scopeAll ? allAccountsBudget(y, m)
         : fromBalance ? Math.max(0, viewBalance() + spent - sumDisplay(spentList.filter((e) => e.beforeBalance)))
-        : fromIncome ? plannedIncome * (1 - state.config.budgetSavePct / 100) : budgetIn(state.config.budget, dcur());
+        : fromIncome ? Math.min(plannedIncome * (1 - state.config.budgetSavePct / 100), incomeCap(y, m, spent, spentList)) : budgetIn(state.config.budget, dcur());
     // Goals with a monthly saving: that money is kept aside, so the budget to spend is what's left after it.
     const now0 = new Date();
     const goalKeep = y === now0.getFullYear() && m === now0.getMonth() ? goalsKeep(viewGoals()) : 0;
     const budget = Math.max(0, baseBudget - goalKeep);
     const byCat = {};
     spentList.forEach((e) => { byCat[e.category] = (byCat[e.category] || 0) + toDisplay(e.amount, e.currency); });
-    return { list, spentList, incomeList, spent, income, net: income - spent, prevSpent, budget, budgetPct: budget > 0 ? (spent / budget) * 100 : (spent > 0 && fromIncome ? 100 : 0), byCat, fromIncome, fromBalance, plannedIncome, incomeFallback, expectedIncome, baseBudget, goalKeep };
+    return { list, spentList, incomeList, spent, income, net: income - spent, prevSpent, budget, budgetPct: budget > 0 ? (spent / budget) * 100 : (spent > 0 && fromIncome ? 100 : 0), byCat, fromIncome, fromBalance, plannedIncome, incomeFallback, expectedIncome, baseBudget, goalKeep, incomeCapped: fromIncome && !scopeAll && !fromBalance && baseBudget < plannedIncome * (1 - state.config.budgetSavePct / 100) - 0.5 };
 };
 
 const rangeBounds = (range) => {
@@ -4586,7 +4593,7 @@ const planBudgetsHtml = () => {
         <div class="card-sub" style="margin-bottom:var(--sp-3)">${left >= 0 ? `left of ${escapeHtml(formatCurrency(s.budget, cur))}. That's about ${escapeHtml(formatCurrency(perDay, cur))} a day for the next ${plural(daysLeft, 'day')}.` : `over your ${escapeHtml(formatCurrency(s.budget, cur))} budget`}</div>
         ${!s.fromBalance && left > 0 && Math.max(0, viewBalance()) < left - 0.004 ? `<div class="budget-source is-short">${icon('i-alert', 'ic ic-sm')}<span>Only ${escapeHtml(formatCurrency(Math.max(0, viewBalance()), cur))} is in ${viewAccountObj() ? 'this account' : 'your accounts'} now. The rest of the budget needs your income first${s.expectedIncome > 0 ? ` (${escapeHtml(formatCurrency(s.expectedIncome, cur))} expected)` : ''}.</span></div>` : ''}
         ${state.config.budgetMode === 'balance' ? `<div class="budget-source">${icon('i-wallet', 'ic ic-sm')}<span>From your balance: ${escapeHtml(formatCurrency(viewBalance(), cur))} in this account now</span></div>` : ''}
-        ${s.fromIncome ? `<div class="budget-source">${icon('i-arrow-down', 'ic ic-sm')}<span>${s.incomeFallback ? `No income has come in here this month yet, so your account balance is used until it does.` : `From your income received: ${escapeHtml(formatCurrency(s.plannedIncome, cur))} this month`}${state.config.budgetSavePct ? `, keeping ${state.config.budgetSavePct}% (${escapeHtml(formatCurrency(s.plannedIncome - s.budget, cur))}) for saving` : ''}</span></div>`
+        ${s.fromIncome ? `<div class="budget-source">${icon('i-arrow-down', 'ic ic-sm')}<span>${s.incomeFallback ? `No income has come in here this month yet, so your account balance is used until it does.` : `From your income received: ${escapeHtml(formatCurrency(s.plannedIncome, cur))} this month`}${state.config.budgetSavePct && !s.incomeCapped ? `, keeping ${state.config.budgetSavePct}% (${escapeHtml(formatCurrency(s.plannedIncome - s.budget, cur))}) for saving` : ''}${s.incomeCapped ? `. Part of it was spent before Vela tracked it, so your budget is what you really have: ${escapeHtml(formatCurrency(s.baseBudget, cur))}` : ''}</span></div>`
             : (s.plannedIncome > 0 ? `<button type="button" class="link-btn budget-switch" data-action="budget-from-income">${icon('i-arrow-down', 'ic ic-sm')} Use my income (${escapeHtml(formatCurrency(s.plannedIncome, cur))}) as the budget</button>` : '')}
         ${s.fromIncome && s.expectedIncome > 0 ? `<div class="budget-source is-expected">${icon('i-calendar', 'ic ic-sm')}<span>+${escapeHtml(formatCurrency(s.expectedIncome, cur))} more when your expected income arrives</span></div>` : ''}
         ${s.goalKeep > 0 ? `<button type="button" class="budget-source budget-goals" data-goto-plan="goals">${icon('i-target', 'ic ic-sm')}<span>${escapeHtml(formatCurrency(s.goalKeep, cur))} kept for goals (${escapeHtml(viewGoals().filter((g) => goalMonthly(g) > 0).map((g) => g.name).join(', '))}), so your budget to spend is ${escapeHtml(formatCurrency(s.budget, cur))} of ${escapeHtml(formatCurrency(s.baseBudget, cur))}</span>${icon('i-chevron', 'ic ic-sm')}</button>` : ''}
