@@ -2855,6 +2855,29 @@ export async function run() {
         return (eta && acc) || `finish date shown ${eta}, account number on the entry ${acc}`;
     });
 
+    await T('Phone bill found by its phone number written any way (+94 77 123 4567 = 0771234567); water bill by account number', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-ph', name: 'Phone Bank', kind: 'bank', currency: 'LKR', opening: 50000, createdAt: 0 });
+        const due = iso(addDays(new Date(), 6));
+        st.recurring.push(
+            { id: 'ph-dlg', type: 'expense', name: 'Dialog mobile', amount: 1500, currency: 'LKR', category: 'Utilities', frequency: 'monthly', nextDate: due, anchorDay: 1, autoLog: false, accountId: 'acc-ph', ref: '0771234567', createdAt: 1 },
+            { id: 'ph-wtr', type: 'expense', name: 'Water home', amount: 900, currency: 'LKR', category: 'Utilities', frequency: 'monthly', nextDate: due, anchorDay: 1, autoLog: false, accountId: 'acc-ph', ref: '10/24/123/456/78', createdAt: 1 });
+        g('saveState')();
+        const t0 = Date.now();
+        const p1 = g('parseBankSms')({ id: `sms-${t0}-ph`, source: 'sms', address: 'COMBANK', body: 'Your bill payment of LKR 1,742.00 to DIALOG for +94 77 123 4567 was successful from A/C ...1234.', date: t0 });
+        const r1 = p1 && g('smsApply')(p1, 'acc-ph'); await wait(200);
+        const p2 = g('parseBankSms')({ id: `sms-${t0}-wt`, source: 'sms', address: 'COMBANK', body: 'Your bill payment of LKR 880.00 to NWSDB for account 1024123456 78 was successful from A/C ...1234.', date: t0 + 1000 });
+        const r2 = p2 && g('smsApply')(p2, 'acc-ph'); await wait(200);
+        const phone = r1 && r1.recurringId === 'ph-dlg';
+        const water = r2 && r2.recurringId === 'ph-wtr';
+        const label = /Phone 0771234567/.test(g('txRow')(r1 || {}));
+        st.transactions = st.transactions.filter((t) => t.accountId !== 'acc-ph');
+        st.recurring = st.recurring.filter((b) => !/^ph-/.test(b.id));
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-ph');
+        g('saveState')();
+        return (phone && water && label) || `phone bill ${phone} (${r1 && r1.recurringId}), water bill ${water} (${r2 && r2.recurringId}), label ${label}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.58.0">
+    <link rel="stylesheet" href="style.css?v=4.58.1">
 </head>
 <body data-view="dashboard">
 
@@ -1204,8 +1204,8 @@
                     </div>
                     <div class="field">
                         <label class="field-label" for="bill-ref">Account / reference no. <span class="faint">(optional)</span></label>
-                        <input type="text" id="bill-ref" class="input" placeholder="e.g. CEB account 1234567890" maxlength="40" autocomplete="off" inputmode="text">
-                        <span class="field-hint">For bills like CEB or water with several account numbers. A bank SMS with this number is matched to this bill.</span>
+                        <input type="text" id="bill-ref" class="input" placeholder="e.g. 1234567890 or 0771234567" maxlength="40" autocomplete="off" inputmode="text">
+                        <span class="field-hint">The CEB or water account number, or the phone number of a phone bill. A bank SMS with this number is matched to this bill.</span>
                     </div>
                     <div class="field" id="bill-account-field">
                         <label class="field-label" for="bill-account">Account</label>
@@ -1997,7 +1997,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.58.0"></script>
+    <script src="app.js?v=4.58.1"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.58.0';
+const APP_VERSION = '4.58.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2260,7 +2260,7 @@ const txRow = (t, { showDate = true, withAccount = viewId() === 'all' && state.a
     const signed = formatSigned(t.type === 'income' ? value : -value, dcur());
     const orig = t.fx ? `<span class="tx-orig-inline">${escapeHtml(fxNote(t))}</span>` : t.currency !== dcur() ? `<span class="tx-orig-inline">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>` : '';
     const sec = t.sectionId ? secById(t.sectionId) : null;
-    const label = `${accName ? `${t.type === 'income' ? 'Into' : 'From'} ${accName} · ` : ''}${showDate ? cat.name : (t.note || cat.name)}${sec ? ` · ${sec.name}` : ''}${(() => { const b = t.recurringId && state.recurring.find((x) => x.id === t.recurringId); return b && b.ref ? ` · Acc ${b.ref}` : ''; })()}${t.beforeBalance ? ' · before balance date' : ''}`;
+    const label = `${accName ? `${t.type === 'income' ? 'Into' : 'From'} ${accName} · ` : ''}${showDate ? cat.name : (t.note || cat.name)}${sec ? ` · ${sec.name}` : ''}${(() => { const b = t.recurringId && state.recurring.find((x) => x.id === t.recurringId); return b && b.ref ? ` · ${refLabel(b.ref)}` : ''; })()}${t.beforeBalance ? ' · before balance date' : ''}`;
     const st = t.pending ? payStatus(t.date) : null;
     const waitingStrip = t.pending ? `<div class="tx-confirm" data-status="${st}"><span>${st === 'overdue' ? `${t.type === 'income' ? 'Expected' : 'Was due'} ${escapeHtml(shortDate(t.date))}` : st === 'due' ? (t.type === 'income' ? 'Expected today' : 'Due today') : `Due ${escapeHtml(shortDate(t.date))}`}</span><button type="button" class="btn btn-xs ${t.type === 'income' ? 'btn-income' : 'btn-primary'}" data-pay="tx:${escapeHtml(t.id)}">${icon('i-check', 'ic ic-sm')} ${t.type === 'income' ? 'Mark as received' : 'Mark as paid'}</button></div>` : '';
     return `<li class="${t.pending ? 'tx-li-pending' : ''}"><button type="button" class="tx" data-edit-tx="${escapeHtml(t.id)}" data-upcoming="${isUpcoming(t)}">
@@ -3339,7 +3339,7 @@ const parseBankSms = (msg) => {
         shape: hashToInt(body.toLowerCase().replace(/\d+/g, '#')), // the wording without its numbers
         arrivedAt: Number(msg.date) || Date.now(), fromMessage: when.fromMessage || !shared,
         ...smsFeeFacts(type, kind.kind, t, body, bankName),
-        refKeys: [...new Set((body.match(/\d[\d -]{4,18}\d/g) || []).map((n) => n.replace(/\D/g, '')).filter((n) => n.length >= 6 && n.length <= 16).map((n) => hashToInt(n)))].slice(0, 8)
+        refKeys: [...new Set((body.match(/\d[\d -]{4,18}\d/g) || []).map((n) => refDigits(n)).filter((n) => n.length >= 6 && n.length <= 16).map((n) => hashToInt(n)))].slice(0, 8)
     };
 };
 
@@ -3790,7 +3790,7 @@ const smsApply = (i, accountId) => {
     rec.bank = bankMeta(i);
     if (i.feeKind === 'transfer' && acc) addBankFee(i, acc, rec.id);
     const matched = settleExpectedWith(rec, i.refKeys || [], smsBillPick[i.id] || null);
-    if (matched && rec.recurringId) { const b = state.recurring.find((x) => x.id === rec.recurringId); if (b && b.ref) rec.note = [rec.note, `Acc ${b.ref}`].filter(Boolean).join(' · '); }
+    if (matched && rec.recurringId) { const b = state.recurring.find((x) => x.id === rec.recurringId); if (b && b.ref) rec.note = [rec.note, refLabel(b.ref)].filter(Boolean).join(' · '); }
     if (matched) setTimeout(() => showToast(`Matched to ${matched}: no longer waiting for it`, 'success'), 300);
     saveState();
     queueSync('transaction', rec.id, 'upsert');
@@ -3798,7 +3798,10 @@ const smsApply = (i, accountId) => {
     return rec;
 };
 // Same type and amount as an expected payment due within two weeks either side: it's that payment, early or late.
-const billRefKey = (ref) => { const n = String(ref || '').replace(/\D/g, ''); return n.length >= 6 ? hashToInt(n) : null; };
+const refDigits = (n) => { const d = String(n || '').replace(/\D/g, ''); return d.length >= 9 && /^(0|94|0094)?7\d{8}$/.test(d) ? d.slice(-9) : d; };
+const billRefKey = (ref) => { const n = refDigits(ref); return n.length >= 6 ? hashToInt(n) : null; };
+// "Phone 0771234567" for a mobile number, "Acc 1234567890" for any other account number.
+const refLabel = (ref) => (/^(0|94|0094)?7\d{8}$/.test(String(ref || '').replace(/\D/g, '')) ? `Phone ${ref}` : `Acc ${ref}`);
 const expectedMatchFor = (rec, refKeys = []) => {
     if (!rec || !(rec.type === 'income' || rec.type === 'expense')) return null;
     // A bill with its account number in the bank message (CEB account no.): that bill, whatever the amount.
@@ -4864,7 +4867,7 @@ const billRow = (b) => {
     return `<div class="plan-row">
         <button type="button" class="plan-row-main" data-edit-bill="${escapeHtml(b.id)}" aria-label="Edit ${escapeHtml(b.name)}">
             ${entryBadge(b.name, b.category, b.type)}
-            <span class="row-main"><span class="row-title">${escapeHtml(b.name)}</span><span class="row-sub">${b.ref ? `Acc ${escapeHtml(b.ref)} · ` : ''}${FREQ_PHRASE[b.frequency]}, ${how}</span></span>
+            <span class="row-main"><span class="row-title">${escapeHtml(b.name)}</span><span class="row-sub">${b.ref ? `${escapeHtml(refLabel(b.ref))} · ` : ''}${FREQ_PHRASE[b.frequency]}, ${how}</span></span>
             <span class="row-end"><span class="amount ${b.type === 'income' ? 'text-income' : ''}">${escapeHtml(formatDisplay(billDue(b), b.currency))}</span>${b.carry ? `<span class="row-sub">incl. ${escapeHtml(formatDisplay(b.carry, b.currency))} carried</span>` : ''}<span class="badge-due" data-tone="${dl.tone}">${escapeHtml(label)}</span></span>
         </button>
         ${b.autoLog ? '' : `<div class="bill-actions"><button type="button" class="btn btn-secondary btn-sm paid-btn" data-bill-paid="${escapeHtml(b.id)}">${icon('i-check', 'ic ic-sm')} ${b.type === 'income' ? 'Mark received' : 'Mark paid'}</button><button type="button" class="link-btn pay-later-btn" data-pay-later="bill:${escapeHtml(b.id)}">Not this time</button></div>`}
