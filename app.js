@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.59.1';
+const APP_VERSION = '4.60.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1565,8 +1565,8 @@ const renderViewBar = () => {
         bar.type = 'button';
         bar.className = 'view-bar';
         bar.dataset.action = 'switch-account';
-        bar.setAttribute('aria-label', `All accounts, ${formatCurrency(total, dcur())}. Switch account`);
-        bar.innerHTML = `<span class="account-icon">${icon('i-wallet')}</span><span class="view-bar-text"><strong>All accounts</strong><span class="amount ${total < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(total, dcur()))}</span></span><span class="view-bar-switch">One account${icon('i-chevron-down', 'ic ic-sm')}</span>`;
+        bar.setAttribute('aria-label', `All accounts, ${hideAll ? 'balances hidden' : formatCurrency(total, dcur())}. Switch account`);
+        bar.innerHTML = `<span class="account-icon">${icon('i-wallet')}</span><span class="view-bar-text"><strong>All accounts</strong><span class="amount ${!hideAll && total < 0 ? 'text-expense' : ''}">${escapeHtml(hideAll ? maskedMoney() : formatCurrency(total, dcur()))}</span></span><span class="view-bar-switch">One account${icon('i-chevron-down', 'ic ic-sm')}</span>`;
         view.prepend(bar);
         return;
     }
@@ -1672,8 +1672,19 @@ const insightsAll = () => { try { return state.accounts.length > 1 && localStora
 // Privacy: balances you chose to hide (eye icon) show as "Rs. ••••••" on this phone, per account.
 const HIDE_KEY = 'VELA_HIDE_BALANCE';
 let hiddenBalances = (() => { try { return new Set(JSON.parse(localStorage.getItem(HIDE_KEY) || '[]')); } catch (e) { return new Set(); } })();
-const balanceHidden = (id) => !!id && hiddenBalances.has(id);
-const viewBalanceHidden = () => !scopeAll && balanceHidden(viewId());
+// The eye on Home hides every account balance at once (entries and spending stay visible); each account can also be hidden alone.
+const HIDE_ALL_KEY = 'VELA_HIDE_ALL';
+let hideAll = (() => { try { return localStorage.getItem(HIDE_ALL_KEY) === '1'; } catch (e) { return false; } })();
+const balanceHidden = (id) => hideAll || (!!id && hiddenBalances.has(id));
+const viewBalanceHidden = () => hideAll || (!scopeAll && balanceHidden(viewId()));
+const toggleHideAll = () => {
+    hideAll = !hideAll;
+    try { localStorage.setItem(HIDE_ALL_KEY, hideAll ? '1' : '0'); } catch (e) { /* storage blocked */ }
+    showToast(hideAll ? 'All balances hidden. Your spending still shows.' : 'Balances shown', 'info');
+    haptic();
+    renderActive();
+    if (isSheetOpen('modal-accounts')) renderAccountManager();
+};
 const maskedMoney = (cur) => `${symbolFor(cur || dcur())}••••••`;
 const toggleBalanceHidden = (id) => {
     if (!id) return;
@@ -4626,10 +4637,10 @@ const renderDashboard = () => {
     const hideIt = viewBalanceHidden();
     const eye = $('btn-hide-balance');
     if (eye) {
-        eye.hidden = !acc;
-        eye.setAttribute('aria-pressed', String(hideIt));
-        eye.setAttribute('aria-label', hideIt ? 'Show balance' : 'Hide balance');
-        eye.innerHTML = icon(hideIt ? 'i-eye-off' : 'i-eye', 'ic ic-sm');
+        eye.hidden = false;
+        eye.setAttribute('aria-pressed', String(hideAll));
+        eye.setAttribute('aria-label', hideAll ? 'Show all balances' : 'Hide all balances');
+        eye.innerHTML = icon(hideAll ? 'i-eye-off' : 'i-eye', 'ic ic-sm');
     }
     if (hideIt) showHidden($('dash-balance'), cur); else countUp($('dash-balance'), viewBalance(), cur);
     // A minus balance is always shown in red, with a label (never only by colour).
@@ -4645,7 +4656,7 @@ const renderDashboard = () => {
     $('dash-balance-sub').textContent = (Math.abs(change) >= 0.005 || s.income > 0 || s.spent > 0
         ? `${change >= 0 ? '+' : '−'}${formatCompact(Math.abs(change), cur)} in ${monthName0}${s.income > 0 ? ` · ${Math.max(0, Math.round((s.net / s.income) * 100))}% of income left` : ''}`
         : `Nothing in or out yet in ${monthName0}`) + comingNote;
-    if (hideIt) $('dash-balance-sub').textContent = 'Balance hidden · tap the eye to show it';
+    if (hideIt) $('dash-balance-sub').textContent = hideAll ? 'Balances hidden · tap the eye to show them' : 'Balance hidden · tap the eye to show it';
     setMoney($('dash-income'), s.income, cur, 12);
     setMoney($('dash-spent'), s.spent, cur, 12);
 
@@ -4696,8 +4707,8 @@ const renderDashboard = () => {
     $('dash-fixed').innerHTML = (fx.income > 0 || fx.total > 0) ? fixedSummaryHtml({ link: true }) : '';
     renderTripHome();
     renderSectionsHome();
-    setMoney($('networth'), netWorth(), cur, 16);
-    $('networth').classList.toggle('text-expense', netWorth() < -0.004);
+    if (hideAll) showHidden($('networth'), cur); else setMoney($('networth'), netWorth(), cur, 16);
+    $('networth').classList.toggle('text-expense', !hideAll && netWorth() < -0.004);
     $('account-strip').innerHTML = state.accounts.map((a) => {
         const bal = accountBalance(a);
         return `<button type="button" class="account-chip${viewId() === a.id ? ' is-current' : ''}" data-view-account="${escapeHtml(a.id)}" data-hold-account="${escapeHtml(a.id)}" aria-pressed="${viewId() === a.id}" aria-label="${escapeHtml(a.name)}: ${escapeHtml(formatCurrency(bal, a.currency))}. ${viewId() === a.id ? 'You are in this account' : 'Switch to this account'}">
@@ -10368,7 +10379,7 @@ const initEvents = () => {
             haptic();
             return;
         }
-        if (d.hideBalance !== undefined) { toggleBalanceHidden(d.hideBalance || viewId()); return; }
+        if (d.hideBalance !== undefined) { if (d.hideBalance) toggleBalanceHidden(d.hideBalance); else toggleHideAll(); return; }
         if (d.accAction) { accountAction(d.accAction); return; }
         if (d.viewAccount) {
             if (holdFired) { holdFired = false; return; } // the press was a hold: its menu is open
@@ -11061,7 +11072,7 @@ const removeDevice = (id, name) => {
 const renderAccountManager = () => {
     const v = viewId();
     const tick = (on) => (on ? `<span class="acc-current" aria-label="Showing now">${icon('i-check', 'ic ic-sm')}</span>` : '');
-    $('accounts-body').innerHTML = `<p class="acc-hint">Tap an account to see only it, or All accounts to see everything together. Tap the pencil to edit.</p><ul class="cat-manage acc-list">${state.accounts.length > 1 ? `<li class="acc-row${v === 'all' ? ' is-current' : ''}"><button type="button" class="row-btn" data-view-account="all"><span class="row-icon tint">${icon('i-wallet')}</span><span class="row-label"><span>All accounts</span><span>Everything together</span></span><span class="amount ${netWorth() < 0 ? 'text-expense' : ''}">${escapeHtml(formatCurrency(netWorth(), dcur()))}</span>${tick(v === 'all')}</button></li>` : ''}${state.accounts.map((a) => {
+    $('accounts-body').innerHTML = `<p class="acc-hint">Tap an account to see only it, or All accounts to see everything together. Tap the pencil to edit.</p><ul class="cat-manage acc-list">${state.accounts.length > 1 ? `<li class="acc-row${v === 'all' ? ' is-current' : ''}"><button type="button" class="row-btn" data-view-account="all"><span class="row-icon tint">${icon('i-wallet')}</span><span class="row-label"><span>All accounts</span><span>Everything together</span></span><span class="amount ${!hideAll && netWorth() < 0 ? 'text-expense' : ''}">${escapeHtml(hideAll ? maskedMoney() : formatCurrency(netWorth(), dcur()))}</span>${tick(v === 'all')}</button></li>` : ''}${state.accounts.map((a) => {
         const bal = accountBalance(a);
         return `<li class="acc-row${v === a.id ? ' is-current' : ''}"><button type="button" class="row-btn" data-view-account="${escapeHtml(a.id)}">
             ${accountBadge(a, 'is-row', 'row-icon tint')}

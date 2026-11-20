@@ -2933,6 +2933,18 @@ export async function run() {
         return (read && card && saved && learned && row) || `read ${read} (${a.billRef}, ${b.billRef}, ${c.billRef}, shop ${d.billRef}), card ${card}, saved ${saved}, bill learned ${learned}, row ${row}`;
     });
 
+    await T('Hide all balances: the Home eye hides every account balance, expenses still show; tap again to show', async () => {
+        g('switchTab')('dashboard'); await wait(300);
+        document.querySelector('#btn-hide-balance').click(); await wait(400);
+        const masked = (el) => !!el && /•/.test(el.textContent);
+        const hero = masked($('dash-balance'));
+        const strip = [...document.querySelectorAll('#account-strip .account-bal')].every((el) => /•/.test(el.textContent));
+        const spendShown = /\d/.test($('recent-list').textContent);
+        document.querySelector('#btn-hide-balance').click(); await wait(400);
+        const back = !masked($('dash-balance'));
+        return (hero && strip && spendShown && back) || `hero hidden ${hero}, accounts hidden ${strip}, spending shown ${spendShown}, shown again ${back}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };
