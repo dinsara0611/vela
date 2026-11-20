@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.63.4';
+const APP_VERSION = '4.63.5';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -5757,10 +5757,17 @@ const txIncomeCat = () => (document.querySelector('input[name="tx-category"]:che
 // Every new income opens the Allocate sheet after Add (like Salary always did); "Don't allocate" there skips it.
 const txFundsWanted = () => (typeof txFundsOn === 'boolean' ? txFundsOn : true);
 const updateFundsRow = () => {
-    // The owner wants no switch: the sheet after Add is how income is divided.
-    const show = false;
+    // No switch: the sheet after Add is how income is divided. The row only shows when that sheet can't open:
+    // your funds belong to other accounts, not the one this income goes to.
+    const accId = $('tx-account').value || (state.accounts[0] && state.accounts[0].id);
+    const acc = state.accounts.find((a) => a.id === accId);
+    const show = txType === 'income' && !$('tx-id').value && !txShareBill() && secList().length > 0 && !fundsFor(accId).length;
     $('tx-funds-row').hidden = !show;
+    $('tx-funds').hidden = true;
     if (!show) return;
+    const owners = [...new Set(secList().flatMap(fundAccs))].map((id) => (state.accounts.find((a) => a.id === id) || {}).name).filter(Boolean);
+    $('tx-funds-desc').textContent = `Your funds are for ${owners.join(', ') || 'other accounts'}, so this income in ${acc ? acc.name : 'this account'} isn't divided. Pick ${owners[0] || 'that account'} above, or add ${acc ? acc.name : 'this account'} to your funds in Plan > Funds.`;
+    return;
     // No funds yet: the switch says where to make them instead of hiding.
     $('tx-funds').disabled = !secList().length;
     if (!secList().length) { setSwitch($('tx-funds'), false); $('tx-funds-desc').textContent = 'You have no funds yet. Make them in Plan > Funds, then Vela can divide your income.'; return; }
@@ -7896,7 +7903,7 @@ const divideNumbers = () => {
 };
 const openDivide = (incomeId) => {
     const t = state.transactions.find((x) => x.id === incomeId && x.type === 'income');
-    if (!t || !fundsFor(t.accountId).length) { if (t) showToast('No funds for this account yet. Add one in Plan › Funds.', 'info'); return; }
+    if (!t || !fundsFor(t.accountId).length) { if (t) showToast(`Not divided: your funds aren't for ${(state.accounts.find((a) => a.id === t.accountId) || {}).name || 'this account'}. Add it to a fund in Plan › Funds.`, 'warning'); return; }
     divideJob = { incomeId, total: round2(toDisplay(t.amount, t.currency)), carry: {}, alloc: null, name: t.desc, date: t.date, accountId: t.accountId, share: 1 };
     divideKeepRest = false;
     const n = divideNumbers();
@@ -7916,7 +7923,7 @@ const renderDivide = () => {
     $('divide-share').innerHTML = shares.map(([k, l]) => `<button type="button" class="chip" data-divide-share="${k}" aria-pressed="${job.share === k}">${l}</button>`).join('')
         + `<button type="button" class="chip" data-divide-share="custom" aria-pressed="${job.share === 'custom'}">Custom</button><button type="button" class="chip" data-divide-share="none">None</button>`;
     $('divide-custom-field').hidden = job.share !== 'custom';
-    $('divide-summary').innerHTML = `<span><small>Salary</small><strong>${escapeHtml(formatCurrency(job.total, cur))}</strong></span><span><small>Allocating</small><strong class="text-income">${escapeHtml(formatCurrency(base, cur))}</strong></span><span><small>Not allocated</small><strong>${escapeHtml(formatCurrency(job.total - base, cur))}</strong></span>`;
+    $('divide-summary').innerHTML = `<span><small>Income</small><strong>${escapeHtml(formatCurrency(job.total, cur))}</strong></span><span><small>Allocating</small><strong class="text-income">${escapeHtml(formatCurrency(base, cur))}</strong></span><span><small>Not allocated</small><strong>${escapeHtml(formatCurrency(job.total - base, cur))}</strong></span>`;
     const leftovers = divFunds().filter((x) => n.bal[x.id] > 0);
     $('divide-carry').innerHTML = leftovers.length ? `<div class="section-head"><h2>Unspent balances</h2></div><p class="field-hint">Carry each one forward in the same fund, or transfer it to another fund.</p>${leftovers.map((x) => `
         <div class="sec-line">${secBadge(x, ' is-mini')}<span class="sec-line-name"><span>${escapeHtml(x.name)}</span><span class="text-income">${escapeHtml(formatCurrency(n.bal[x.id], cur))} unspent</span></span>
@@ -11061,7 +11068,7 @@ const initEvents = () => {
     $('tx-funds').addEventListener('click', () => { txFundsOn = !isOn($('tx-funds')); updateFundsRow(); });
     $('tx-date').addEventListener('change', updateBeforeRow);
     $('tx-time').addEventListener('change', updateBeforeRow);
-    $('tx-account').addEventListener('change', () => { updateBeforeRow(); txChargedTouched = false; updateChargedRow(); renderTxSections(); });
+    $('tx-account').addEventListener('change', () => { updateBeforeRow(); txChargedTouched = false; updateChargedRow(); renderTxSections(); updateFundsRow(); });
     $('tx-date').addEventListener('change', () => { if (!$('tx-id').value && txType === 'expense') { txTripId = tripIdFor($('tx-date').value); updateTripRow(); } });
     $('mfa-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); submitMfa(); } });
     setInterval(pollSignInRequests, 8000);
