@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.60.1';
+const APP_VERSION = '4.60.2';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1672,15 +1672,15 @@ const insightsAll = () => { try { return state.accounts.length > 1 && localStora
 // Privacy: balances you chose to hide (eye icon) show as "Rs. ••••••" on this phone, per account.
 const HIDE_KEY = 'VELA_HIDE_BALANCE';
 let hiddenBalances = (() => { try { return new Set(JSON.parse(localStorage.getItem(HIDE_KEY) || '[]')); } catch (e) { return new Set(); } })();
-// The eye on Home hides every account balance at once (entries and spending stay visible); each account can also be hidden alone.
+// The eye on Home (All accounts view) hides only the total of all accounts; each account keeps its own eye.
 const HIDE_ALL_KEY = 'VELA_HIDE_ALL';
 let hideAll = (() => { try { return localStorage.getItem(HIDE_ALL_KEY) === '1'; } catch (e) { return false; } })();
-const balanceHidden = (id) => hideAll || (!!id && hiddenBalances.has(id));
-const viewBalanceHidden = () => hideAll || (!scopeAll && balanceHidden(viewId()));
+const balanceHidden = (id) => !!id && hiddenBalances.has(id);
+const viewBalanceHidden = () => (scopeAll || !viewAccountObj() ? hideAll : balanceHidden(viewId()));
 const toggleHideAll = () => {
     hideAll = !hideAll;
     try { localStorage.setItem(HIDE_ALL_KEY, hideAll ? '1' : '0'); } catch (e) { /* storage blocked */ }
-    showToast(hideAll ? 'All balances hidden. Your spending still shows.' : 'Balances shown', 'info');
+    showToast(hideAll ? 'Total of all accounts hidden. Each account still shows.' : 'Total shown', 'info');
     haptic();
     renderActive();
     if (isSheetOpen('modal-accounts')) renderAccountManager();
@@ -4634,9 +4634,9 @@ const renderDashboard = () => {
     const eye = $('btn-hide-balance');
     if (eye) {
         eye.hidden = false;
-        eye.setAttribute('aria-pressed', String(hideAll));
-        eye.setAttribute('aria-label', hideAll ? 'Show all balances' : 'Hide all balances');
-        eye.innerHTML = icon(hideAll ? 'i-eye-off' : 'i-eye', 'ic ic-sm');
+        eye.setAttribute('aria-pressed', String(hideIt));
+        eye.setAttribute('aria-label', acc ? (hideIt ? 'Show balance' : 'Hide balance') : (hideIt ? 'Show total' : 'Hide total'));
+        eye.innerHTML = icon(hideIt ? 'i-eye-off' : 'i-eye', 'ic ic-sm');
     }
     if (hideIt) showHidden($('dash-balance'), cur); else countUp($('dash-balance'), viewBalance(), cur);
     // A minus balance is always shown in red, with a label (never only by colour).
@@ -4652,7 +4652,7 @@ const renderDashboard = () => {
     $('dash-balance-sub').textContent = (Math.abs(change) >= 0.005 || s.income > 0 || s.spent > 0
         ? `${change >= 0 ? '+' : '−'}${formatCompact(Math.abs(change), cur)} in ${monthName0}${s.income > 0 ? ` · ${Math.max(0, Math.round((s.net / s.income) * 100))}% of income left` : ''}`
         : `Nothing in or out yet in ${monthName0}`) + comingNote;
-    if (hideIt) $('dash-balance-sub').textContent = hideAll ? 'Balances hidden · tap the eye to show them' : 'Balance hidden · tap the eye to show it';
+    if (hideIt) $('dash-balance-sub').textContent = acc ? 'Balance hidden · tap the eye to show it' : 'Total hidden · tap the eye to show it';
     setMoney($('dash-income'), s.income, cur, 12);
     setMoney($('dash-spent'), s.spent, cur, 12);
 
@@ -10380,7 +10380,7 @@ const initEvents = () => {
             haptic();
             return;
         }
-        if (d.hideBalance !== undefined) { if (d.hideBalance) toggleBalanceHidden(d.hideBalance); else toggleHideAll(); return; }
+        if (d.hideBalance !== undefined) { if (d.hideBalance && d.hideBalance !== 'all') toggleBalanceHidden(d.hideBalance); else if (d.hideBalance === 'all' || !viewAccountObj()) toggleHideAll(); else toggleBalanceHidden(viewId()); return; }
         if (d.accAction) { accountAction(d.accAction); return; }
         if (d.viewAccount) {
             if (holdFired) { holdFired = false; return; } // the press was a hold: its menu is open
@@ -11073,7 +11073,7 @@ const removeDevice = (id, name) => {
 const renderAccountManager = () => {
     const v = viewId();
     const tick = (on) => (on ? `<span class="acc-current" aria-label="Showing now">${icon('i-check', 'ic ic-sm')}</span>` : '');
-    $('accounts-body').innerHTML = `<p class="acc-hint">Tap an account to see only it, or All accounts to see everything together. Tap the pencil to edit.</p><ul class="cat-manage acc-list">${state.accounts.length > 1 ? `<li class="acc-row${v === 'all' ? ' is-current' : ''}"><button type="button" class="row-btn" data-view-account="all"><span class="row-icon tint">${icon('i-wallet')}</span><span class="row-label"><span>All accounts</span><span>Everything together</span></span><span class="amount ${!hideAll && netWorth() < 0 ? 'text-expense' : ''}">${escapeHtml(hideAll ? maskedMoney() : formatCurrency(netWorth(), dcur()))}</span>${tick(v === 'all')}</button></li>` : ''}${state.accounts.map((a) => {
+    $('accounts-body').innerHTML = `<p class="acc-hint">Tap an account to see only it, or All accounts to see everything together. Tap the pencil to edit.</p><ul class="cat-manage acc-list">${state.accounts.length > 1 ? `<li class="acc-row${v === 'all' ? ' is-current' : ''}"><button type="button" class="row-btn" data-view-account="all"><span class="row-icon tint">${icon('i-wallet')}</span><span class="row-label"><span>All accounts</span><span>Everything together</span></span><span class="amount ${!hideAll && netWorth() < 0 ? 'text-expense' : ''}">${escapeHtml(hideAll ? maskedMoney() : formatCurrency(netWorth(), dcur()))}</span>${tick(v === 'all')}</button><button type="button" class="icon-btn acc-edit" data-hide-balance="all" aria-pressed="${hideAll}" aria-label="${hideAll ? 'Show' : 'Hide'} total of all accounts">${icon(hideAll ? 'i-eye-off' : 'i-eye')}</button><span class="acc-gap" aria-hidden="true"></span></li>` : ''}${state.accounts.map((a) => {
         const bal = accountBalance(a);
         return `<li class="acc-row${v === a.id ? ' is-current' : ''}"><button type="button" class="row-btn" data-view-account="${escapeHtml(a.id)}">
             ${accountBadge(a, 'is-row', 'row-icon tint')}

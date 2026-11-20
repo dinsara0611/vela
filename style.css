@@ -5023,3 +5023,4 @@ body.approve-waiting { overflow: hidden; }
 .parts-pick .chip-btn[aria-pressed="true"], .fee-pick .chip-btn[aria-pressed="true"] { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
 .parts-pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; color: var(--primary); background: var(--primary-soft); }
 .tx-parts-row { flex-wrap: wrap; gap: 8px; }
+.acc-list .acc-gap { flex: none; width: 42px; height: 42px; }

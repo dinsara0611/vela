@@ -2933,16 +2933,20 @@ export async function run() {
         return (read && card && saved && learned && row) || `read ${read} (${a.billRef}, ${b.billRef}, ${c.billRef}, shop ${d.billRef}), card ${card}, saved ${saved}, bill learned ${learned}, row ${row}`;
     });
 
-    await T('Hide all balances: the Home eye hides every account balance, expenses still show; tap again to show', async () => {
+    await T('Hide total: the Home eye (All accounts) hides only the total; each account still shows; the All accounts row has its own eye', async () => {
+        g('setViewAccount') && g('setViewAccount')('all');
         g('switchTab')('dashboard'); await wait(300);
         document.querySelector('#btn-hide-balance').click(); await wait(400);
         const masked = (el) => !!el && /•/.test(el.textContent);
         const hero = masked($('dash-balance'));
-        const strip = [...document.querySelectorAll('#account-strip .account-bal')].every((el) => /•/.test(el.textContent));
+        const strip = [...document.querySelectorAll('#account-strip .account-bal')].some((el) => !/•/.test(el.textContent));
         const spendShown = /\d/.test($('recent-list').textContent);
+        g('openAccountManager') && g('openAccountManager')(); await wait(300);
+        const rowEye = !!document.querySelector('[data-hide-balance="all"][aria-pressed="true"]');
+        g('closeSheet') && g('closeSheet')('modal-accounts'); await wait(200);
         document.querySelector('#btn-hide-balance').click(); await wait(400);
         const back = !masked($('dash-balance'));
-        return (hero && strip && spendShown && back) || `hero hidden ${hero}, accounts hidden ${strip}, spending shown ${spendShown}, shown again ${back}`;
+        return (hero && strip && spendShown && back && rowEye) || `total hidden ${hero}, accounts still shown ${strip}, spending shown ${spendShown}, row eye ${rowEye}, shown again ${back}`;
     });
 
     await T('Q+ CEB message: Rs. 11,560, Commercial Bank, CEB account 4205044100 (not the reference), no fake card number; goal saving goes into Savings', async () => {
