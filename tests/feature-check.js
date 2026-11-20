@@ -3070,6 +3070,31 @@ export async function run() {
         return (cb === 4 && sp === 3.5 && boc === 4 && learned === 3.2 && form) || `ComBank ${cb}, Sampath ${sp}, BOC ${boc}, learned ${learned}, form ${form} (${$('account-fee').placeholder}: ${$('account-fee-hint').textContent})`;
     });
 
+    await T('Netflix in dollars matches the waiting Netflix payment in rupees (rate + bank charge); paid with the bank estimate; ComBank Digital own-account alert named right', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-nf', name: 'Commercial Bank', kind: 'bank', currency: 'LKR', opening: 50000, createdAt: 0 });
+        const due = g('toISODate')(g('addDays')(new Date(), -5));
+        const est0 = g('fxCharge')(9.99, 'USD', st.accounts.find((a) => a.id === 'acc-nf'));
+        st.recurring.push({ id: 'nf-bill', type: 'expense', name: 'Netflix', amount: g('round2')(est0 * 1.012), currency: 'LKR', category: 'Subscriptions', frequency: 'monthly', nextDate: due, anchorDay: 15, autoLog: false, accountId: 'acc-nf', createdAt: 1 });
+        g('saveState')();
+        const t0 = Date.now();
+        const i = g('parseBankSms')({ id: `sms-${t0}-nf`, source: 'sms', address: 'COMBANK', body: 'Dear Cardholder, Purchase at NETFLIX.COM for USD 9.99 has been authorised on your debit card ending #5174.', date: t0 });
+        const m = g('smsMatchFor')(i);
+        const matched = !!m && m.how === 'pay' && m.pay.id === 'nf-bill';
+        g('smsQueue').push(i);
+        g('smsConfirmMatch')(i.id); await wait(400);
+        const paid = g('sortByNewest')(s().transactions.filter((t) => t.recurringId === 'nf-bill'))[0];
+        const amountOk = paid && paid.fx && paid.fx.amount === 9.99 && Math.abs(paid.amount - g('fxCharge')(9.99, 'USD', s().accounts.find((a) => a.id === 'acc-nf'))) < 0.01;
+        const billNext = Math.abs(s().recurring.find((b) => b.id === 'nf-bill').amount - (paid ? paid.amount : -1)) < 0.01;
+        const own = g('parseBankSms')({ id: `ntf-${t0}-own`, source: 'notification', address: 'combank.com.combankdigital', bank: 'Commercial Bank', body: 'New Fund transfer notification. Own Accounts Transfer in the amount of LKR 500.00 was received on 20/11/2026 from the ComBank Digital.', date: t0 });
+        const ownOk = own && own.desc === 'Own account transfer' && own.amount === 500 && own.type === 'income' && !own.merchant;
+        st.transactions = st.transactions.filter((t) => t.recurringId !== 'nf-bill' && t.accountId !== 'acc-nf');
+        st.recurring = st.recurring.filter((b) => b.id !== 'nf-bill');
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-nf');
+        g('saveState')();
+        return (matched && amountOk && billNext && ownOk) || `matched ${matched} (${m && m.how}), paid with estimate ${amountOk} (${paid && paid.amount}), bill expects it next ${billNext}, own transfer ${ownOk} (${own && own.desc}, ${own && own.type})`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

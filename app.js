@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.62.2';
+const APP_VERSION = '4.62.3';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -3428,8 +3428,12 @@ const parseBankSms = (msg) => {
         const rm = body.match(/\b(?:remarks?|narration|description|desc|details?|purpose)\s*[:\-]\s*([A-Za-z][A-Za-z0-9 &'.\-\/]{1,40}?)\s*(?:\.\s*(?:bal|avl|available)\b|[.;,]\s|[.;,]?$|\s+(?:bal|avl|available)\b)/i);
         if (rm && !/^(n\/?a|nil|none|-+)$/i.test(rm[1].trim())) merchant = titleCase(rm[1].trim().replace(/[.\-\/]+$/, '')).slice(0, 40);
     }
-    const brand = merchant ? brandFor(merchant, true) : null;
+    let brand = merchant ? brandFor(merchant, true) : null;
+    // "... from the ComBank Digital" / "via BOC Smart": the bank itself (its app) is how the money moved, not who it was.
+    if (brand && bank && brand.slug === bank.logo) { merchant = ''; brand = null; }
     if (brand) merchant = brand.name;
+    const ownMove = /\bown\s+accounts?\s+transfer|\btransfer\s+(?:between|to|from)\s+(?:your\s+)?own\s+accounts?\b/i.test(body);
+    if (ownMove) checks.push('between your own accounts: if it came from (or went to) another account in Vela, record it as a transfer');
     // Money coming back from a shop is a refund, not income.
     if (kind.kind === 'credit' && brand && brand.cat) kind = SMS_KIND.refund;
     if (!merchant && (kind.kind === 'card' || kind.kind === 'online')) checks.push('no shop name in the message');
@@ -3447,6 +3451,7 @@ const parseBankSms = (msg) => {
         : kind.kind === 'interest' ? `${bankName} interest`
         : kind.kind === 'refund' ? `Refund${merchant ? `: ${merchant}` : ''}`
         : kind.kind === 'reversal' ? `Reversal${merchant ? `: ${merchant}` : ''}`
+        : ownMove ? 'Own account transfer'
         : merchant || (kind.kind === 'salary' ? 'Salary' : `${bankName} ${kind.label.toLowerCase()}`);
     let category = type === 'income'
         ? (kind.kind === 'salary' || /\bsalary\b/i.test(body) ? 'Salary' : kind.kind === 'interest' ? 'Investment' : 'OtherIncome')
@@ -3697,7 +3702,16 @@ const smsMatchFor = (i) => {
             .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
         return t ? { how: 'refund', tx: t } : null;
     }
-    const pay = paymentItems({ horizonDays: 7 }).find((p) => p.type === i.type && sameMoney(p.amount, p.currency, i.amount, i.currency, 0.01) && Math.abs(daysBetween(parseDate(p.due), parseDate(i.date))) <= 7);
+    const shopWord = merchantWord(i.merchant || i.desc);
+    const iSlug = (brandFor(i.merchant || i.desc) || {}).slug;
+    const sameShop = (p) => (iSlug && (brandFor(p.name) || {}).slug === iSlug) || (shopWord.length >= 3 && merchantWord(p.name) === shopWord);
+    const payAcc = state.accounts.find((a) => a.id === smsAccountMatch(i).id) || state.accounts.find((a) => fxApplies(a) && accountBankName(a) === i.bank);
+    const moneyFits = (p) => {
+        if (i.currency === p.currency || !payAcc || !fxApplies(payAcc) || p.currency !== payAcc.currency) return sameMoney(p.amount, p.currency, i.amount, i.currency, 0.01);
+        const est = fxCharge(i.amount, i.currency, payAcc);
+        return Math.abs(est - p.amount) <= p.amount * (sameShop(p) ? 0.06 : 0.015);
+    };
+    const pay = paymentItems({ horizonDays: 7 }).find((p) => p.type === i.type && moneyFits(p) && Math.abs(daysBetween(parseDate(p.due), parseDate(i.date))) <= 7);
     if (pay) return { how: 'pay', pay };
     const t = state.transactions.find((x) => x.type === i.type && !x.pending && !x.bank && sameMoney(x.amount, x.currency, i.amount, i.currency) && Math.abs(daysBetween(parseDate(x.date), parseDate(i.date))) <= 2);
     return t ? { how: 'link', tx: t } : null;
@@ -4031,7 +4045,20 @@ const smsConfirmMatch = (id) => {
         // The entry that payment created/confirmed is now bank-verified.
         const t = match.pay.kind === 'tx' ? state.transactions.find((x) => x.id === match.pay.id)
             : sortByNewest(state.transactions.filter((x) => x.recurringId === match.pay.id))[0];
-        if (t) { t.bank = bankMeta(i); saveState(); queueSync('transaction', t.id, 'upsert'); }
+        if (t) {
+            t.bank = bankMeta(i);
+            const acc = state.accounts.find((a) => a.id === (smsChosenAccount(i) || t.accountId));
+            if (acc && i.currency !== t.currency && fxApplies(acc) && acc.currency === t.currency) {
+                t.amount = fxCharge(i.amount, i.currency, acc);
+                t.fx = { amount: i.amount, currency: i.currency, rate: convertAmount(1, i.currency, acc.currency), fee: fxFeeFor(acc), estimated: true };
+                t.accountId = acc.id;
+                const bill = match.pay.kind === 'bill' && state.recurring.find((b) => b.id === match.pay.id);
+                if (bill && !bill.parts && bill.currency === t.currency) { bill.amount = t.amount; queueSync('recurring', bill.id, 'upsert', false); }
+                setTimeout(() => showToast(`${t.desc}: ${formatCurrency(i.amount, i.currency)} ≈ ${formatCurrency(t.amount, t.currency)}. If your bank app shows a different amount, edit it once and Vela learns your bank's charge.`, 'info'), 700);
+            } else if (i.currency === t.currency && Math.abs(i.amount - t.amount) > 0.004) t.amount = i.amount;
+            if (i.time) t.time = i.time;
+            saveState(); queueSync('transaction', t.id, 'upsert');
+        }
     } else if (match.how === 'link') {
         match.tx.bank = bankMeta(i);
         saveState();
