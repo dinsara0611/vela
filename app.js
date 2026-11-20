@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.62.6';
+const APP_VERSION = '4.63.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -731,6 +731,7 @@ const normalizeTx = (t, forcedType) => {
         ...(type === 'expense' && typeof t.billRef === 'string' && t.billRef.trim() ? { billRef: t.billRef.trim().slice(0, 40) } : {}),
         ...(type === 'expense' && t.feeEstimated === true ? { feeEstimated: true } : {}),
         ...(type === 'income' && typeof t.inBudget === 'boolean' ? { inBudget: t.inBudget } : {}),
+        ...(type === 'income' && t.shareOf ? { shareOf: String(t.shareOf).slice(0, 64) } : {}),
         ...(typeof t.paidAt === 'string' && !isNaN(Date.parse(t.paidAt)) ? { paidAt: t.paidAt } : {}),
         ...(normalizeBankMeta(t.bank) ? { bank: normalizeBankMeta(t.bank) } : {}),
         ...(type === 'expense' && t.tripId ? { tripId: String(t.tripId).slice(0, 64) } : {}),
@@ -5701,6 +5702,7 @@ const setTxType = (type, keepCategory) => {
     updatePartsRow();
     updateChargedRow();
     $('tx-billref-field').hidden = type !== 'expense';
+    updateShareRow();
 };
 let txChargedTouched = false;
 // The bill's own number on an entry: CEB / water account number, or the phone number of a phone bill or reload.
@@ -5743,6 +5745,36 @@ const updatePartsRow = () => {
     setPressed('[data-tx-parts]', (b) => Number(b.dataset.txParts) === txParts);
     const amt = toNumber($('tx-amount').value, 0);
     $('tx-parts-desc').textContent = txParts ? `This is part 1 of ${txParts}. The other ${txParts - 1} (${formatCurrency(amt * (txParts - 1), normCur($('tx-currency').value))}) are expected every month, then the plan ends.` : 'Koko, Mintpay or a card plan: this amount is the first part.';
+};
+// Someone paying their share of a bill (a sister or friend chipping in for Netflix): the money goes into the fund
+// that bill is paid from, and is kept out of the budget (it's for the bill, not for spending).
+const fundForBill = (bill) => {
+    if (!bill) return null;
+    const last = sortByNewest(state.transactions.filter((t) => t.recurringId === bill.id && t.sectionId && secById(t.sectionId)))[0];
+    if (last) return secById(last.sectionId);
+    const learned = (state.config.sectionCatMap || {})[bill.category];
+    if (learned && secById(learned)) return secById(learned);
+    return secList().find((x) => /bill/i.test(x.name)) || null;
+};
+const onShareChange = () => { if (txShareBill()) txInBudget = false; else txInBudget = null; updateShareRow(); updateInBudgetRow(); };
+const txShareBill = () => state.recurring.find((b) => b.id === $('tx-share').value && b.type === 'expense') || null;
+const updateShareRow = () => {
+    const bills = state.recurring.filter((b) => b.type === 'expense');
+    const show = txType === 'income' && bills.length > 0;
+    $('tx-share-field').hidden = !show;
+    if (!show) return;
+    const sel = $('tx-share');
+    const keep = sel.value;
+    const opts = [['', 'No, it’s my own income']].concat(bills.map((b) => [b.id, b.name]));
+    if (sel.options.length !== opts.length || [...sel.options].some((o, k) => o.value !== opts[k][0] || o.textContent !== opts[k][1])) {
+        sel.innerHTML = opts.map(([v, l]) => `<option value="${escapeHtml(v)}">${escapeHtml(l)}</option>`).join('');
+    }
+    sel.value = opts.some(([v]) => v === keep) ? keep : '';
+    const bill = txShareBill();
+    const fund = fundForBill(bill);
+    $('tx-share-hint').textContent = !bill ? 'Pick the bill if someone gave you their share of it (e.g. Netflix).'
+        : fund ? `Goes into your ${fund.name} fund for ${bill.name}, not into your budget.`
+        : `Kept for ${bill.name}, not in your budget. (Make a Bills fund to keep it there.)`;
 };
 const updateInBudgetRow = () => {
     const show = txType === 'income' && budgetOn() && state.config.budgetMode === 'income';
@@ -5833,6 +5865,7 @@ const openAddTx = (type = 'expense') => {
     txBefore = false;
     txBeforeTouched = false;
     txInBudget = null;
+    $('tx-share').value = '';
     txParts = 0;
     txChargedTouched = false;
     txSectionId = null;
@@ -5867,6 +5900,7 @@ const openEditTx = (id) => {
     $('tx-date').value = t.date;
     $('tx-time').value = txTime(t) || '';
     $('tx-note').value = t.note || '';
+    $('tx-share').value = t.shareOf || '';
     $('tx-billref').value = t.billRef || (() => { const b = t.recurringId && state.recurring.find((x) => x.id === t.recurringId); return (b && b.ref) || ''; })();
     txWaiting = t.pending === true;
     txTripId = t.tripId || null;
@@ -5976,6 +6010,7 @@ const submitTx = async () => {
         record = { ...prev, type: txType, desc, amount: saveAmount, currency: saveCurrency, category, date, note, accountId, receipt, fixed: txKind === 'fixed' || !!prev.recurringId, pending: waiting };
         if (cleanTime($('tx-time').value)) record.time = $('tx-time').value; else delete record.time;
         if (txType === 'income' && typeof txInBudget === 'boolean') record.inBudget = txInBudget; else delete record.inBudget;
+        if (txType === 'income' && txShareBill()) { record.shareOf = txShareBill().id; record.inBudget = false; } else delete record.shareOf;
         if (fx) record.fx = fx; else delete record.fx;
         if (txType === 'expense' && txTripId) record.tripId = txTripId; else delete record.tripId;
         if (txType === 'expense' && txBillRef()) record.billRef = txBillRef(); else delete record.billRef;
@@ -5991,6 +6026,7 @@ const submitTx = async () => {
         record = { id: generateId(), type: txType, desc, amount: saveAmount, currency: saveCurrency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txKind === 'fixed', pending: date > todayISO() || txWaiting };
         if (cleanTime($('tx-time').value)) record.time = $('tx-time').value;
         if (txType === 'income' && typeof txInBudget === 'boolean') record.inBudget = txInBudget;
+        if (txType === 'income' && txShareBill()) { record.shareOf = txShareBill().id; record.inBudget = false; }
         if (txType === 'expense' && txBillRef()) record.billRef = txBillRef();
         if (txType === 'expense' && txParts >= 2) {
             const plan = makePlan({ name: desc, amount: saveAmount, currency: saveCurrency, category, accountId, firstDate: date, count: txParts, done: 1 });
@@ -6021,6 +6057,16 @@ const submitTx = async () => {
         setTimeout(() => showToast(coverMsg, 'success'), 400);
     }
     resetTxCover();
+    if (record.type === 'income') {
+        const shareNote = (m) => m.incomeId === record.id && m.kind === 'income' && /^Share of /.test(m.note || '');
+        state.config.sectionMoves = secMoves().filter((m) => !shareNote(m));
+        const bill = record.shareOf && state.recurring.find((b) => b.id === record.shareOf);
+        const fund = fundForBill(bill);
+        if (bill && fund && !record.pending) {
+            state.config.sectionMoves = [...secMoves(), { id: generateId(), date: record.date, kind: 'income', incomeId: record.id, from: null, to: fund.id, amount: round2(toDisplay(record.amount, record.currency)), currency: dcur(), accountId: record.accountId || undefined, note: `Share of ${bill.name}`.slice(0, 120) }];
+            setTimeout(() => showToast(`${formatCurrency(record.amount, record.currency)} for ${bill.name} is in your ${fund.name} fund (not your budget)`, 'success'), 500);
+        }
+    }
     state.config.lastCategory[txType] = category;
     state.config.lastAccount = accountId;
     if (txType === 'expense' && secList().length && txSectionTouched) learnSection(category, record.sectionId || null);
@@ -6030,7 +6076,7 @@ const submitTx = async () => {
     queueSync('transaction', record.id, 'upsert');
     if (receipt && !receipt.path) uploadReceipt(record);
     closeSheet('modal-tx');
-    if (txType === 'income' && !id && secList().length && !isUpcoming(record) && allocatesIncome(record)) {
+    if (txType === 'income' && !id && secList().length && !isUpcoming(record) && !record.shareOf && allocatesIncome(record)) {
         setTimeout(() => openDivide(record.id), 450);
     } else if (txType === 'income') {
         const d = parseDate(date);
@@ -8147,6 +8193,7 @@ const txDetailRows = (t) => {
     if (ref) add('Paid for', refLabel(ref));
     else if (t.type === 'expense' && (bill || /util|bill|phone|mobile|internet|electric|water|reload/i.test(`${catById(t.category, t.type).name} ${t.desc}`) || /(ceb|leco|nwsdb|water|dialog|mobitel|slt|hutch|airtel)/i.test(t.desc))) rows.push(['Paid for', '', 'add']);
     if (t.feeFor) add('Bank fee', t.feeEstimated ? 'Usual fee (the SMS did not say the amount)' : 'Charged by the bank');
+    if (t.type === 'income' && t.shareOf) { const b = state.recurring.find((x) => x.id === t.shareOf); const f = fundForBill(b); add('Share of a bill', `${b ? b.name : 'A bill'}${f ? ` · in your ${f.name} fund` : ''}`); }
     if (t.type === 'income' && t.inBudget === false) add('Budget', 'Not counted in the budget');
     if (t.bank) {
         const b = t.bank;
@@ -11036,6 +11083,7 @@ const initEvents = () => {
     $('switch-reminders').addEventListener('click', (e) => enableReminders(!isOn(e.currentTarget)));
     $('switch-sms').addEventListener('click', (e) => enableSmsTracking(!isOn(e.currentTarget)));
     $('switch-ntf').addEventListener('click', (e) => enableNotifTracking(!isOn(e.currentTarget)));
+    $('tx-share').addEventListener('change', onShareChange);
     document.addEventListener('input', (e) => {
         const box = e.target.closest && e.target.closest('[data-sms-charged]');
         if (!box) return;

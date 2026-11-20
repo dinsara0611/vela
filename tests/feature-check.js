@@ -3182,6 +3182,35 @@ export async function run() {
         return (exact1 && card && exact2) || `saved estimate fixed ${exact1} (${fixed && fixed.amount} vs ${real}), one waiting card with rupees ${card} (${q.length}), added once exact ${exact2} (${added.map((t) => t.amount).join(', ')})`;
     });
 
+    await T('Someone\'s share of a bill: sister gives Rs 1,000 for Netflix; it goes into the Bills fund, not the budget; deleting it takes it back out', async () => {
+        const st = s();
+        const keep = { sections: st.config.sections, moves: st.config.sectionMoves };
+        st.config.sections = [{ id: 'sh-bills', name: 'Bills', mode: 'fixed', value: 0, currency: 'LKR', color: 'blue', icon: 'i-wallet', accountIds: [] }];
+        st.config.sectionMoves = [];
+        st.recurring.push({ id: 'sh-nf', type: 'expense', name: 'Netflix', amount: 3458.18, currency: 'LKR', category: 'Subscriptions', frequency: 'monthly', nextDate: g('toISODate')(g('addDays')(new Date(), 20)), anchorDay: 15, autoLog: false, accountId: st.accounts[0].id, createdAt: 1 });
+        g('saveState')();
+        g('openAddTx')('income'); await wait(300);
+        const shown = !$('tx-share-field').hidden && [...$('tx-share').options].some((o) => o.value === 'sh-nf');
+        $('tx-amount').value = '1000'; $('tx-amount').dispatchEvent(new Event('input', { bubbles: true }));
+        $('tx-desc').value = 'Sister for Netflix';
+        $('tx-share').value = 'sh-nf'; $('tx-share').dispatchEvent(new Event('change', { bubbles: true }));
+        const hint = /Bills fund/.test($('tx-share-hint').textContent);
+        await g('submitTx')(); await wait(600);
+        const rec = s().transactions.find((t) => t.desc === 'Sister for Netflix');
+        const inFund = g('sectionBalances')()['sh-bills'] === 1000;
+        const notBudget = rec && rec.inBudget === false && rec.shareOf === 'sh-nf' && !g('countsForBudget')(rec);
+        const divideClosed = !g('isSheetOpen')('modal-divide');
+        state_del: {
+            st.transactions = st.transactions.filter((t) => t.id !== (rec && rec.id));
+            st.config.sectionMoves = g('secMoves')().filter((m) => !(m.incomeId === (rec && rec.id) && m.kind !== 'move'));
+        }
+        const back = (g('sectionBalances')()['sh-bills'] || 0) === 0;
+        st.recurring = st.recurring.filter((b) => b.id !== 'sh-nf');
+        Object.assign(st.config, { sections: keep.sections, sectionMoves: keep.moves });
+        g('saveState')();
+        return (shown && hint && inFund && notBudget && divideClosed && back) || `row ${shown}, hint ${hint}, in Bills fund ${inFund} (${JSON.stringify(g('sectionBalances')())}), out of budget ${notBudget}, no split sheet ${divideClosed}, deleted back ${back}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };
