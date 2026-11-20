@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.62.5';
+const APP_VERSION = '4.62.6';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -3633,6 +3633,35 @@ const recordedMatch = (i) => state.transactions.find((t) => t.bank && (
     t.bank.smsId === i.id || (t.bank.sourceIds || []).includes(i.id) || (i.dedupe && i.ref && t.bank.dedupe === i.dedupe) || sameDetection(i, recordedAsDetection(t)) === 'same'));
 const smsAlreadyRecorded = (i) => !!recordedMatch(i);
 // Two detections of one transaction become one: sources are listed together and missing details filled in.
+const fxPairFits = (usd, lkr, acc) => {
+    if (!usd || !lkr || !acc || !fxApplies(acc) || usd.currency === lkr.currency || lkr.currency !== acc.currency) return false;
+    if (usd.bank !== lkr.bank || usd.type !== 'expense' || lkr.type !== 'expense') return false;
+    const days = daysBetween(parseDate(usd.date), parseDate(lkr.date));
+    if (days < -1 || days > 10) return false;
+    if (usd.merchant && lkr.merchant && !merchantsAgree(usd.merchant, lkr.merchant)) return false;
+    const est = fxCharge(usd.amount, usd.currency, acc);
+    // Both name the same shop: the day's rate can differ a little. No shop named on one side: only very close.
+    const named = !!(usd.merchant && lkr.merchant);
+    return named ? Math.abs(lkr.amount - est) <= est * 0.06 : (days <= 3 && Math.abs(lkr.amount - est) <= est * 0.015);
+};
+const fxAccFor = (i) => state.accounts.find((a) => a.id === smsAccountMatch(i).id) || state.accounts.find((a) => fxApplies(a) && accountBankName(a) === i.bank);
+// Already in Vela as an estimate: the bank's rupee message makes it exact (and teaches the charge).
+const settleRecordedFx = (i) => {
+    if (i.type !== 'expense' || i.fx) return null;
+    const t = state.transactions.find((x) => x.type === 'expense' && x.bank && x.fx && x.fx.estimated && x.currency === i.currency
+        && fxPairFits({ ...recordedAsDetection(x), amount: x.fx.amount, currency: x.fx.currency, type: 'expense', merchant: (x.bank && x.bank.merchant) || x.desc, date: x.date },
+            i, state.accounts.find((a) => a.id === x.accountId)));
+    if (!t) return null;
+    const acc = state.accounts.find((a) => a.id === t.accountId);
+    const fee = learnFxFee(acc, t.fx.amount, t.fx.currency, i.amount);
+    t.amount = round2(i.amount);
+    t.fx = { ...t.fx, fee: fee === null ? t.fx.fee : fee, estimated: false };
+    t.bank.sources = [...new Set((t.bank.sources || ['sms']).concat(i.sources))];
+    t.bank.sourceIds = [...new Set((t.bank.sourceIds || [t.bank.smsId]).concat(i.id))];
+    queueSync('transaction', t.id, 'upsert');
+    showToast(`${t.desc}: exact amount from ${i.bank}, ${formatCurrency(t.amount, t.currency)}${fee !== null ? `. Vela learned the charge (${fee}%)` : ''}`, 'success');
+    return t;
+};
 const mergeDetection = (into, i) => {
     into.sources = [...new Set(sourceList(into).concat(sourceList(i)))];
     into.sourceIds = [...new Set((into.sourceIds || [into.id]).concat(i.sourceIds || [i.id]))];
@@ -3759,7 +3788,7 @@ const smsCardHtml = (i) => {
             if (i.fx || i.type !== 'expense' || !acc || !fxApplies(acc) || i.currency === acc.currency) return [];
             const est = fxCharge(i.amount, i.currency, acc);
             const typed = smsCharged[i.id];
-            return [['Taken from your account', `<label class="sms-charged"><span class="sms-charged-cur">${escapeHtml(symbolFor(acc.currency))}</span><input type="text" class="input" inputmode="decimal" autocomplete="off" data-sms-charged="${escapeHtml(i.id)}" value="${escapeHtml(String(typed > 0 ? typed : est))}" aria-label="Amount taken from your account"></label><span class="faint sms-charged-note">${typed > 0 ? 'What your bank took' : `Estimate: market rate + ${fxFeeFor(acc)}% ${fxFeeLearned(acc) ? 'your bank\'s charge' : bankFxFee(acc) !== undefined ? `${escapeHtml(accountBankName(acc))}'s published charge` : 'typical bank charge'}. Type the exact amount from your bank app and Vela learns the charge.`}</span>`]];
+            return [['Taken from your account', `<label class="sms-charged"><span class="sms-charged-cur">${escapeHtml(symbolFor(acc.currency).trim())}</span><input type="text" class="input" inputmode="decimal" autocomplete="off" data-sms-charged="${escapeHtml(i.id)}" value="${escapeHtml(String(typed > 0 ? typed : est))}" aria-label="Amount taken from your account"></label><span class="faint sms-charged-note">${typed > 0 ? (i.sources.length > 1 ? `Exact: what ${escapeHtml(i.bank)} took` : 'What your bank took') : `Estimate: market rate + ${fxFeeFor(acc)}% ${fxFeeLearned(acc) ? 'your bank\'s charge' : bankFxFee(acc) !== undefined ? `${escapeHtml(accountBankName(acc))}'s published charge` : 'typical bank charge'}. When ${escapeHtml(i.bank)} sends the rupee amount, Vela uses it. Or type it from your bank app once and Vela learns the charge.`}</span>`]];
         })(),
         ...(i.feeKind ? (() => {
             const acc = state.accounts.find((a) => a.id === smsAccountMatch(i).id) || state.accounts.find((a) => a.id === state.config.lastAccount);
@@ -4179,6 +4208,26 @@ const smsTake = (messages) => {
         known.add(String(m.id));
         const i = parseBankSms(m);
         if (!i) { skipped.push(String(m.id)); return; }
+        // The bank's rupee message for a dollar payment already in Vela as an estimate: now exact, not a new entry.
+        if (settleRecordedFx(i)) { touched = true; skipped.push(i.id); return; }
+        // The same pair while both still wait for review: one card, the rupees are what was taken.
+        const fxPair = smsQueue.concat(fresh).find((w) => {
+            const usd = w.currency !== i.currency ? (w.currency === 'LKR' ? i : w) : null;
+            const lkr = usd === w ? i : w;
+            return usd && fxPairFits(usd, lkr, fxAccFor(usd));
+        });
+        if (fxPair) {
+            const usd = fxPair.currency !== 'LKR' ? fxPair : i;
+            const lkr = usd === fxPair ? i : fxPair;
+            if (usd === fxPair) { smsCharged[usd.id] = round2(lkr.amount); mergeDetection(fxPair, i); }
+            else {
+                // The rupee one came first: it becomes the dollar payment's card, with its exact amount.
+                Object.assign(fxPair, { ...usd, id: fxPair.id, sources: fxPair.sources, sourceIds: fxPair.sourceIds, bodyKeys: fxPair.bodyKeys });
+                smsCharged[fxPair.id] = round2(lkr.amount);
+                mergeDetection(fxPair, i);
+            }
+            return;
+        }
         // Already added to Vela (e.g. the SMS was confirmed, now the notification comes): note the source only.
         const rec = recordedMatch(i);
         if (rec) {

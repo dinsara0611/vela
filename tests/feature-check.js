@@ -3146,6 +3146,42 @@ export async function run() {
         return (!!box && exact && learned) || `box ${!!box}, exact saved ${exact} (${paid && paid.amount}), learned ${learned} (${acc.fxFee})`;
     });
 
+    await T('Dollar payment + the bank\'s rupee message: exact amount by itself (saved estimate fixed, waiting card filled), never a second entry', async () => {
+        localStorage.removeItem('VELA_SMS');
+        const st = s();
+        st.accounts.push({ id: 'acc-st', name: 'Commercial Bank', kind: 'bank', currency: 'LKR', opening: 50000, createdAt: 0 });
+        g('saveState')();
+        const acc = () => s().accounts.find((a) => a.id === 'acc-st');
+        const t0 = Date.now();
+        const usdBody = (n) => `Dear Cardholder, Purchase at NETFLIX.COM for USD 9.99 has been authorised on your debit card ending #5174. ${n}`;
+        // 1. Already added as an estimate; later the bank app says the rupees.
+        const i1 = g('parseBankSms')({ id: `sms-${t0}-u1`, source: 'sms', address: 'COMBANK', body: usdBody('A'), date: t0 });
+        const rec = g('smsApply')(i1, 'acc-st');
+        const real = g('round2')(rec.amount + 2.22);
+        const n0 = s().transactions.length;
+        const lkr = (id, n) => ({ id, source: 'notification', address: 'net.combank.passbook', bank: 'Commercial Bank', body: `Debit Alert. LKR ${real.toFixed(2)} debited from A/C 8001XXXX559 for NETFLIX.COM ${n}`, date: t0 + 3600000 });
+        g('smsTake')([lkr(`ntf-${t0}-l1`, 'x')]);
+        const fixed = s().transactions.find((t) => t.id === rec.id);
+        const exact1 = fixed.amount === real && fixed.fx.estimated === false && s().transactions.length === n0 && Number.isFinite(acc().fxFee);
+        // 2. Both still waiting: one card, its box holds the bank's rupees.
+        st.transactions = st.transactions.filter((t) => t.accountId !== 'acc-st');
+        delete acc().fxFee;
+        g('saveState')();
+        const before = g('smsQueue').length;
+        g('smsTake')([{ id: `sms-${t0}-u2`, address: 'COMBANK', body: usdBody('B'), date: t0 }]);
+        g('smsTake')([lkr(`ntf-${t0}-l2`, 'y')]);
+        const q = g('smsQueue').slice(before);
+        const card = q.length === 1 && q[0].currency === 'USD' && g('smsCharged')[q[0].id] === real;
+        if (q.length === 1) { g('smsApply')(q[0], 'acc-st'); g('smsHandled')([q[0].id]); await wait(200); }
+        const added = s().transactions.filter((t) => t.accountId === 'acc-st');
+        const exact2 = added.length === 1 && added[0].amount === real && added[0].fx && added[0].fx.estimated === false;
+        if (g('isSheetOpen')('modal-sms')) await close('modal-sms');
+        st.transactions = st.transactions.filter((t) => t.accountId !== 'acc-st');
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-st');
+        g('saveState')();
+        return (exact1 && card && exact2) || `saved estimate fixed ${exact1} (${fixed && fixed.amount} vs ${real}), one waiting card with rupees ${card} (${q.length}), added once exact ${exact2} (${added.map((t) => t.amount).join(', ')})`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };
