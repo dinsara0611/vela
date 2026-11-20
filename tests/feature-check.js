@@ -3220,6 +3220,30 @@ export async function run() {
         return (has && subs.every((c) => c === 'Subscriptions') && util.every((c) => c === 'Utilities') && sms.category === 'Subscriptions') || `category ${has}, subs ${subs}, utilities ${util}, sms ${sms && sms.category}`;
     });
 
+    await T('Income form: "Divide into my funds" switch; on for other income divides it and is remembered for that kind', async () => {
+        const st = s();
+        const keep = { sections: st.config.sections, moves: st.config.sectionMoves, cats: st.config.fundIncomeCats };
+        st.config.sections = [{ id: 'fr-bills', name: 'Bills', mode: 'percent', value: 50, currency: 'LKR', color: 'blue', icon: 'i-wallet', accountIds: [] }, { id: 'fr-sav', name: 'Savings', mode: 'rest', value: 0, currency: 'LKR', color: 'green', icon: 'c-Investment', accountIds: [] }];
+        st.config.sectionMoves = [];
+        st.config.fundIncomeCats = ['Salary'];
+        g('saveState')();
+        g('openAddTx')('income'); await wait(300);
+        g('selectTxCategory')('OtherIncome'); await wait(50);
+        const shownOff = !$('tx-funds-row').hidden && !g('isOn')($('tx-funds'));
+        $('tx-funds').click(); await wait(50);
+        const on = g('isOn')($('tx-funds'));
+        $('tx-amount').value = '30000'; $('tx-amount').dispatchEvent(new Event('input', { bubbles: true }));
+        $('tx-desc').value = 'Rent from house';
+        await g('submitTx')(); await wait(900);
+        const divide = g('isSheetOpen')('modal-divide');
+        const remembered = g('fundIncomeCats')().has('OtherIncome');
+        if (divide) await close('modal-divide');
+        st.transactions = st.transactions.filter((t) => t.desc !== 'Rent from house');
+        Object.assign(st.config, { sections: keep.sections, sectionMoves: keep.moves, fundIncomeCats: keep.cats });
+        g('saveState')();
+        return (shownOff && on && divide && remembered) || `row shown off ${shownOff}, turned on ${on}, divide sheet ${divide}, remembered ${remembered}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

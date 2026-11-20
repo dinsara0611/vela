@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.63.1">
+    <link rel="stylesheet" href="style.css?v=4.63.2">
 </head>
 <body data-view="dashboard">
 
@@ -825,6 +825,10 @@
                         <label class="field-label" for="tx-share">Someone’s share of a bill?</label>
                         <div class="select"><select id="tx-share" class="input"></select></div>
                         <span class="field-hint" id="tx-share-hint"></span>
+                    </div>
+                    <div class="setting-row tx-funds-row" id="tx-funds-row" hidden>
+                        <div class="setting-text"><span class="setting-title">Divide into my funds</span><span class="setting-desc" id="tx-funds-desc"></span></div>
+                        <button class="switch" type="button" role="switch" aria-checked="false" id="tx-funds" aria-label="Divide into my funds"></button>
                     </div>
                     <div class="setting-row tx-inbudget-row" id="tx-inbudget-row" hidden>
                         <div class="setting-text"><span class="setting-title">Count in my budget</span><span class="setting-desc" id="tx-inbudget-desc"></span></div>
@@ -2039,7 +2043,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.63.1"></script>
+    <script src="app.js?v=4.63.2"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

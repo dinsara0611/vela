@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.63.1';
+const APP_VERSION = '4.63.2';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -5704,6 +5704,7 @@ const setTxType = (type, keepCategory) => {
     updateChargedRow();
     $('tx-billref-field').hidden = type !== 'expense';
     updateShareRow();
+    updateFundsRow();
 };
 let txChargedTouched = false;
 // The bill's own number on an entry: CEB / water account number, or the phone number of a phone bill or reload.
@@ -5757,7 +5758,21 @@ const fundForBill = (bill) => {
     if (learned && secById(learned)) return secById(learned);
     return secList().find((x) => /bill/i.test(x.name)) || null;
 };
-const onShareChange = () => { if (txShareBill()) txInBudget = false; else txInBudget = null; updateShareRow(); updateInBudgetRow(); };
+let txFundsOn = null;
+const txIncomeCat = () => (document.querySelector('input[name="tx-category"]:checked') || {}).value || '';
+const txFundsWanted = () => (typeof txFundsOn === 'boolean' ? txFundsOn : fundIncomeCats().has(txIncomeCat()));
+const updateFundsRow = () => {
+    const show = txType === 'income' && secList().length > 0 && !$('tx-id').value && !txShareBill();
+    $('tx-funds-row').hidden = !show;
+    if (!show) return;
+    const on = txFundsWanted();
+    const cat = catById(txIncomeCat(), 'income');
+    setSwitch($('tx-funds'), on);
+    $('tx-funds-desc').textContent = on
+        ? `After you add it, Vela divides it into your funds (${secList().map((x) => x.name).slice(0, 3).join(', ')}${secList().length > 3 ? '…' : ''}).`
+        : `Kept out of your funds.${cat ? ` Vela remembers this for ${cat.name}.` : ''}`;
+};
+const onShareChange = () => { if (txShareBill()) txInBudget = false; else txInBudget = null; updateShareRow(); updateInBudgetRow(); updateFundsRow(); };
 const txShareBill = () => state.recurring.find((b) => b.id === $('tx-share').value && b.type === 'expense') || null;
 const updateShareRow = () => {
     const bills = state.recurring.filter((b) => b.type === 'expense');
@@ -5866,6 +5881,7 @@ const openAddTx = (type = 'expense') => {
     txBefore = false;
     txBeforeTouched = false;
     txInBudget = null;
+    txFundsOn = null;
     $('tx-share').value = '';
     txParts = 0;
     txChargedTouched = false;
@@ -6077,7 +6093,14 @@ const submitTx = async () => {
     queueSync('transaction', record.id, 'upsert');
     if (receipt && !receipt.path) uploadReceipt(record);
     closeSheet('modal-tx');
-    if (txType === 'income' && !id && secList().length && !isUpcoming(record) && !record.shareOf && allocatesIncome(record)) {
+    const divideIt = txType === 'income' && !id && secList().length && !record.shareOf && txFundsWanted();
+    if (txType === 'income' && !id && !record.shareOf && typeof txFundsOn === 'boolean' && txFundsOn !== fundIncomeCats().has(record.category)) {
+        const set = fundIncomeCats();
+        if (txFundsOn) set.add(record.category); else set.delete(record.category);
+        state.config.fundIncomeCats = [...set];
+        saveState();
+    }
+    if (divideIt && !isUpcoming(record)) {
         setTimeout(() => openDivide(record.id), 450);
     } else if (txType === 'income') {
         const d = parseDate(date);
@@ -6248,6 +6271,7 @@ let txPicks = [];
 const selectTxCategory = (id) => {
     const input = document.querySelector(`input[name="tx-category"][value="${CSS.escape(id)}"]`);
     if (input) input.checked = true;
+    if (txType === 'income' && typeof updateFundsRow === 'function') { txFundsOn = null; updateFundsRow(); }
 };
 
 // ---- Name suggestions while typing (entries, bills and regular income, goals, people, accounts) ----
@@ -11034,7 +11058,8 @@ const initEvents = () => {
     $('tx-amount').addEventListener('input', () => { resetTxCover(); if (!$('tx-parts-row').hidden) updatePartsRow(); });
     $('tx-desc').addEventListener('change', () => { if (!$('tx-parts-row').hidden) updatePartsRow(); });
     $('tx-inbudget').addEventListener('click', () => { txInBudget = !isOn($('tx-inbudget')); updateInBudgetRow(); });
-    document.addEventListener('change', (e) => { if (e.target && e.target.name === 'tx-category') updateInBudgetRow(); });
+    document.addEventListener('change', (e) => { if (e.target && e.target.name === 'tx-category') { txFundsOn = null; updateInBudgetRow(); updateFundsRow(); } });
+    $('tx-funds').addEventListener('click', () => { txFundsOn = !isOn($('tx-funds')); updateFundsRow(); });
     $('tx-date').addEventListener('change', updateBeforeRow);
     $('tx-time').addEventListener('change', updateBeforeRow);
     $('tx-account').addEventListener('change', () => { updateBeforeRow(); txChargedTouched = false; updateChargedRow(); renderTxSections(); });
