@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.63.5';
+const APP_VERSION = '4.63.6';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -4093,7 +4093,10 @@ const smsConfirmMatch = (id) => {
         if (t) {
             t.bank = bankMeta(i);
             const acc = state.accounts.find((a) => a.id === (smsChosenAccount(i) || t.accountId));
-            if (acc && i.currency !== t.currency && fxApplies(acc) && acc.currency === t.currency) {
+            // A dollar payment from a rupee account: what the account was charged (the amount typed on the card, else the
+            // estimate), whether the bill's entry was kept in rupees or in dollars.
+            if (acc && fxApplies(acc) && i.currency !== acc.currency && (t.currency === acc.currency || t.currency === i.currency)) {
+                t.currency = acc.currency;
                 const c = smsForeignCharge(i, acc);
                 t.amount = c.amount;
                 t.fx = c.fx;
@@ -4107,6 +4110,11 @@ const smsConfirmMatch = (id) => {
         }
     } else if (match.how === 'link') {
         match.tx.bank = bankMeta(i);
+        const acc = state.accounts.find((a) => a.id === (smsChosenAccount(i) || match.tx.accountId));
+        if (acc && fxApplies(acc) && i.currency !== acc.currency && match.tx.currency === i.currency && smsCharged[i.id] > 0) {
+            const c = smsForeignCharge(i, acc);
+            Object.assign(match.tx, { amount: c.amount, currency: acc.currency, fx: c.fx, accountId: acc.id });
+        }
         saveState();
         queueSync('transaction', match.tx.id, 'upsert');
         showToast(`“${match.tx.desc}” is now bank-verified`, 'success');

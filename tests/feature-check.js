@@ -3147,6 +3147,33 @@ export async function run() {
         return (!!box && exact && learned) || `box ${!!box}, exact saved ${exact} (${paid && paid.amount}), learned ${learned} (${acc.fxFee})`;
     });
 
+    await T('Review card: Netflix bill kept in dollars; the rupee amount typed on the card is what is saved', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-tz', name: 'Commercial Bank', kind: 'bank', currency: 'LKR', opening: 50000, createdAt: 0 });
+        const due = g('toISODate')(g('addDays')(new Date(), -5));
+        const est0 = g('fxCharge')(9.99, 'USD', st.accounts.find((a) => a.id === 'acc-tz'));
+        const real = g('round2')(est0 + 2.22);
+        st.recurring.push({ id: 'tz-bill', type: 'expense', name: 'Netflix', amount: 9.99, currency: 'USD', category: 'Subscriptions', frequency: 'monthly', nextDate: due, anchorDay: 15, autoLog: false, accountId: 'acc-tz', createdAt: 1 });
+        g('saveState')();
+        const t0 = Date.now();
+        const i = g('parseBankSms')({ id: `sms-${t0}-tz`, source: 'sms', address: 'COMBANK', body: 'Dear Cardholder, Purchase at NETFLIX.COM for USD 9.99 has been authorised on your debit card ending #5174.', date: t0 });
+        g('smsQueue').push(i);
+        g('showSmsSheet')(); await wait(400);
+        const box = document.querySelector(`[data-sms-charged="${i.id}"]`);
+        if (box) { box.value = String(real); box.dispatchEvent(new Event('input', { bubbles: true })); }
+        g('smsConfirmMatch')(i.id); await wait(400);
+        const paid = g('sortByNewest')(s().transactions.filter((t) => t.recurringId === 'tz-bill'))[0];
+        const exact = paid && paid.amount === real && paid.currency === 'LKR' && paid.fx && paid.fx.estimated === false && paid.fx.amount === 9.99;
+        const acc = s().accounts.find((a) => a.id === 'acc-tz');
+        const learned = Number.isFinite(acc.fxFee) && Math.abs(g('fxCharge')(9.99, 'USD', acc) - real) < 0.6;
+        if (g('isSheetOpen')('modal-sms')) await close('modal-sms');
+        st.transactions = st.transactions.filter((t) => t.recurringId !== 'tz-bill' && t.accountId !== 'acc-tz');
+        st.recurring = st.recurring.filter((b) => b.id !== 'tz-bill');
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-tz');
+        g('saveState')();
+        return (!!box && exact && learned) || `box ${!!box}, exact saved ${exact} (${paid && paid.amount}), learned ${learned} (${acc.fxFee})`;
+    });
+
     await T('Dollar payment + the bank\'s rupee message: exact amount by itself (saved estimate fixed, waiting card filled), never a second entry', async () => {
         localStorage.removeItem('VELA_SMS');
         const st = s();
