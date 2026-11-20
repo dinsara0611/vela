@@ -2945,6 +2945,25 @@ export async function run() {
         return (hero && strip && spendShown && back) || `hero hidden ${hero}, accounts hidden ${strip}, spending shown ${spendShown}, shown again ${back}`;
     });
 
+    await T('Q+ CEB message: Rs. 11,560, Commercial Bank, CEB account 4205044100 (not the reference), no fake card number; goal saving goes into Savings', async () => {
+        const st = s();
+        const body = 'Your Q+ transaction at CEYLON ELECTRICITY BOARD for LKR 11,560.00 has been successful. Reference Number 632308323011  (CEB Account No - 4205044100.)';
+        const r = g('parseBankSms')({ id: `sms-${Date.now()}-qplus`, source: 'shared', address: '', body, date: Date.now() });
+        const ok = r && r.amount === 11560 && r.billRef === '4205044100' && r.last4 !== '4100' && r.bank === 'Commercial Bank' && /CEB/.test(r.desc);
+        // PS5 Pro goal without a fund: Save Rs. 2K goes into the Savings fund.
+        const keep = { sections: st.config.sections, moves: st.config.sectionMoves, sav: st.savings };
+        st.config.sections = [{ id: 'g-sav', name: 'Savings', mode: 'rest', value: 0, currency: 'LKR', color: 'green', icon: 'c-Investment', accountIds: [] }];
+        st.config.sectionMoves = [];
+        st.savings = [{ id: 'g-ps5', name: 'PS5 Pro', target: 400000, saved: 0, currency: 'LKR', deadline: null, accountId: null, monthly: 2000, months: {}, createdAt: 1 }];
+        g('saveState')();
+        g('openDeposit')('g-ps5'); await wait(300);
+        $('funds-amount').value = '2000'; g('submitFunds')(); await wait(300);
+        const inSavings = s().savings[0].fundId === 'g-sav' && g('sectionBalances')()['g-sav'] === 2000 && s().savings[0].saved === 2000;
+        Object.assign(st.config, { sections: keep.sections, sectionMoves: keep.moves }); st.savings = keep.sav;
+        g('saveState')();
+        return (ok && inSavings) || `parsed ${r && JSON.stringify({ a: r.amount, ref: r.billRef, last4: r.last4, bank: r.bank, desc: r.desc })}, goal money in Savings ${inSavings}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

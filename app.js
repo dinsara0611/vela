@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.60.0';
+const APP_VERSION = '4.60.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2334,7 +2334,7 @@ let smsEditing = null; // the message being edited in the entry form
 // (see tests/feature-check.js). `verified` banks can be added automatically from the start; the others first have
 // to be read correctly a few times on this phone (see smsLearn).
 const SMS_BANKS = [
-    { name: 'Commercial Bank', short: 'ComBank', logo: 'combank', sender: /^(combank|combnk|commercialb|cbc$)/i, body: /\b(combank|com ?bank|commercial bank)\b/i, verified: true },
+    { name: 'Commercial Bank', short: 'ComBank', logo: 'combank', sender: /^(combank|combnk|commercialb|cbc$)/i, body: /\b(combank|com ?bank|commercial bank)\b|\bq\+\s*(?:transaction|payment)/i, verified: true },
     { name: 'Sampath Bank', short: 'Sampath', logo: 'sampath', sender: /^(sampath|samp(cc|txn|bank))/i, body: /\bsampath\b/i },
     { name: 'HNB', short: 'HNB', logo: 'hnb', sender: /^hnb/i, body: /\b(hnb|hatton national)\b/i },
     { name: 'BOC', short: 'BOC', logo: 'boc', sender: /^(boc$|boc(sl|bank|alert|smart)|bankofceylon)/i, body: /\b(boc|bank of ceylon)\b/i },
@@ -3383,6 +3383,7 @@ const parseBankSms = (msg) => {
         arrivedAt: Number(msg.date) || Date.now(), fromMessage: when.fromMessage || !shared,
         ...smsFeeFacts(type, kind.kind, t, body, bankName),
         ...(smsBillRef(type, kind.kind, t, body) ? { billRef: smsBillRef(type, kind.kind, t, body) } : {}),
+        ...(last4 && smsBillRef(type, kind.kind, t, body) && smsBillRef(type, kind.kind, t, body).replace(/\D/g, '').endsWith(last4) ? { last4: null } : {}),
         refKeys: [...new Set((body.match(/\d[\d -]{4,18}\d/g) || []).map((n) => refDigits(n)).filter((n) => n.length >= 6 && n.length <= 16).map((n) => hashToInt(n)))].slice(0, 8)
     };
 };
@@ -3455,22 +3456,17 @@ const replaceEstimatedFee = (i, accountId) => {
 // number (CEB, LECO, Water Board). Your own bank account (written with X's) and amounts or dates are never taken.
 const BILL_WORDS = /\b(bill|reload|top-?up|recharge|ceb|leco|nwsdb|water ?board|water|electricity|dialog|mobitel|slt|hutch|airtel|telecom|peo ?tv|broadband|utility)\b/i;
 const smsBillRef = (type, kind, t, body) => {
-    if (type !== 'expense' || !(kind === 'bill' || kind === 'online' || kind === 'debit' || BILL_WORDS.test(t))) return null;
-    if (!BILL_WORDS.test(t)) return null;
+    if (type !== 'expense' || !BILL_WORDS.test(t)) return null;
+    const ok = (raw) => { const d = String(raw).replace(/\D/g, ''); return d.length >= 6 && d.length <= 16 && !/^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/.test(String(raw).trim()); };
+    // "CEB Account No - 4205044100", "Water bill A/C 10/24/123/456/78", "Consumer No: 123456789"
+    const util = /\b(?:ceb|leco|nwsdb|water(?:\s*board)?|electricity|electric|bill|consumer|customer|connection|premises)\s*(?:a\/?c(?:count)?|acc(?:ount)?|acct|no|number|id)\.?\s*(?:no\.?|number|#)?\s*[:\-]?\s*(\d[\d\s\/-]{4,20}\d)/i.exec(body);
+    if (util && ok(util[1]) && !/[xX*]/.test(util[0])) return util[1].trim().replace(/\s+/g, ' ');
+    // "... for account 0412345678" / "to A/C 123456789": the account being paid (not "from A/C", which is yours).
+    const paid = /\b(?:for|to)\s+(?:the\s+)?(?:a\/?c(?:count)?|acc(?:ount)?|acct)\.?\s*(?:no\.?|number|#)?\s*[:\-]?\s*(\d[\d\s\/-]{4,20}\d)/i.exec(body);
+    if (paid && ok(paid[1]) && !/[xX*]/.test(paid[0])) return paid[1].trim().replace(/\s+/g, ' ');
     // A mobile number in any form: 0771234567, 077 123 4567, +94 77 123 4567, 94771234567.
-    const ph = body.match(/(?:\+?94[\s-]?|0)7\d[\s-]?\d{3}[\s-]?\d{4}\b/);
+    const ph = body.match(/(?:\+?94[\s-]?|\b0)7\d[\s-]?\d{3}[\s-]?\d{4}\b/);
     if (ph) { const d = ph[0].replace(/\D/g, ''); return `0${d.slice(-9)}`; }
-    // An account number after "a/c", "acc", "account", "for", "no", "ref" (not the bank account with X's).
-    const re = /\b(?:a\/?c(?:count)?|acc(?:ount)?|acct|for|no|number|ref(?:erence)?|consumer|customer)\.?\s*(?:no\.?|number|#)?\s*[:\-]?\s*((?:\d[\d\s\/-]{4,20}\d))(?![\d.,]*\s*(?:lkr|rs))/gi;
-    let m;
-    while ((m = re.exec(body))) {
-        const raw = m[1];
-        const d = raw.replace(/\D/g, '');
-        if (d.length < 6 || d.length > 16) continue;
-        if (/[xX*]/.test(body.slice(Math.max(0, m.index), m.index + m[0].length + 2))) continue;
-        if (/^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/.test(raw.trim())) continue; // a date
-        return raw.trim().replace(/\s+/g, ' ');
-    }
     return null;
 };
 const SMS_CHECK_SHARED = 'pasted or shared message, so check it matches your bank app';
@@ -6726,6 +6722,11 @@ const submitFunds = () => {
     const delta = convertAmount(amount, currency, goal.currency);
     if (fundsMode === 'withdraw' && delta > goal.saved + 0.005) return fieldError($('funds-amount'), `You can withdraw up to ${formatCurrency(goal.saved, goal.currency)} from this goal.`);
     // The goal keeps its money in a fund: the money goes into (or comes out of) that fund, from money in no fund.
+    // No fund chosen yet: keep goal money in your Savings fund (if you have one), so funds and accounts still add up.
+    if (!goal.fundId && fundsMode === 'deposit') {
+        const sav = secList().find((x) => /sav/i.test(x.name));
+        if (sav) { goal.fundId = sav.id; setTimeout(() => showToast(`Kept in your ${sav.name} fund`, 'info'), 900); }
+    }
     const gFund = goal.fundId && secById(goal.fundId);
     const inDisp = round2(toDisplay(amount, currency));
     if (gFund) {
