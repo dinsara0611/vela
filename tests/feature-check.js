@@ -2058,7 +2058,7 @@ export async function run() {
         const t0 = Date.now();
         const claude = g('parseBankSms')({ id: `sms-${t0}-901`, source: 'sms', address: 'COMBANK', body: 'Dear Cardholder, Purchase at ANTHROPIC* CLAUDE SUB +14152360599 US for USD 20.00 on 05/11/26 07:37 PM has been authorised on your debit card ending #5174.', date: t0 });
         const card = g('smsCardHtml')(claude);
-        const shownEstimate = /From your account/.test(card) && /6,240/.test(card);
+        const shownEstimate = /Taken from your account/.test(card) && /value="6240"/.test(card);
         const rec = g('smsApply')(claude, 'acc-cb');
         const est = rec.currency === 'LKR' && rec.amount === 6240 && rec.fx && rec.fx.amount === 20 && rec.fx.estimated === true && bal() === 100000 - 6240;
         // You enter what the bank really took: 6,300 -> Vela learns 5%.
@@ -3117,6 +3117,33 @@ export async function run() {
         st.accounts = st.accounts.filter((a) => a.id !== 'acc-ex');
         g('saveState')();
         return (marked && !!btn && saved && learned) || `marked ${marked}, button ${!!btn}, exact saved ${saved} (${t && t.amount} vs ${real}), learned ${learned}`;
+    });
+
+    await T('Review card: type the rupee amount your bank app shows for a dollar payment; Mark as paid saves exactly that and learns the charge', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-ty', name: 'Commercial Bank', kind: 'bank', currency: 'LKR', opening: 50000, createdAt: 0 });
+        const due = g('toISODate')(g('addDays')(new Date(), -5));
+        const est0 = g('fxCharge')(9.99, 'USD', st.accounts.find((a) => a.id === 'acc-ty'));
+        const real = g('round2')(est0 + 2.22);
+        st.recurring.push({ id: 'ty-bill', type: 'expense', name: 'Netflix', amount: g('round2')(est0 + 3.23), currency: 'LKR', category: 'Subscriptions', frequency: 'monthly', nextDate: due, anchorDay: 15, autoLog: false, accountId: 'acc-ty', createdAt: 1 });
+        g('saveState')();
+        const t0 = Date.now();
+        const i = g('parseBankSms')({ id: `sms-${t0}-ty`, source: 'sms', address: 'COMBANK', body: 'Dear Cardholder, Purchase at NETFLIX.COM for USD 9.99 has been authorised on your debit card ending #5174.', date: t0 });
+        g('smsQueue').push(i);
+        g('showSmsSheet')(); await wait(400);
+        const box = document.querySelector(`[data-sms-charged="${i.id}"]`);
+        if (box) { box.value = String(real); box.dispatchEvent(new Event('input', { bubbles: true })); }
+        g('smsConfirmMatch')(i.id); await wait(400);
+        const paid = g('sortByNewest')(s().transactions.filter((t) => t.recurringId === 'ty-bill'))[0];
+        const exact = paid && paid.amount === real && paid.fx && paid.fx.estimated === false && paid.fx.amount === 9.99;
+        const acc = s().accounts.find((a) => a.id === 'acc-ty');
+        const learned = Number.isFinite(acc.fxFee) && Math.abs(g('fxCharge')(9.99, 'USD', acc) - real) < 0.6;
+        if (g('isSheetOpen')('modal-sms')) await close('modal-sms');
+        st.transactions = st.transactions.filter((t) => t.recurringId !== 'ty-bill' && t.accountId !== 'acc-ty');
+        st.recurring = st.recurring.filter((b) => b.id !== 'ty-bill');
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-ty');
+        g('saveState')();
+        return (!!box && exact && learned) || `box ${!!box}, exact saved ${exact} (${paid && paid.amount}), learned ${learned} (${acc.fxFee})`;
     });
 
     // Cloud sync against a fake account.

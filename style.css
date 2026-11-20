@@ -5039,3 +5039,9 @@ body.approve-waiting { overflow: hidden; }
 [data-edit-tx].is-held { transform: scale(.98); transition: transform .15s; }
 
 .txd-add { font-size: 14px; font-weight: 600; color: var(--primary-text, var(--primary)); display: inline-flex; align-items: center; gap: 4px; }
+
+/* Foreign payment on a review card: the rupee amount you can set to what your bank app shows. */
+.sms-charged { display: flex; align-items: center; gap: 6px; max-width: 220px; }
+.sms-charged .input { padding: 8px 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.sms-charged-cur { font-weight: 700; color: var(--text-2); }
+.sms-charged-note { display: block; font-size: 12px; margin-top: 4px; }

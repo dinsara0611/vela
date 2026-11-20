@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.62.4';
+const APP_VERSION = '4.62.5';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -3757,7 +3757,9 @@ const smsCardHtml = (i) => {
                 || state.accounts.find((a) => fxApplies(a) && accountBankName(a) === i.bank)
                 || state.accounts.find((a) => a.id === state.config.lastAccount && fxApplies(a)) || state.accounts.find(fxApplies);
             if (i.fx || i.type !== 'expense' || !acc || !fxApplies(acc) || i.currency === acc.currency) return [];
-            return [['From your account', `≈ ${escapeHtml(formatCurrency(fxCharge(i.amount, i.currency, acc), acc.currency))} <span class="faint">(market rate + ${fxFeeFor(acc)}% ${fxFeeLearned(acc) ? 'your bank\'s charge' : bankFxFee(acc) !== undefined ? `${accountBankName(acc)}'s published charge` : 'typical bank charge'})</span>`]];
+            const est = fxCharge(i.amount, i.currency, acc);
+            const typed = smsCharged[i.id];
+            return [['Taken from your account', `<label class="sms-charged"><span class="sms-charged-cur">${escapeHtml(symbolFor(acc.currency))}</span><input type="text" class="input" inputmode="decimal" autocomplete="off" data-sms-charged="${escapeHtml(i.id)}" value="${escapeHtml(String(typed > 0 ? typed : est))}" aria-label="Amount taken from your account"></label><span class="faint sms-charged-note">${typed > 0 ? 'What your bank took' : `Estimate: market rate + ${fxFeeFor(acc)}% ${fxFeeLearned(acc) ? 'your bank\'s charge' : bankFxFee(acc) !== undefined ? `${escapeHtml(accountBankName(acc))}'s published charge` : 'typical bank charge'}. Type the exact amount from your bank app and Vela learns the charge.`}</span>`]];
         })(),
         ...(i.feeKind ? (() => {
             const acc = state.accounts.find((a) => a.id === smsAccountMatch(i).id) || state.accounts.find((a) => a.id === state.config.lastAccount);
@@ -3913,6 +3915,17 @@ const pickSmsAccount = (accId) => {
 };
 // Adds one confirmed message. ATM withdrawals become a move from the bank account to Cash, so the cash
 // isn't counted as spent twice (once when withdrawn, again when spent).
+const smsCharged = {};
+const smsForeignCharge = (i, acc) => {
+    const typed = smsCharged[i.id];
+    const est = fxCharge(i.amount, i.currency, acc);
+    if (typed > 0 && Math.abs(typed - est) > 0.009) {
+        const fee = learnFxFee(acc, i.amount, i.currency, typed);
+        if (fee !== null) setTimeout(() => showToast(`Exact amount saved. Vela learned ${acc.name} takes about ${fee}% on foreign payments.`, 'success'), 700);
+        return { amount: round2(typed), fx: { amount: i.amount, currency: i.currency, rate: convertAmount(1, i.currency, acc.currency), fee: fee === null ? fxFeeFor(acc) : fee, estimated: false } };
+    }
+    return { amount: est, fx: { amount: i.amount, currency: i.currency, rate: convertAmount(1, i.currency, acc.currency), fee: fxFeeFor(acc), estimated: !(typed > 0) } };
+};
 const smsApply = (i, accountId) => {
     if (i.type === 'cardpay' || i.type === 'reversal') return null; // never an entry of their own
     const note = `From ${i.bank} (${sourceShort(i.sources)})${i.fx ? ` · ${formatCurrency(i.fx.amount, i.fx.currency)}` : ''}`;
@@ -3949,8 +3962,9 @@ const smsApply = (i, accountId) => {
             // The bank wrote both amounts: exact, and it teaches Vela this bank's charge.
             fx = { amount: i.fx.amount, currency: i.fx.currency, fee: learnFxFee(acc, i.fx.amount, i.fx.currency, i.amount), estimated: false };
         } else if (i.currency !== acc.currency) {
-            fx = { amount: i.amount, currency: i.currency, rate: convertAmount(1, i.currency, acc.currency), fee: fxFeeFor(acc), estimated: true };
-            amount = fxCharge(i.amount, i.currency, acc);
+            const c = smsForeignCharge(i, acc);
+            fx = c.fx;
+            amount = c.amount;
             currency = acc.currency;
         }
     }
@@ -4049,12 +4063,13 @@ const smsConfirmMatch = (id) => {
             t.bank = bankMeta(i);
             const acc = state.accounts.find((a) => a.id === (smsChosenAccount(i) || t.accountId));
             if (acc && i.currency !== t.currency && fxApplies(acc) && acc.currency === t.currency) {
-                t.amount = fxCharge(i.amount, i.currency, acc);
-                t.fx = { amount: i.amount, currency: i.currency, rate: convertAmount(1, i.currency, acc.currency), fee: fxFeeFor(acc), estimated: true };
+                const c = smsForeignCharge(i, acc);
+                t.amount = c.amount;
+                t.fx = c.fx;
                 t.accountId = acc.id;
                 const bill = match.pay.kind === 'bill' && state.recurring.find((b) => b.id === match.pay.id);
                 if (bill && !bill.parts && bill.currency === t.currency) { bill.amount = t.amount; queueSync('recurring', bill.id, 'upsert', false); }
-                setTimeout(() => showToast(`${t.desc}: ${formatCurrency(i.amount, i.currency)} ≈ ${formatCurrency(t.amount, t.currency)}. If your bank app shows a different amount, edit it once and Vela learns your bank's charge.`, 'info'), 700);
+                if (t.fx.estimated) setTimeout(() => showToast(`${t.desc}: ${formatCurrency(i.amount, i.currency)} ≈ ${formatCurrency(t.amount, t.currency)}. If your bank app shows a different amount, hold the entry and enter it once: Vela learns your bank's charge.`, 'info'), 700);
             } else if (i.currency === t.currency && Math.abs(i.amount - t.amount) > 0.004) t.amount = i.amount;
             if (i.time) t.time = i.time;
             saveState(); queueSync('transaction', t.id, 'upsert');
@@ -10972,6 +10987,12 @@ const initEvents = () => {
     $('switch-reminders').addEventListener('click', (e) => enableReminders(!isOn(e.currentTarget)));
     $('switch-sms').addEventListener('click', (e) => enableSmsTracking(!isOn(e.currentTarget)));
     $('switch-ntf').addEventListener('click', (e) => enableNotifTracking(!isOn(e.currentTarget)));
+    document.addEventListener('input', (e) => {
+        const box = e.target.closest && e.target.closest('[data-sms-charged]');
+        if (!box) return;
+        const v = toNumber(box.value, NaN);
+        if (v > 0) smsCharged[box.dataset.smsCharged] = round2(v); else delete smsCharged[box.dataset.smsCharged];
+    });
     $('switch-sms-auto').addEventListener('click', (e) => {
         const on = !isOn(e.currentTarget);
         const q = smsPrefs(); q.autoAdd = on; saveSmsPrefs(q);
