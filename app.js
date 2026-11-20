@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.63.3';
+const APP_VERSION = '4.63.4';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -5754,9 +5754,11 @@ const fundForBill = (bill) => {
 };
 let txFundsOn = null;
 const txIncomeCat = () => (document.querySelector('input[name="tx-category"]:checked') || {}).value || '';
-const txFundsWanted = () => (typeof txFundsOn === 'boolean' ? txFundsOn : fundIncomeCats().has(txIncomeCat()));
+// Every new income opens the Allocate sheet after Add (like Salary always did); "Don't allocate" there skips it.
+const txFundsWanted = () => (typeof txFundsOn === 'boolean' ? txFundsOn : true);
 const updateFundsRow = () => {
-    const show = txType === 'income' && !$('tx-id').value && !txShareBill();
+    // The owner wants no switch: the sheet after Add is how income is divided.
+    const show = false;
     $('tx-funds-row').hidden = !show;
     if (!show) return;
     // No funds yet: the switch says where to make them instead of hiding.
