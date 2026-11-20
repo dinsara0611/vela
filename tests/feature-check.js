@@ -2079,7 +2079,7 @@ export async function run() {
         const both = g('parseBankSms')({ id: `sms-${t0}-902`, source: 'sms', address: 'COMBANK', body: 'Your ComBank Debit Card ending 5174 was used for USD 10.00 (LKR 3,120.00) at NETFLIX.COM on 06/11/26.', date: t0 });
         const r2 = both && g('smsApply')(both, 'acc-cb');
         const exact = !!r2 && r2.amount === 3120 && r2.fx && r2.fx.estimated === false && acc().fxFee === 4;
-        return (shownEstimate && est && formShows && learned && next && exact) || `card ${shownEstimate}, estimate ${est} (${rec.amount}), form ${formShows}, learned ${learned} (${acc().fxFee}), next ${next} (${$('tx-charged').value}), exact SMS ${exact} (${r2 && r2.amount}, fee ${acc().fxFee})`;
+        return (shownEstimate && est && formShows && learned && next && exact) || `card ${shownEstimate} (${card.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').slice(0, 300)}), estimate ${est} (${rec.amount}), form ${formShows}, learned ${learned} (${acc().fxFee}), next ${next} (${$('tx-charged').value}), exact SMS ${exact} (${r2 && r2.amount}, fee ${acc().fxFee})`;
     });
 
     await T('"Already in my balance" shows for any past date, also on older accounts; balance date set in the account', async () => {
@@ -3055,6 +3055,19 @@ export async function run() {
         st.recurring = st.recurring.filter((x) => x.id !== 'br-ceb');
         g('saveState')();
         return (!!offer && formOpen && saved && learned && shown) || `offer ${!!offer}, form with the field ${formOpen}, saved ${saved}, bill learned ${learned}, shown ${shown}`;
+    });
+
+    await T('Foreign card charge is automatic from the bank: Commercial Bank 4%, Sampath 3.5% (their published charges), others typical; a learned charge still wins', async () => {
+        const fee = g('fxFeeFor');
+        const cb = fee({ kind: 'bank', currency: 'LKR', name: 'Commercial Bank' });
+        const sp = fee({ kind: 'bank', currency: 'LKR', name: 'Sampath savings' });
+        const boc = fee({ kind: 'bank', currency: 'LKR', name: 'Boc' });
+        const learned = fee({ kind: 'bank', currency: 'LKR', name: 'Sampath Bank', fxFee: 3.2 });
+        g('openAccountEditor')(null); await wait(400);
+        $('account-name').value = 'Sampath Bank'; $('account-name').dispatchEvent(new Event('input', { bubbles: true })); await wait(100);
+        const form = $('account-fee').placeholder === '3.5' && /Automatic: 3\.5%, Sampath Bank/.test($('account-fee-hint').textContent);
+        await close('modal-account');
+        return (cb === 4 && sp === 3.5 && boc === 4 && learned === 3.2 && form) || `ComBank ${cb}, Sampath ${sp}, BOC ${boc}, learned ${learned}, form ${form} (${$('account-fee').placeholder}: ${$('account-fee-hint').textContent})`;
     });
 
     // Cloud sync against a fake account.

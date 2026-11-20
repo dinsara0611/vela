@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.62.1';
+const APP_VERSION = '4.62.2';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -584,7 +584,19 @@ const accountBalance = (acc) => {
    country (shown as an estimate); once you enter (or an SMS shows) the real amount, it learns that bank's charge. */
 const FX_FEE_TYPICAL = { LKR: 4, INR: 3.5, PKR: 4, BDT: 3, NPR: 3, AED: 2.5, SAR: 2.5, QAR: 2.5, KWD: 2.5, OMR: 2.5, MYR: 1, SGD: 3.25, GBP: 2.99, EUR: 2, USD: 3, AUD: 3, CAD: 2.5, JPY: 2.2, CNY: 1.5, MVR: 3 };
 const fxApplies = (acc) => !!acc && acc.kind !== 'cash';
-const fxFeeFor = (acc) => (!fxApplies(acc) ? 0 : Number.isFinite(acc.fxFee) ? acc.fxFee : (FX_FEE_TYPICAL[acc.currency] ?? 3));
+// Banks' own published charge on card payments in a foreign currency (LKR cards), checked November 2026:
+// Commercial Bank's Rates & Tariff page: 4% cross-border fee on debit and credit cards; Sampath Bank's
+// Service Charges PDF: 3.5% markup on foreign-currency debit card transactions. Other banks: the typical 4%.
+const BANK_FX_FEE = { 'Commercial Bank': 4, 'Sampath Bank': 3.5 };
+// Which bank an account belongs to, from its name ("Commercial Bank", "ComBank", "Boc", "Sampath savings").
+const accountBankName = (acc) => {
+    const name = String((acc && acc.name) || '');
+    if (!name) return null;
+    const b = SMS_BANKS.find((x) => x.body.test(name) || name.toLowerCase().includes(x.name.toLowerCase()));
+    return b ? b.name : null;
+};
+const bankFxFee = (acc) => (acc && acc.currency === 'LKR' ? BANK_FX_FEE[accountBankName(acc)] : undefined);
+const fxFeeFor = (acc) => (!fxApplies(acc) ? 0 : Number.isFinite(acc.fxFee) ? acc.fxFee : (bankFxFee(acc) ?? FX_FEE_TYPICAL[acc.currency] ?? 3));
 const fxFeeLearned = (acc) => !!acc && Number.isFinite(acc.fxFee);
 // What a foreign amount costs from this account: market rate plus the bank's charge.
 const fxCharge = (amount, cur, acc) => round2(convertAmount(amount, cur, acc.currency) * (1 + fxFeeFor(acc) / 100));
@@ -3728,9 +3740,10 @@ const smsCardHtml = (i) => {
         ...(() => {
             // The matched account, or until one is picked, the account it most likely is (your last card / bank account).
             const acc = state.accounts.find((a) => a.id === smsAccountMatch(i).id)
+                || state.accounts.find((a) => fxApplies(a) && accountBankName(a) === i.bank)
                 || state.accounts.find((a) => a.id === state.config.lastAccount && fxApplies(a)) || state.accounts.find(fxApplies);
             if (i.fx || i.type !== 'expense' || !acc || !fxApplies(acc) || i.currency === acc.currency) return [];
-            return [['From your account', `≈ ${escapeHtml(formatCurrency(fxCharge(i.amount, i.currency, acc), acc.currency))} <span class="faint">(market rate + ${fxFeeFor(acc)}% ${fxFeeLearned(acc) ? 'your bank\'s charge' : 'typical bank charge'})</span>`]];
+            return [['From your account', `≈ ${escapeHtml(formatCurrency(fxCharge(i.amount, i.currency, acc), acc.currency))} <span class="faint">(market rate + ${fxFeeFor(acc)}% ${fxFeeLearned(acc) ? 'your bank\'s charge' : bankFxFee(acc) !== undefined ? `${accountBankName(acc)}'s published charge` : 'typical bank charge'})</span>`]];
         })(),
         ...(i.feeKind ? (() => {
             const acc = state.accounts.find((a) => a.id === smsAccountMatch(i).id) || state.accounts.find((a) => a.id === state.config.lastAccount);
@@ -5623,7 +5636,7 @@ const updateChargedRow = () => {
     const fee = fxFeeFor(acc);
     $('tx-charged-hint').textContent = !(amount > 0) ? 'Enter the amount first.'
         : txChargedTouched && typed > 0 ? `That is ${formatCurrency(typed / amount, acc.currency)} per ${cur}. Vela learns ${acc.name}'s charge from it for next time.`
-            : `${formatCurrency(amount, cur)} × ${formatCurrency(rate, acc.currency)} + ${fee}% ${fxFeeLearned(acc) ? `${acc.name}'s charge` : 'typical bank charge (estimate)'}. Change it to what your bank took.`;
+            : `${formatCurrency(amount, cur)} × ${formatCurrency(rate, acc.currency)} + ${fee}% ${fxFeeLearned(acc) ? `${acc.name}'s charge` : bankFxFee(acc) !== undefined ? `${accountBankName(acc)}'s published charge (estimate)` : 'typical bank charge (estimate)'}. Change it to what your bank took.`;
 };
 // An entry dated before its account's balance was typed in: "Already in my balance" (on by default), so it's
 // recorded in history and spending without changing the balance again.
@@ -10829,7 +10842,7 @@ const initEvents = () => {
     $('tx-currency').addEventListener('change', () => { renderTxSuggest(); updatePriceHint(); updateChargedRow(); });
     $('tx-charged').addEventListener('input', () => { txChargedTouched = true; updateChargedRow(); });
     $('tx-desc').addEventListener('input', (e) => { if (e.isTrusted) $('tx-desc').dataset.typing = '1'; onTxDescInput(); });
-    $('account-name').addEventListener('input', updateAccountNameLogo);
+    $('account-name').addEventListener('input', () => { updateAccountNameLogo(); accountFeeHint(state.accounts.find((x) => x.id === $('account-id').value)); });
     Object.keys(NAME_BOXES).forEach((key) => {
         const input = $(NAME_BOXES[key].input);
         input.addEventListener('input', () => renderNameBox(key));
@@ -10890,6 +10903,7 @@ const initEvents = () => {
     $('tx-logo-remove').addEventListener('click', removeShopLogo);
     $('shop-logo-input').addEventListener('change', onShopLogoPicked);
     $('account-kind').addEventListener('change', () => { accountKindTouched = true; });
+    $('account-currency').addEventListener('change', () => accountFeeHint(state.accounts.find((x) => x.id === $('account-id').value)));
     document.addEventListener('change', (e) => {
         if (e.target && ACCOUNT_SELECTS.includes(e.target.id)) syncAccountLogos();
         // The account picked on a detected transaction (remembered for its card number when added).
@@ -11070,6 +11084,20 @@ const removeCurrency = (c) => {
 // The account form: the bank's logo shows inside the name box as soon as the name matches one ("Boc" -> BOC).
 // A bank, card or wallet name also picks the matching type, until the person picks one themselves.
 let accountKindTouched = false;
+// The foreign purchase charge: automatic from the bank's own published charge when Vela knows the bank (from the
+// account name), else the typical one; what you type, or what Vela learns from your bank SMS, wins.
+const accountFeeHint = (a) => {
+    const draft = { name: $('account-name').value, kind: $('account-kind').value || 'bank', currency: $('account-currency').value || dcur() };
+    const bank = accountBankName(draft);
+    const pub = bankFxFee(draft);
+    const auto = pub ?? FX_FEE_TYPICAL[draft.currency] ?? 3;
+    $('account-fee').placeholder = String(auto);
+    $('account-fee-hint').textContent = a && fxFeeLearned(a) && String($('account-fee').value) === String(a.fxFee)
+        ? `Set to ${a.fxFee}% (learned from what your bank charged, or typed in). Clear it to go back to automatic.`
+        : pub !== undefined
+            ? `Automatic: ${pub}%, ${bank}'s own published charge for foreign card payments. Leave it empty; change it only if your card's charge is different. Vela also learns it from your bank SMS.`
+            : `Automatic: ${auto}%, the usual charge for ${draft.currency} cards${bank ? ` (${bank} doesn't publish its own)` : ''}. Leave it empty; Vela learns your bank's real charge from its SMS, or type it if you know it.`;
+};
 const updateAccountNameLogo = () => {
     const b = accountBrand({ name: $('account-name').value });
     $('account-name-logo').innerHTML = b ? brandBadge(b, ' is-field') : '';
@@ -11355,16 +11383,12 @@ const openAccountEditor = (id) => {
     fillCurrencySelect($('account-currency'), a ? a.currency : dcur());
     $('account-opening').value = a ? round2(accountBalance(a)) : '';
     $('account-balance-date').value = a ? (balanceDateOf(a) || todayISO()) : todayISO();
-    const feeAcc = a || { kind: $('account-kind').value || 'bank', currency: dcur() };
     $('account-fee').value = a && fxFeeLearned(a) ? a.fxFee : '';
     $('account-atm-fee').value = a && typeof a.atmFee === 'number' ? a.atmFee : '';
     $('account-ceft-fee').value = a && typeof a.ceftFee === 'number' ? a.ceftFee : '';
     $('account-atm-fee').placeholder = String(ATM_FEE_TYPICAL);
     $('account-ceft-fee').placeholder = String(CEFT_FEE_TYPICAL);
-    $('account-fee').placeholder = String(FX_FEE_TYPICAL[feeAcc.currency] ?? 3);
-    $('account-fee-hint').textContent = a && fxFeeLearned(a)
-        ? `Learned from what your bank charged. Foreign purchases from this account cost the market rate + ${a.fxFee}%.`
-        : `Empty = typical ${FX_FEE_TYPICAL[feeAcc.currency] ?? 3}% for ${feeAcc.currency} cards. Enter your bank's real charge if you know it; Vela also learns it from your bank SMS.`;
+    accountFeeHint(a);
     $('account-balance-date').max = todayISO();
     $('account-opening-label').textContent = 'Balance right now';
     $('account-opening-hint').textContent = a

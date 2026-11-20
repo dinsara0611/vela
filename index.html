@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.62.1">
+    <link rel="stylesheet" href="style.css?v=4.62.2">
 </head>
 <body data-view="dashboard">
 
@@ -1849,7 +1849,7 @@
                         <div class="field"><label class="field-label" for="account-atm-fee">Other bank's ATM (Rs)</label><input type="text" id="account-atm-fee" class="input" inputmode="decimal" autocomplete="off"></div>
                         <div class="field"><label class="field-label" for="account-ceft-fee">Transfer to other bank (Rs)</label><input type="text" id="account-ceft-fee" class="input" inputmode="decimal" autocomplete="off"></div>
                     </div>
-                    <span class="field-hint" id="account-bankfees-hint">Charges your bank takes. Empty = typical: Rs. 30 at another bank's ATM (LankaPay), Rs. 25 for an online transfer to another bank. Your own bank's ATM is free.</span>
+                    <span class="field-hint" id="account-bankfees-hint">Automatic: Rs. 30 at another bank's ATM (LankaPay) and Rs. 25 for an online transfer to another bank, the usual charges. Your own bank's ATM is free. Leave them empty; when your bank's SMS shows a fee, Vela uses that.</span>
                     <div class="field">
                         <label class="field-label" for="account-balance-date">Balance correct on</label>
                         <input type="date" id="account-balance-date" class="input">
@@ -2033,7 +2033,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.62.1"></script>
+    <script src="app.js?v=4.62.2"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {
