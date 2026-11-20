@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  "Vela SMS" edition: everything in Full except bank / Passbook app notification tracking.
+  Google Play Protect blocks apps installed from WhatsApp or a browser that can read other apps'
+  notifications (Notification access), so this edition leaves the listener out and can be shared
+  like the versions before 4.62. Bank SMS tracking stays. Same app id and signing key as Full.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application>
+        <service android:name=".BankNotificationListener" tools:node="remove" />
+    </application>
+</manifest>

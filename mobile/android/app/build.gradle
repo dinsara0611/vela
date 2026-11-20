@@ -37,6 +37,8 @@ android {
     productFlavors {
         standard { dimension "edition" }
         full { dimension "edition"; versionNameSuffix "-full" }
+        // Full without bank-app notification tracking: shareable from WhatsApp (Play Protect blocks Notification access there)
+        sms { dimension "edition"; versionNameSuffix "-sms" }
         // Google Play: share/paste a bank SMS; no SMS permission until Google approves an SMS declaration
         play { dimension "edition" }
     }
