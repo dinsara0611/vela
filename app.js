@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.63.6';
+const APP_VERSION = '4.64.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1320,6 +1320,7 @@ const showSheetElement = (id) => {
 const hideSheet = (id) => {
     const overlay = $(id);
     if (!overlay) return;
+    if (id === 'modal-tx' && typeof saveTxDraft === 'function') saveTxDraft();
     overlay.classList.remove('active');
     overlay.setAttribute('aria-hidden', 'true');
     const sheet = overlay.querySelector('.sheet');
@@ -4178,7 +4179,7 @@ const smsEdit = (id, asMove = false) => {
         updateTransferFields();
         return;
     }
-    openAddTx(i.type === 'income' ? 'income' : 'expense');
+    openAddTx(i.type === 'income' ? 'income' : 'expense', { draft: false });
     smsEditing = i;
     $('tx-account').value = accountId;
     fillCurrencySelect($('tx-currency'), i.currency);
@@ -4849,7 +4850,7 @@ const budgetState = (pct) => (pct >= 100 ? 'over' : pct >= 80 ? 'warn' : null);
 const breakdownHtml = (entries, total, type) => entries.map(([catId, v]) => {
     const cat = catById(catId, type);
     const pct = total > 0 ? (v / total) * 100 : 0;
-    return `<li style="--cat:${catColor(cat)}">
+    return `<li style="--cat:${catColor(cat)}" class="bd-tap" role="button" tabindex="0" data-bd-cat="${escapeHtml(catId)}" data-bd-type="${type}" aria-label="${escapeHtml(cat.name)}: see its entries">
         ${catBadge(catId, type)}
         <span class="breakdown-name">${escapeHtml(cat.name)}</span>
         <span class="breakdown-val amount">${escapeHtml(formatCurrency(v, dcur()))}</span>
@@ -5243,8 +5244,11 @@ const planBillsHtml = () => {
     }
     const monthlyOut = bills.reduce((s, b) => s + monthlyEquivalent(b), 0);
     const monthlyIn = inc.reduce((s, b) => s + monthlyEquivalent(b), 0);
+    const subs = mySubscriptions().filter((b) => billIds.has(b.id)); // only this account's, like the rest of the page
+    const subsMonth = subs.reduce((a, b) => a + monthlyEquivalent(b), 0);
     return `
     ${fixedSummaryHtml({ list: true })}
+    <button type="button" class="card subs-card" data-action="add-subscription">${catBadge('Subscriptions', 'expense')}<span class="row-label"><span>Subscriptions</span><span>${subs.length ? `${escapeHtml(plural(subs.length, 'subscription', 'subscriptions'))} · ${escapeHtml(formatCurrency(subsMonth * 12, cur))} a year` : 'Streaming, TV, internet and app plans'}</span></span><span class="amount">${subs.length ? `${escapeHtml(formatCurrency(subsMonth, cur))}<small>/mo</small>` : ''}</span>${icon('i-chevron', 'ic ic-sm')}</button>
     <div class="duo">
         <div class="card glow metric" style="--glow:var(--pal-pink)"><span class="metric-label">Fixed per month</span><span class="metric-value text-expense" title="${escapeHtml(formatCurrency(monthlyOut, cur))}" ${moneyAttrs(monthlyOut, cur)}>${escapeHtml(formatCurrency(monthlyOut, cur))}</span><span class="metric-sub">${plural(bills.length, 'fixed expense', 'fixed expenses')}</span></div>
         <div class="card glow metric" style="--glow:var(--pal-green)"><span class="metric-label">Regular income</span><span class="metric-value text-income" title="${escapeHtml(formatCurrency(monthlyIn, cur))}" ${moneyAttrs(monthlyIn, cur)}>${escapeHtml(formatCurrency(monthlyIn, cur))}</span><span class="metric-sub">per month</span></div>
@@ -5370,6 +5374,7 @@ const renderAnalyticsNow = () => {
     $('analytics-range-label').textContent = RANGE_LABELS[analyticsRange];
 
     const list = txInRange(analyticsRange);
+    insightsList = list.slice();
     renderSectionsInsights(list);
     const out = list.filter((t) => t.type === 'expense');
     const inc = list.filter((t) => t.type === 'income');
@@ -5871,7 +5876,7 @@ const setTxStatus = (waiting) => {
             : 'Counted in your balance.';
 };
 
-const openAddTx = (type = 'expense') => {
+const openAddTx = (type = 'expense', opts = {}) => {
     smsEditing = null;
     $('tx-allocate').hidden = true;
     if ($('tx-source')) $('tx-source').hidden = true;
@@ -5903,8 +5908,44 @@ const openAddTx = (type = 'expense') => {
     txSectionTouched = false;
     resetTxCover();
     setTxType(type);
+    if (opts.draft !== false) restoreTxDraft(type);
     syncTxSectionToCategory();
     openOrSwap('modal-tx');
+};
+
+// A new entry you were typing is kept if the form closes by accident (Back, swipe down, X) and comes back the next
+// time you open a new entry of that kind. Cancel or saving throws it away. Kept on this phone only.
+const TX_DRAFT_KEY = 'VELA_TX_DRAFT';
+let txDraftDrop = false;
+const saveTxDraft = () => {
+    try {
+        if (txDraftDrop || $('tx-id').value || smsEditing) { txDraftDrop = false; return; }
+        const amount = String($('tx-amount').value || '').trim();
+        const desc = String($('tx-desc').value || '').trim();
+        const note = String($('tx-note').value || '').trim();
+        if (!amount && !desc && !note) { localStorage.removeItem(TX_DRAFT_KEY); return; }
+        localStorage.setItem(TX_DRAFT_KEY, JSON.stringify({ type: txType, amount, desc, note, currency: $('tx-currency').value, account: $('tx-account').value,
+            category: (document.querySelector('input[name="tx-category"]:checked') || {}).value || '', date: $('tx-date').value, time: $('tx-time').value, kind: txKind, at: Date.now() }));
+    } catch (err) { /* storage blocked: nothing to keep */ }
+};
+const dropTxDraft = () => { try { localStorage.removeItem(TX_DRAFT_KEY); } catch (err) { /* ignore */ } };
+const restoreTxDraft = (type) => {
+    let d = null;
+    try { d = JSON.parse(localStorage.getItem(TX_DRAFT_KEY) || 'null'); } catch (err) { d = null; }
+    if (!d || d.type !== type || !(Date.now() - d.at < 24 * 3600 * 1000)) return false;
+    if (d.account && state.accounts.some((a) => a.id === d.account)) { $('tx-account').value = d.account; }
+    if (d.currency) fillCurrencySelect($('tx-currency'), d.currency);
+    $('tx-amount').value = d.amount || '';
+    $('tx-desc').value = d.desc || '';
+    $('tx-note').value = d.note || '';
+    if (isISODate(d.date)) $('tx-date').value = d.date;
+    if (d.time) $('tx-time').value = d.time;
+    if (d.kind && d.kind !== txKind) { txKind = d.kind; txKindTouched = true; }
+    setTxType(type, d.category || undefined);
+    if (d.category) { selectTxCategory(d.category); txCatTouched = true; }
+    ['tx-amount', 'tx-desc'].forEach((f) => $(f).dispatchEvent(new Event('input', { bubbles: true })));
+    setTimeout(() => showToast('Your unsaved entry is back. Tap Cancel to clear it.', 'info'), 350);
+    return true;
 };
 
 const openEditTx = (id) => {
@@ -6103,6 +6144,8 @@ const submitTx = async () => {
     if (txType === 'expense' && secList().length && txSectionTouched) learnSection(category, record.sectionId || null);
     if (smsEditing && !id) smsEditSaved(record);
     if (!commitState(txType === 'income' ? 'The income' : 'The expense')) return false;
+    txDraftDrop = true;
+    dropTxDraft();
     haptic('MEDIUM');
     queueSync('transaction', record.id, 'upsert');
     if (receipt && !receipt.path) uploadReceipt(record);
@@ -6825,7 +6868,7 @@ const botUndo = (id, btn) => {
 const botEdit = (id) => {
     const d = botDrafts[id];
     if (!d) return;
-    openAddTx(d.type);
+    openAddTx(d.type, { draft: false });
     fillCurrencySelect($('tx-currency'), d.currency);
     $('tx-desc').value = d.desc;
     if (d.amount > 0) $('tx-amount').value = d.amount;
@@ -6922,7 +6965,7 @@ const starterHtml = () => {
 const starterPick = (name) => {
     const cur = homeCurrency();
     const item = priceList(cur).items.find((i) => i.name === name);
-    openAddTx('expense');
+    openAddTx('expense', { draft: false });
     fillCurrencySelect($('tx-currency'), cur);
     if (item) applyPick(item);
 };
@@ -7638,7 +7681,7 @@ const SUBSCRIPTIONS = [
 ];
 const SUB_SLUGS = new Set([...SUBSCRIPTIONS.map(([slug]) => slug), ...BRAND_KINDS[4][1]]);
 // Your subscriptions: monthly bills for a streaming / app / TV service (or added from the Subscription menu).
-const mySubscriptions = () => state.recurring.filter((b) => b.type === 'expense' && (b.sub || SUB_SLUGS.has((brandOfName(b.name) || {}).slug)));
+const mySubscriptions = () => state.recurring.filter((b) => b.type === 'expense' && (b.sub || b.category === 'Subscriptions' || SUB_SLUGS.has((brandOfName(b.name) || {}).slug)));
 const renderSubsSheet = () => {
     const mine = mySubscriptions();
     const cur = dcur();
@@ -7648,7 +7691,7 @@ const renderSubsSheet = () => {
     const have = new Set(mine.map((b) => b.name.toLowerCase()));
     $('subs-grid').innerHTML = SUBSCRIPTIONS.filter(([, name]) => !have.has(name.toLowerCase())).map(([slug, name]) => {
         const b = BRANDS.find((x) => x.slug === slug);
-        return `<button type="button" class="brand-choice" data-sub-pick="${escapeHtml(name)}" data-sub-cat="${escapeHtml(BRAND_KINDS[4][1].has(slug) || !b ? 'Entertainment' : '')}">${b ? brandBadge(b) : ''}<span>${escapeHtml(name)}</span></button>`;
+        return `<button type="button" class="brand-choice" data-sub-pick="${escapeHtml(name)}" data-sub-cat="Subscriptions">${b ? brandBadge(b) : ''}<span>${escapeHtml(name)}</span></button>`;
     }).join('') + `<button type="button" class="brand-choice" data-sub-pick=""><span class="cat-badge" style="--cat:var(--text-3)">${icon('i-plus')}</span><span>Other</span></button>`;
 };
 const openSubscriptions = () => { renderSubsSheet(); openOrSwap('modal-subs'); };
@@ -8662,6 +8705,28 @@ const renderSectionsHome = () => {
     </section>`;
     animateIn(el);
 };
+// The entries Insights is showing (its range and accounts), so a tapped row lists exactly what it counted.
+let insightsList = [];
+const openInsightEntries = (title, list, extra = '') => {
+    const cur = dcur();
+    const total = list.reduce((a, t) => a + toDisplay(t.amount, t.currency), 0);
+    $('ie-title').textContent = title;
+    $('ie-sum').innerHTML = `<strong class="amount">${escapeHtml(formatCurrency(total, cur))}</strong><span>${escapeHtml(plural(list.length, 'entry', 'entries'))} · ${escapeHtml(RANGE_LABELS[analyticsRange] || '')}</span>`;
+    $('ie-extra').innerHTML = extra;
+    $('ie-list').innerHTML = list.length ? sortByNewest(list).map((t) => txRow(t, { withAccount: state.accounts.length > 1 })).join('') : '<li class="field-hint">Nothing here in this period.</li>';
+    openOrSwap('modal-insight-entries');
+};
+const openCategoryEntries = (catId, type) => {
+    const cat = catById(catId, type);
+    const list = insightsList.filter((t) => t.type === type && t.category === catId && !isUpcoming(t));
+    const subs = type === 'expense' && catId === 'Subscriptions';
+    openInsightEntries(cat.name, list, subs ? `<button type="button" class="btn btn-secondary btn-block" data-action="add-subscription">${icon('c-Subscriptions', 'ic ic-sm')} All my subscriptions</button>` : '');
+};
+const openFundEntries = (fundId) => {
+    const x = fundId ? secById(fundId) : null;
+    const list = insightsList.filter((t) => t.type === 'expense' && !isUpcoming(t) && (x ? t.sectionId === x.id : !(t.sectionId && secById(t.sectionId))));
+    openInsightEntries(x ? `${x.name} fund` : 'Not from a fund', list);
+};
 const renderSectionsInsights = (list) => {
     const el = $('section-breakdown-card');
     if (!el) return;
@@ -8673,8 +8738,12 @@ const renderSectionsInsights = (list) => {
     list.filter((t) => t.type === 'expense').forEach((t) => { const v = toDisplay(t.amount, t.currency); if (t.sectionId && secById(t.sectionId)) by[t.sectionId] = (by[t.sectionId] || 0) + v; else none += v; });
     const total = Object.values(by).reduce((s, v) => s + v, 0) + none;
     const rows = secList().map((x) => [x, by[x.id] || 0]).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-    $('section-breakdown').innerHTML = rows.map(([x, v]) => `<li>${secBadge(x, ' is-mini')}<span class="bd-name">${escapeHtml(x.name)}</span><span class="bd-pct">${total ? Math.round((v / total) * 100) : 0}%</span><span class="amount">${escapeHtml(formatCurrency(v, cur))}</span></li>`).join('')
-        + (none > 0 ? `<li><span class="cat-badge is-mini" style="--cat:var(--text-3)">${icon('i-wallet')}</span><span class="bd-name">Unallocated</span><span class="bd-pct">${total ? Math.round((none / total) * 100) : 0}%</span><span class="amount">${escapeHtml(formatCurrency(none, cur))}</span></li>` : '')
+    const fundRow = (id, badge, name, v, color) => {
+        const pct = total > 0 ? (v / total) * 100 : 0;
+        return `<li style="--cat:${color}" class="bd-tap" role="button" tabindex="0" data-bd-fund="${escapeHtml(id)}" aria-label="${escapeHtml(name)}: see its entries">${badge}<span class="breakdown-name">${escapeHtml(name)}</span><span class="breakdown-val amount">${escapeHtml(formatCurrency(v, cur))}</span><span class="breakdown-bar"><span class="meter"><span class="meter-fill" style="width:${pct}%"></span></span><span class="breakdown-pct">${pct < 1 && pct > 0 ? '<1' : Math.round(pct)}%</span></span></li>`;
+    };
+    $('section-breakdown').innerHTML = rows.map(([x, v]) => fundRow(x.id, secBadge(x, ''), x.name, v, `var(--pal-${x.color || 'violet'})`)).join('')
+        + (none > 0 ? fundRow('', `<span class="cat-badge" style="--cat:var(--text-3)">${icon('i-wallet')}</span>`, 'Not from a fund', none, 'var(--text-3)') : '')
         || '<li class="field-hint">No spending in this period.</li>';
 };
 
@@ -11124,6 +11193,18 @@ const initEvents = () => {
     $('switch-sms').addEventListener('click', (e) => enableSmsTracking(!isOn(e.currentTarget)));
     $('switch-ntf').addEventListener('click', (e) => enableNotifTracking(!isOn(e.currentTarget)));
     $('tx-share').addEventListener('change', onShareChange);
+    // Cancel in the entry form throws away what you typed (Back or swipe down keeps it).
+    document.addEventListener('click', (e) => { if (e.target.closest && e.target.closest('[data-tx-cancel]')) { txDraftDrop = true; dropTxDraft(); } }, true);
+    // Insights rows: tap (or Enter) to see the entries behind a category, income kind or fund.
+    const bdOpen = (e) => {
+        const li = e.target.closest && e.target.closest('[data-bd-cat], [data-bd-fund]');
+        if (!li || (e.type === 'keydown' && e.key !== 'Enter' && e.key !== ' ')) return;
+        if (e.type === 'keydown') e.preventDefault();
+        if (li.dataset.bdCat !== undefined) openCategoryEntries(li.dataset.bdCat, li.dataset.bdType || 'expense');
+        else openFundEntries(li.dataset.bdFund);
+    };
+    document.addEventListener('click', bdOpen);
+    document.addEventListener('keydown', bdOpen);
     document.addEventListener('input', (e) => {
         const box = e.target.closest && e.target.closest('[data-sms-charged]');
         if (!box) return;

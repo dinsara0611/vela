@@ -3269,6 +3269,40 @@ export async function run() {
         return (noSwitch && divide) || `switch hidden ${noSwitch}, divide sheet ${divide}`;
     });
 
+    await T('Entry form: what you typed comes back after Back closes it by accident; Cancel clears it', async () => {
+        try { localStorage.removeItem('VELA_TX_DRAFT'); } catch (e) { /* */ }
+        g('openAddTx')('expense'); await wait(300);
+        $('tx-amount').value = '777'; $('tx-desc').value = 'Draft lunch';
+        history.back(); await wait(500);
+        g('openAddTx')('expense'); await wait(400);
+        const back = $('tx-desc').value === 'Draft lunch' && g('toNumber')($('tx-amount').value) === 777;
+        document.querySelector('[data-tx-cancel]').click(); await wait(500);
+        g('openAddTx')('expense'); await wait(300);
+        const cleared = $('tx-desc').value === '' && $('tx-amount').value === '';
+        await close('modal-tx');
+        return (back && cleared) || `restored ${back}, cleared by Cancel ${cleared}`;
+    });
+
+    await T('Insights: tap a category or fund to see its entries; Subscriptions links to all subscriptions; SLT counts as one', async () => {
+        const st = s();
+        st.transactions.push({ id: 'ie-1', type: 'expense', desc: 'IE Netflix', amount: 3458.18, currency: 'LKR', category: 'Subscriptions', date: g('todayISO')(), accountId: st.accounts[0].id, createdAt: Date.now() });
+        st.recurring.push({ id: 'ie-b', type: 'expense', name: 'IE line', amount: 5000, currency: 'LKR', category: 'Subscriptions', frequency: 'monthly', nextDate: g('todayISO')(), createdAt: 1 });
+        g('saveState')();
+        g('switchTab')('analytics'); await wait(500);
+        const li = document.querySelector('#category-breakdown [data-bd-cat="Subscriptions"]');
+        if (li) li.click();
+        await wait(500);
+        const open = g('isSheetOpen')('modal-insight-entries');
+        const rows = [...document.querySelectorAll('#ie-list li')].some((r) => r.textContent.includes('IE Netflix'));
+        const link = !!document.querySelector('#ie-extra [data-action="add-subscription"]');
+        const counted = g('mySubscriptions')().some((b) => b.id === 'ie-b');
+        if (open) await close('modal-insight-entries');
+        st.transactions = st.transactions.filter((t) => t.id !== 'ie-1');
+        st.recurring = st.recurring.filter((b) => b.id !== 'ie-b');
+        g('saveState')();
+        return (!!li && open && rows && link && counted) || `row ${!!li}, sheet ${open}, entry listed ${rows}, subscriptions link ${link}, SLT-like counted ${counted}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

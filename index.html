@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.63.6">
+    <link rel="stylesheet" href="style.css?v=4.64.0">
 </head>
 <body data-view="dashboard">
 
@@ -869,7 +869,7 @@
                 </div>
                 <div class="sheet-foot">
                     <button type="button" class="btn btn-danger" id="btn-delete-tx" aria-label="Delete entry" hidden><svg class="ic"><use href="#i-trash"/></svg></button>
-                    <button type="button" class="btn btn-secondary" data-close-sheet>Cancel</button>
+                    <button type="button" class="btn btn-secondary" data-close-sheet data-tx-cancel>Cancel</button>
                     <button type="submit" class="btn btn-primary" id="btn-submit-tx">Save</button>
                 </div>
             </form>
@@ -1673,6 +1673,22 @@
         </div>
     </div>
 
+    <!-- Insights: the entries behind one category or fund -->
+    <div class="sheet-overlay" id="modal-insight-entries" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="ie-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <h2 class="sheet-title" id="ie-title">Entries</h2>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body">
+                <div class="ie-sum" id="ie-sum"></div>
+                <div id="ie-extra"></div>
+                <ul class="tx-list" id="ie-list"></ul>
+            </div>
+        </div>
+    </div>
+
     <!-- Subscriptions -->
     <div class="sheet-overlay" id="modal-subs" aria-hidden="true">
         <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="subs-title">
@@ -2043,7 +2059,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.63.6"></script>
+    <script src="app.js?v=4.64.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

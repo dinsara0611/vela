@@ -5045,3 +5045,18 @@ body.approve-waiting { overflow: hidden; }
 .sms-charged .input { flex: 1 1 auto; min-width: 0; width: 100%; padding: 8px 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
 .sms-charged-cur { flex: none; white-space: nowrap; font-weight: 700; color: var(--text-2); }
 .sms-charged-note { display: block; font-size: 12px; margin-top: 4px; }
+
+/* Insights rows you can tap to see their entries */
+.bd-tap { cursor: pointer; border-radius: var(--r-md, 14px); transition: background .15s; }
+.bd-tap:active, .bd-tap:focus-visible { background: var(--surface-2, rgba(255,255,255,.05)); outline: none; }
+.ie-sum { display: flex; flex-direction: column; gap: 2px; margin-bottom: 12px; }
+.ie-sum strong { font-size: 26px; font-weight: 800; }
+.ie-sum span { color: var(--text-2); font-size: 13px; }
+#ie-extra:not(:empty) { margin-bottom: 12px; }
+/* Plan > Fixed: the Subscriptions card */
+.subs-card { display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; color: inherit; font: inherit; cursor: pointer; margin-bottom: var(--sp-3, 12px); }
+.subs-card .row-label { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.subs-card .row-label span:first-child { font-weight: 700; }
+.subs-card .row-label span:last-child { color: var(--text-2); font-size: 13px; }
+.subs-card .amount { font-weight: 800; white-space: nowrap; }
+.subs-card .amount small { font-weight: 600; color: var(--text-2); }
