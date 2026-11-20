@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.60.2">
+    <link rel="stylesheet" href="style.css?v=4.61.0">
 </head>
 <body data-view="dashboard">
 
@@ -961,6 +961,20 @@
             </div>
             <div class="sheet-body"><ul class="cat-manage notif-list" id="notif-list"></ul></div>
             <div class="sheet-foot"><button type="button" class="btn btn-secondary btn-block" id="btn-notifs-clear" data-action="clear-notifs">Clear all</button></div>
+        </div>
+    </div>
+
+    <div class="sheet-overlay" id="modal-tx-detail" aria-hidden="true">
+        <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="txd-title">
+            <div class="sheet-grabber" aria-hidden="true"></div>
+            <div class="sheet-head">
+                <div class="txd-head"><span id="txd-badge"></span><div><h2 class="sheet-title" id="txd-title">Entry</h2><span class="amount txd-amount" id="txd-amount"></span></div></div>
+                <button class="icon-btn" type="button" data-close-sheet aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
+            </div>
+            <div class="sheet-body">
+                <div class="txd-list" id="txd-list"></div>
+                <button type="button" class="btn btn-primary btn-block" id="txd-edit" data-edit-tx=""><svg class="ic ic-sm"><use href="#i-edit"/></svg> Edit</button>
+            </div>
         </div>
     </div>
 
@@ -2006,7 +2020,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.60.2"></script>
+    <script src="app.js?v=4.61.0"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

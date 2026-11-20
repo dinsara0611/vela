@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Vela quick-add widget: new expense, income or transfer in one tap. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="@drawable/widget_bg">
+
+    <LinearLayout
+        android:id="@+id/wq_head"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+        <ImageView
+            android:layout_width="18dp"
+            android:layout_height="18dp"
+            android:src="@mipmap/ic_launcher_round"
+            android:contentDescription="@null" />
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="Quick add"
+            android:textColor="#A8A8AA"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:layout_marginTop="8dp"
+        android:orientation="horizontal">
+        <TextView android:id="@+id/wq_expense" style="@style/VelaWidgetButton"
+            android:background="@drawable/widget_btn_expense" android:text="− Expense" android:textColor="#FF7A88" />
+        <TextView android:id="@+id/wq_income" style="@style/VelaWidgetButton"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/widget_btn_income" android:text="+ Income" android:textColor="#1EE88A" />
+        <TextView android:id="@+id/wq_transfer" style="@style/VelaWidgetButton"
+            android:layout_marginStart="8dp"
+            android:background="@drawable/widget_btn_neutral" android:text="⇄ Transfer" android:textColor="#C9A6FF" />
+    </LinearLayout>
+</LinearLayout>

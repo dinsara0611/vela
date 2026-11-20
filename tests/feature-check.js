@@ -2968,6 +2968,39 @@ export async function run() {
         return (ok && inSavings) || `parsed ${r && JSON.stringify({ a: r.amount, ref: r.billRef, last4: r.last4, bank: r.bank, desc: r.desc })}, goal money in Savings ${inSavings}`;
     });
 
+    await T('Hold an entry anywhere: a sheet shows every detail in full (long bank name, bill number, note); a quick tap still edits', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-hd', name: 'Commercial Bank (Savings account ending 1234)', kind: 'bank', currency: 'LKR', opening: 9000, createdAt: 0 });
+        const id = `tx-hold-${Date.now()}`;
+        st.transactions.push({ id, type: 'expense', desc: 'CEB', amount: 1560, currency: 'LKR', category: 'Utilities', date: g('todayISO')(), time: '10:41', accountId: 'acc-hd', billRef: '4205044100', note: 'November electricity bill for the house in Kandy, paid with Q+', createdAt: Date.now() });
+        g('saveState')();
+        g('switchTab')('activity'); await wait(300);
+        const row = document.querySelector(`[data-edit-tx="${id}"]`);
+        const r = row.getBoundingClientRect();
+        const opt = { bubbles: true, clientX: r.left + 20, clientY: r.top + 10, pointerId: 1 };
+        row.dispatchEvent(new PointerEvent('pointerdown', opt)); await wait(650);
+        row.dispatchEvent(new PointerEvent('pointerup', opt)); row.dispatchEvent(new MouseEvent('click', opt)); await wait(400);
+        const text = $('txd-list').textContent;
+        const sheet = document.querySelector('#modal-tx-detail').classList.contains('active') || document.querySelector('#modal-tx-detail').getAttribute('aria-hidden') === 'false';
+        const full = /Commercial Bank \(Savings account ending 1234\)/.test(text) && /Acc 4205044100/.test(text) && /paid with Q\+/.test(text) && /10:41/.test(text);
+        const noEdit = !(document.querySelector('#modal-tx').getAttribute('aria-hidden') === 'false');
+        g('closeSheet')('modal-tx-detail'); await wait(300);
+        st.transactions = st.transactions.filter((t) => t.id !== id);
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-hd');
+        g('saveState')();
+        return (sheet && full && noEdit) || `sheet ${sheet}, everything in full ${full} (${text.slice(0, 200)}), edit form stayed closed ${noEdit}`;
+    });
+
+    await T('Widgets: figures for balances, budget, bills, goals and recent; a widget tap opens a new expense', async () => {
+        const d = g('widgetData')();
+        const kinds = ['balances', 'budget', 'bills', 'goals', 'recent'].every((k) => d[k] && typeof d[k].big === 'string' && Array.isArray(d[k].rows) && d[k].title);
+        const masked = ['goals', 'recent'].every((k) => !/\d{2}/.test(d[k].subHidden || ''));
+        g('handleWidgetUrl')('io.github.dinsara0611.vela://widget/add-expense'); await wait(900);
+        const opened = $('modal-tx').getAttribute('aria-hidden') === 'false';
+        g('closeSheet')('modal-tx'); await wait(300);
+        return (kinds && masked && opened) || `all kinds ${kinds}, hidden lines without amounts ${masked}, add form opened ${opened}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

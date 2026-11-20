@@ -7,36 +7,53 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.net.Uri;
 import android.view.View;
 import android.widget.RemoteViews;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
 /**
- * Home-screen widget: the total and up to four accounts, with an eye button that hides the amounts.
- * Amounts are hidden by default (anyone can see a home screen). The app sends the figures, already formatted,
- * whenever they change (see BalanceWidgetPlugin); the widget itself never reads Vela's data.
+ * Home-screen widget: a title, one big figure, a short line and up to four rows, with an eye button that hides
+ * the amounts. Amounts are hidden by default (anyone can see a home screen). The app sends the figures, already
+ * formatted, whenever they change (see BalanceWidgetPlugin); the widget itself never reads Vela's data.
+ * This class is the balances widget; BudgetWidget, BillsWidget, GoalsWidget and RecentWidget show other parts.
  */
 public class BalanceWidget extends AppWidgetProvider {
     static final String PREFS = "vela_widget";
     static final String KEY_DATA = "data";
     static final String KEY_HIDDEN = "hidden";
     static final String ACTION_TOGGLE = "io.github.dinsara0611.vela.WIDGET_TOGGLE";
+    static final String OPEN_URL = "io.github.dinsara0611.vela://widget/";
     private static final String MASK = "Rs. ••••";
 
     private static final int[] ROWS = { R.id.w_row1, R.id.w_row2, R.id.w_row3, R.id.w_row4 };
     private static final int[] NAMES = { R.id.w_name1, R.id.w_name2, R.id.w_name3, R.id.w_name4 };
     private static final int[] AMOUNTS = { R.id.w_amt1, R.id.w_amt2, R.id.w_amt3, R.id.w_amt4 };
 
-    static boolean isHidden(Context c) {
-        return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_HIDDEN, true);
+    /** Which part of the figures this widget shows (a key in the data the app sends). */
+    protected String kind() { return "balances"; }
+    /** Where a tap on the widget opens Vela. */
+    protected String opens() { return "home"; }
+    protected String emptyTitle() { return "All accounts"; }
+
+    private static String hiddenKey(String kind) { return "balances".equals(kind) ? KEY_HIDDEN : KEY_HIDDEN + "_" + kind; }
+
+    static boolean isHidden(Context c) { return isHidden(c, "balances"); }
+
+    static boolean isHidden(Context c, String kind) {
+        return c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(hiddenKey(kind), true);
     }
 
     /** Redraws every Vela widget on the home screen. */
     static void refreshAll(Context c) {
         AppWidgetManager mgr = AppWidgetManager.getInstance(c);
-        int[] ids = mgr.getAppWidgetIds(new ComponentName(c, BalanceWidget.class));
-        for (int id : ids) draw(c, mgr, id);
+        BalanceWidget[] all = { new BalanceWidget(), new BudgetWidget(), new BillsWidget(), new GoalsWidget(), new RecentWidget() };
+        for (BalanceWidget w : all) {
+            int[] ids = mgr.getAppWidgetIds(new ComponentName(c, w.getClass()));
+            for (int id : ids) w.draw(c, mgr, id);
+        }
+        QuickAddWidget.refresh(c);
     }
 
     @Override
@@ -49,32 +66,46 @@ public class BalanceWidget extends AppWidgetProvider {
         super.onReceive(c, intent);
         if (ACTION_TOGGLE.equals(intent.getAction())) {
             SharedPreferences p = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            p.edit().putBoolean(KEY_HIDDEN, !p.getBoolean(KEY_HIDDEN, true)).apply();
-            refreshAll(c);
+            String key = hiddenKey(kind());
+            p.edit().putBoolean(key, !p.getBoolean(key, true)).apply();
+            AppWidgetManager mgr = AppWidgetManager.getInstance(c);
+            for (int id : mgr.getAppWidgetIds(new ComponentName(c, getClass()))) draw(c, mgr, id);
         }
     }
 
-    private static void draw(Context c, AppWidgetManager mgr, int id) {
+    static PendingIntent openApp(Context c, String what, int code) {
+        Intent open = new Intent(Intent.ACTION_VIEW, Uri.parse(OPEN_URL + what), c, MainActivity.class)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        return PendingIntent.getActivity(c, code, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
+    }
+
+    void draw(Context c, AppWidgetManager mgr, int id) {
         RemoteViews v = new RemoteViews(c.getPackageName(), R.layout.widget_balance);
-        boolean hidden = isHidden(c);
-        String total = MASK;
-        String updated = "Open Vela to load your balances";
+        String kind = kind();
+        boolean hidden = isHidden(c, kind);
+        String big = MASK;
+        String sub = "";
+        String updated = "Open Vela to load your figures";
         int shown = 0;
+        v.setTextViewText(R.id.w_title, emptyTitle());
         try {
             String raw = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_DATA, null);
-            if (raw != null) {
-                JSONObject d = new JSONObject(raw);
-                total = hidden ? MASK : d.optString("total", "");
-                updated = d.optString("updated", "");
-                v.setTextViewText(R.id.w_title, d.optString("title", "All accounts"));
-                JSONArray list = d.optJSONArray("accounts");
+            JSONObject all = raw == null ? null : new JSONObject(raw);
+            JSONObject d = all == null ? null : all.optJSONObject(kind);
+            if (d != null) {
+                big = hidden ? MASK : d.optString("big", "");
+                sub = hidden ? d.optString("subHidden", "") : d.optString("sub", "");
+                updated = all.optString("updated", "");
+                v.setTextViewText(R.id.w_title, d.optString("title", emptyTitle()));
+                JSONArray list = d.optJSONArray("rows");
                 if (list != null) {
                     for (int i = 0; i < list.length() && i < ROWS.length; i++) {
                         JSONObject a = list.getJSONObject(i);
                         v.setViewVisibility(ROWS[i], View.VISIBLE);
                         v.setTextViewText(NAMES[i], a.optString("name", ""));
                         v.setTextViewText(AMOUNTS[i], hidden ? "••••" : a.optString("amount", ""));
-                        v.setTextColor(AMOUNTS[i], !hidden && a.optBoolean("minus", false) ? 0xFFFF5C6C : 0xFFEDEDEE);
+                        int color = hidden ? 0xFFEDEDEE : a.optBoolean("minus", false) ? 0xFFFF5C6C : a.optBoolean("plus", false) ? 0xFF1EE88A : 0xFFEDEDEE;
+                        v.setTextColor(AMOUNTS[i], color);
                         shown++;
                     }
                 }
@@ -84,16 +115,17 @@ public class BalanceWidget extends AppWidgetProvider {
             // Unreadable figures: show the empty widget, never crash the home screen.
         }
         for (int i = shown; i < ROWS.length; i++) v.setViewVisibility(ROWS[i], View.GONE);
-        v.setTextViewText(R.id.w_total, total);
+        v.setTextViewText(R.id.w_total, big);
+        v.setTextViewText(R.id.w_sub, sub);
+        v.setViewVisibility(R.id.w_sub, sub.isEmpty() ? View.GONE : View.VISIBLE);
         v.setTextViewText(R.id.w_updated, updated);
         v.setImageViewResource(R.id.w_eye, hidden ? R.drawable.ic_widget_eye_off : R.drawable.ic_widget_eye);
         v.setContentDescription(R.id.w_eye, hidden ? "Show amounts" : "Hide amounts");
 
-        int flags = PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE;
-        Intent toggle = new Intent(c, BalanceWidget.class).setAction(ACTION_TOGGLE);
-        v.setOnClickPendingIntent(R.id.w_eye, PendingIntent.getBroadcast(c, 0, toggle, flags));
-        Intent open = new Intent(c, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
-        v.setOnClickPendingIntent(R.id.w_body, PendingIntent.getActivity(c, 1, open, flags));
+        int code = kind.hashCode() & 0xFFFF;
+        Intent toggle = new Intent(c, getClass()).setAction(ACTION_TOGGLE);
+        v.setOnClickPendingIntent(R.id.w_eye, PendingIntent.getBroadcast(c, code, toggle, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+        v.setOnClickPendingIntent(R.id.w_body, openApp(c, opens(), code + 1));
         mgr.updateAppWidget(id, v);
     }
 }

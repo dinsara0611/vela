@@ -1,6 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="widget_description">Your Vela balances, with a button to hide the amounts</string>
+    <string name="widget_budget_description">Budget this month: what is left to spend</string>
+    <string name="widget_bills_description">Bills and payments still to pay</string>
+    <string name="widget_goals_description">Your goals and how much is saved</string>
+    <string name="widget_recent_description">Your latest entries and what you spent today</string>
+    <string name="widget_quick_description">Add an expense, income or transfer in one tap</string>
+    <style name="VelaWidgetButton">
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_height">match_parent</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:gravity">center</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:maxLines">1</item>
+        <item name="android:minHeight">44dp</item>
+    </style>
     <style name="VelaWidgetRow">
         <item name="android:layout_width">match_parent</item>
         <item name="android:layout_height">wrap_content</item>

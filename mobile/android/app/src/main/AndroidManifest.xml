@@ -52,12 +52,42 @@
         <!-- "Ignore" on a bank notification (only Vela's own notifications can reach it). -->
         <receiver android:name=".NotificationActionReceiver" android:exported="false" />
 
-        <!-- Home-screen widget: balances with a button that hides the amounts. -->
+        <!-- Home-screen widgets: balances, budget, bills, goals, recent (each with a button that hides the amounts) and quick add. -->
         <receiver android:name=".BalanceWidget" android:exported="false" android:label="Vela balances">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/balance_widget_info" />
+        </receiver>
+        <receiver android:name=".BudgetWidget" android:exported="false" android:label="Vela budget">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/budget_widget_info" />
+        </receiver>
+        <receiver android:name=".BillsWidget" android:exported="false" android:label="Vela bills coming">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/bills_widget_info" />
+        </receiver>
+        <receiver android:name=".GoalsWidget" android:exported="false" android:label="Vela goals">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/goals_widget_info" />
+        </receiver>
+        <receiver android:name=".RecentWidget" android:exported="false" android:label="Vela recent">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/recent_widget_info" />
+        </receiver>
+        <receiver android:name=".QuickAddWidget" android:exported="false" android:label="Vela quick add">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider" android:resource="@xml/quick_widget_info" />
         </receiver>
 
         <provider

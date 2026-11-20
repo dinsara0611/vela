@@ -5024,3 +5024,16 @@ body.approve-waiting { overflow: hidden; }
 .parts-pill { display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px; font-weight: 700; color: var(--primary); background: var(--primary-soft); }
 .tx-parts-row { flex-wrap: wrap; gap: 8px; }
 .acc-list .acc-gap { flex: none; width: 42px; height: 42px; }
+
+/* Hold an entry: every detail, nothing cut short. */
+.txd-head { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.txd-head > div { min-width: 0; }
+.txd-head .sheet-title { overflow-wrap: anywhere; }
+.txd-amount { display: block; font-size: 20px; font-weight: 700; margin-top: 2px; }
+.txd-amount.is-income { color: var(--income); }
+.txd-list { display: flex; flex-direction: column; margin-bottom: 16px; border-radius: 16px; background: var(--surface-2, rgba(255,255,255,.04)); padding: 4px 14px; }
+.txd-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 11px 0; border-bottom: 1px solid var(--border, rgba(255,255,255,.06)); }
+.txd-row:last-child { border-bottom: 0; }
+.txd-row > span { color: var(--text-3); font-size: 13px; flex: none; max-width: 42%; }
+.txd-row > strong { font-weight: 600; font-size: 14px; text-align: right; overflow-wrap: anywhere; white-space: normal; }
+[data-edit-tx].is-held { transform: scale(.98); transition: transform .15s; }

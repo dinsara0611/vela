@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.60.2';
+const APP_VERSION = '4.61.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1587,9 +1587,66 @@ const renderActive = () => {
     try { renderActiveNow(); } finally { balanceMemo = null; viewTxMemo = null; }
     pushWidget();
 };
-// The Android home-screen widget: total and the four biggest accounts, already formatted. The widget hides
-// the amounts itself (eye button, hidden by default). Sent a moment after the screen settles.
+// The Android home-screen widgets (six kinds): balances, budget, bills coming, goals, recent entries and quick add.
+// Each gets its figures already formatted; the widgets hide amounts themselves (eye button, hidden by default).
+// Always all accounts together, whatever account the app is switched to. Sent a moment after the screen settles.
 let widgetTimer = null;
+const widgetData = () => {
+    const cur = dcur();
+    const money = (v) => formatCurrency(v, cur);
+    const keep = scopeAll;
+    scopeAll = true;
+    try {
+        const accs = state.accounts.map((a) => { const v = toDisplay(accountBalance(a), a.currency); return { name: a.name, amount: money(v), minus: v < -0.004, v }; })
+            .sort((x, y) => Math.abs(y.v) - Math.abs(x.v)).slice(0, 4).map(({ v, ...r }) => r);
+        const total = netWorth();
+        const balances = {
+            title: state.accounts.length > 1 ? 'All accounts' : ((state.accounts[0] || {}).name || 'Vela'),
+            big: money(total), minus: total < -0.004,
+            rows: state.accounts.length > 1 ? accs : []
+        };
+        const st = monthStats();
+        const month = new Date().toLocaleDateString('en-US', { month: 'long' });
+        const left = st.budget - st.spent;
+        const cats = Object.entries(st.byCat || {}).map(([id, v]) => ({ id, v: typeof v === 'number' ? v : (v && v.spent) || 0 }))
+            .filter((x) => x.v > 0).sort((a, b) => b.v - a.v).slice(0, 3)
+            .map((x) => ({ name: catById(x.id, 'expense').name, amount: money(x.v) }));
+        const budget = st.budget > 0
+            ? { title: `Budget · ${month}`, big: money(Math.abs(left)), minus: left < 0, sub: left < 0 ? `Over the budget · spent ${Math.round(st.budgetPct)}%` : `Left to spend · ${Math.round(st.budgetPct)}% used`, rows: [{ name: 'Spent', amount: money(st.spent) }, { name: 'Budget', amount: money(st.budget) }, ...cats].slice(0, 4) }
+            : { title: `Spent · ${month}`, big: money(st.spent), sub: 'No budget set yet', rows: cats };
+        const today = todayISO();
+        const soon = state.recurring.filter((b) => b.type === 'expense').sort((a, b) => (a.nextDate > b.nextDate ? 1 : -1));
+        const waiting = state.transactions.filter((t) => t.pending && t.type === 'expense' && !t.recurringId);
+        const due = [...soon.map((b) => ({ name: b.name, date: b.nextDate, v: toDisplay(billDue(b), b.currency) })), ...waiting.map((t) => ({ name: t.desc, date: t.date, v: toDisplay(t.amount, t.currency) }))]
+            .sort((a, b) => (a.date > b.date ? 1 : -1));
+        const now = new Date();
+        const monthEnd = toISODate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
+        const dueMonth = due.filter((x) => x.date <= monthEnd);
+        const bills = {
+            title: 'Bills coming', big: money(dueMonth.reduce((n, x) => n + x.v, 0)),
+            sub: dueMonth.length ? `${dueMonth.length} still to pay this month${dueMonth.some((x) => x.date < today) ? ' · some late' : ''}` : 'Nothing left to pay this month',
+            rows: due.slice(0, 4).map((x) => ({ name: `${x.name} · ${x.date < today ? 'late' : x.date === today ? 'today' : shortDate(x.date)}`, amount: money(x.v), minus: x.date < today }))
+        };
+        const goalsList = state.savings || [];
+        const gSaved = goalsList.reduce((n, g) => n + toDisplay(g.saved, g.currency), 0);
+        const gTarget = goalsList.reduce((n, g) => n + toDisplay(g.target, g.currency), 0);
+        const goals = {
+            title: 'Goals', big: money(gSaved),
+            sub: goalsList.length ? `saved of ${money(gTarget)}` : 'No goals yet · open Vela to add one',
+            rows: goalsList.slice(0, 4).map((g) => ({ name: `${g.name} · ${g.target > 0 ? Math.min(100, Math.round((g.saved / g.target) * 100)) : 0}%`, amount: money(toDisplay(g.saved, g.currency)) }))
+        };
+        const done = sortByNewest(state.transactions.filter((t) => !t.pending && !isUpcoming(t)));
+        const spentToday = done.filter((t) => t.type === 'expense' && t.date === today).reduce((n, t) => n + toDisplay(t.amount, t.currency), 0);
+        const recent = {
+            title: 'Recent', big: money(spentToday), sub: `spent today · ${money(st.spent)} this month`,
+            rows: done.slice(0, 4).map((t) => { const v = toDisplay(t.amount, t.currency); return { name: `${t.type === 'transfer' && t.desc === 'ATM withdrawal' ? 'Cash from ATM' : t.desc} · ${t.date === today ? (txTime(t) ? fmtTime(txTime(t)) : 'today') : shortDate(t.date)}`, amount: t.type === 'transfer' ? money(v) : formatSigned(t.type === 'income' ? v : -v, cur), plus: t.type === 'income' }; })
+        };
+        budget.subHidden = budget.sub; bills.subHidden = bills.sub;
+        goals.subHidden = goalsList.length ? `${goalsList.length} goal${goalsList.length === 1 ? '' : 's'}` : goals.sub;
+        recent.subHidden = 'spent today';
+        return { balances, budget, bills, goals, recent, updated: `Updated ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` };
+    } finally { scopeAll = keep; }
+};
 const pushWidget = () => {
     const w = nativePlugin('BalanceWidget');
     if (!w) return;
@@ -1597,19 +1654,29 @@ const pushWidget = () => {
     widgetTimer = setTimeout(() => {
         try {
             if (state.auth.isMock && !state.auth.completedOnboarding) { w.clear().catch(() => {}); return; }
-            const cur = dcur();
-            const accs = state.accounts.map((a) => { const v = toDisplay(accountBalance(a), a.currency); return { name: a.name, amount: formatCurrency(v, cur), minus: v < -0.004, v }; })
-                .sort((x, y) => Math.abs(y.v) - Math.abs(x.v)).slice(0, 4).map(({ v, ...r }) => r);
-            const total = netWorth();
-            const data = {
-                title: state.accounts.length > 1 ? 'All accounts' : ((state.accounts[0] || {}).name || 'Vela'),
-                total: formatCurrency(total, cur), minus: total < -0.004,
-                accounts: state.accounts.length > 1 ? accs : [],
-                updated: `Updated ${new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`
-            };
-            w.update({ data: JSON.stringify(data) }).catch(() => {});
-        } catch (e) { /* the widget is extra: never break the app */ }
+            w.update({ data: JSON.stringify(widgetData()) }).catch(() => {});
+        } catch (e) { /* the widgets are extra: never break the app */ }
     }, 800);
+};
+// A tap on a widget opens Vela at the right place (io.github.dinsara0611.vela://widget/<what>). Waits for the lock.
+const WIDGET_URL = 'io.github.dinsara0611.vela://widget/';
+let widgetPending = null;
+const runWidgetAction = (what) => {
+    if (isLocked()) { widgetPending = what; return; }
+    widgetPending = null;
+    [...openSheets].reverse().forEach((id) => closeSheet(id));
+    if (what === 'add-expense') openAddTx('expense');
+    else if (what === 'add-income') openAddTx('income');
+    else if (what === 'add-transfer') openTransfer();
+    else if (what === 'activity') goToActivity('all');
+    else if (what === 'budget' || what === 'bills' || what === 'goals') goToPlan(what === 'budget' ? 'budgets' : what);
+    else switchTab('dashboard');
+};
+const handleWidgetUrl = (url) => {
+    if (!url || !url.startsWith(WIDGET_URL)) return false;
+    const what = url.slice(WIDGET_URL.length).split(/[?#/]/)[0];
+    setTimeout(() => runWidgetAction(what), 350);
+    return true;
 };
 const renderActiveNow = () => {
     renderViewBar();
@@ -7842,6 +7909,79 @@ const initFundHold = () => {
     document.addEventListener('contextmenu', (e) => { if (e.target.closest('.sec-tile, .sec-open, .sec-chip')) e.preventDefault(); });
 };
 
+// Hold any entry (Activity, Home, funds, bills…) to see everything about it, nothing cut short.
+let txHold = null;
+let txHeld = false;
+const txDetailRows = (t) => {
+    const rows = [];
+    const add = (label, value) => { if (value !== null && value !== undefined && String(value).trim()) rows.push([label, String(value)]); };
+    const value = toDisplay(t.amount, t.currency);
+    add('Amount', t.type === 'transfer' ? formatDisplay(t.amount, t.currency) : formatSigned(t.type === 'income' ? value : -value, dcur()));
+    if (t.currency !== dcur()) add('In its own currency', formatCurrency(t.amount, t.currency));
+    if (t.fx) add('Exchange', fxNote(t));
+    const day = parseDate(t.date);
+    add('Date', `${day.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}${txTime(t) ? ` · ${fmtTime(txTime(t))}` : ''}`);
+    add('Type', t.type === 'transfer' ? 'Transfer between your accounts' : `${t.type === 'income' ? 'Income' : 'Expense'}${t.fixed ? ' · fixed every month' : ''}`);
+    if (t.pending) add('Status', `${payStatusLabel(payStatus(t.date), t.type)} · ${t.type === 'income' ? 'expected' : 'due'} ${shortDate(t.date)}`);
+    else if (t.paidAt || t.dueDate) add('Status', `${t.type === 'income' ? 'Received' : 'Paid'}${t.paidAt ? ` ${shortDate(toISODate(new Date(t.paidAt)))}` : ''}${t.dueDate ? ` · was due ${shortDate(t.dueDate)}` : ''}`);
+    if (t.type === 'transfer') add('Accounts', transferLine(t));
+    else { const a = state.accounts.find((x) => x.id === t.accountId); if (a) add(t.type === 'income' ? 'Into account' : 'From account', a.name); }
+    if (t.type !== 'transfer') add('Category', catById(t.category, t.type).name);
+    const sec = t.sectionId ? secById(t.sectionId) : null;
+    if (sec) add('Fund', sec.name);
+    const bill = t.recurringId ? state.recurring.find((x) => x.id === t.recurringId) : null;
+    if (bill) add('Fixed payment', bill.name);
+    const ref = t.billRef || (bill && bill.ref);
+    if (ref) add('Paid for', refLabel(ref));
+    if (t.feeFor) add('Bank fee', t.feeEstimated ? 'Usual fee (the SMS did not say the amount)' : 'Charged by the bank');
+    if (t.type === 'income' && t.inBudget === false) add('Budget', 'Not counted in the budget');
+    if (t.bank) {
+        const b = t.bank;
+        add('Found in', `${b.bank} · ${sourceLabel(b.sources || ['sms'])}`);
+        if (b.merchant && b.merchant !== t.desc) add('Bank says', b.merchant);
+        if (b.last4) add('Card or account', `••${b.last4}`);
+        if (b.ref) add('Bank reference', b.ref);
+    }
+    if (t.note) add('Note', t.note);
+    if (t.beforeBalance) add('Balance', 'Before the balance date: already inside that balance');
+    if (t.createdAt) { const c = new Date(t.createdAt); add('Added', `${c.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' })} · ${c.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`); }
+    return rows;
+};
+const openTxDetail = (id) => {
+    const t = state.transactions.find((x) => x.id === id);
+    if (!t) return;
+    $('txd-badge').innerHTML = t.type === 'transfer' ? `<span class="cat-badge" style="--cat:var(--text-2)">${icon('i-swap')}</span>` : entryBadge(t.desc, t.category, t.type);
+    $('txd-title').textContent = t.type === 'transfer' && t.desc === 'ATM withdrawal' ? 'Cash from ATM' : t.desc;
+    const value = toDisplay(t.amount, t.currency);
+    const amt = $('txd-amount');
+    amt.textContent = t.type === 'transfer' ? formatDisplay(t.amount, t.currency) : formatSigned(t.type === 'income' ? value : -value, dcur());
+    amt.className = `amount txd-amount ${t.type === 'income' ? 'is-income' : t.type === 'transfer' ? 'is-transfer' : ''}`;
+    $('txd-list').innerHTML = txDetailRows(t).slice(1).map(([k, v]) => `<div class="txd-row"><span>${escapeHtml(k)}</span><strong>${escapeHtml(v)}</strong></div>`).join('');
+    $('txd-edit').dataset.editTx = t.id;
+    openOrSwap('modal-tx-detail');
+};
+const initTxHold = () => {
+    const cancel = () => { if (txHold) { clearTimeout(txHold.timer); txHold = null; } };
+    document.addEventListener('pointerdown', (e) => {
+        const row = e.target.closest('[data-edit-tx]');
+        txHeld = false;
+        if (!row || row.id === 'txd-edit' || e.target.closest('[data-pay], .tx-confirm')) return;
+        cancel();
+        txHold = { x: e.clientX, y: e.clientY, timer: setTimeout(() => {
+            txHold = null;
+            txHeld = true;
+            haptic('MEDIUM');
+            row.classList.add('is-held');
+            setTimeout(() => row.classList.remove('is-held'), 280);
+            openTxDetail(row.dataset.editTx);
+        }, 480) };
+    });
+    document.addEventListener('pointermove', (e) => { if (txHold && Math.hypot(e.clientX - txHold.x, e.clientY - txHold.y) > 8) cancel(); });
+    ['pointerup', 'pointercancel'].forEach((ev) => document.addEventListener(ev, () => { cancel(); if (txHeld) setTimeout(() => { txHeld = false; }, 80); }));
+    document.addEventListener('click', (e) => { if (txHeld && e.target.closest('[data-edit-tx]')) { e.preventDefault(); e.stopPropagation(); txHeld = false; } }, true);
+    document.addEventListener('contextmenu', (e) => { if (e.target.closest('[data-edit-tx]')) e.preventDefault(); });
+};
+
 /* ---- Motion: amounts count up, bars grow (nothing moves when the phone asks for less motion) ---- */
 const lessMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const animateIn = (root) => {
@@ -9567,6 +9707,7 @@ const unlock = () => {
     lockBuffer = '';
     lockFails = 0;
     haptic('LIGHT');
+    if (widgetPending) setTimeout(() => runWidgetAction(widgetPending), 300);
 };
 
 const tryBiometricUnlock = async () => {
@@ -10591,6 +10732,7 @@ const initEvents = () => {
     $('switch-approval').addEventListener('click', toggleApproval);
     $('switch-secure-screen').addEventListener('click', toggleSecureScreen);
     initFundHold();
+    initTxHold();
     ['sec-move-from', 'sec-move-to'].forEach((id) => $(id).addEventListener('change', () => { updateSecMoveHint(); renderSecSplit(); updateAllFreeBtn(); }));
     $('sec-move-all').addEventListener('click', fillAllFree);
     $('sec-move-split').addEventListener('input', (e) => {
@@ -11485,9 +11627,9 @@ const initNative = () => {
     if (!isNative()) return;
     const app = nativePlugin('App');
     if (app) {
-        app.addListener('appUrlOpen', (event) => handleNativeAuthRedirect(event && event.url));
+        app.addListener('appUrlOpen', (event) => { if (!handleWidgetUrl(event && event.url)) handleNativeAuthRedirect(event && event.url); });
         if (typeof app.getLaunchUrl === 'function') {
-            app.getLaunchUrl().then((res) => { if (res && res.url) handleNativeAuthRedirect(res.url); }).catch(() => {});
+            app.getLaunchUrl().then((res) => { if (res && res.url && !handleWidgetUrl(res.url)) handleNativeAuthRedirect(res.url); }).catch(() => {});
         }
         app.addListener('pause', onAppHidden);
         app.addListener('resume', onAppVisible);

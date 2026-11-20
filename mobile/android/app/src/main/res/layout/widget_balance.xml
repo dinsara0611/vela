@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Vela home-screen widget: total + up to four accounts, eye button hides the amounts. -->
+<!-- Vela home-screen widget (balances, budget, bills, goals, recent): big figure, a line, up to four rows; the eye hides the amounts. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/w_body"
     android:layout_width="match_parent"
@@ -50,6 +50,16 @@
         android:textStyle="bold"
         android:maxLines="1"
         android:ellipsize="end" />
+
+    <TextView
+        android:id="@+id/w_sub"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:textColor="#A8A8AA"
+        android:textSize="11sp"
+        android:maxLines="1"
+        android:ellipsize="end"
+        android:visibility="gone" />
 
     <LinearLayout android:id="@+id/w_row1" style="@style/VelaWidgetRow" android:visibility="gone">
         <TextView android:id="@+id/w_name1" style="@style/VelaWidgetName" />
