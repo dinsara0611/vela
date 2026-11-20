@@ -3095,6 +3095,30 @@ export async function run() {
         return (matched && amountOk && billNext && ownOk) || `matched ${matched} (${m && m.how}), paid with estimate ${amountOk} (${paid && paid.amount}), bill expects it next ${billNext}, own transfer ${ownOk} (${own && own.desc}, ${own && own.type})`;
     });
 
+    await T('Estimated foreign amount: marked ≈, details offer "enter what your bank took"; the real amount is saved and the charge learned', async () => {
+        const st = s();
+        st.accounts.push({ id: 'acc-ex', name: 'Commercial Bank', kind: 'bank', currency: 'LKR', opening: 50000, createdAt: 0 });
+        const acc = () => s().accounts.find((a) => a.id === 'acc-ex');
+        const id = `tx-ex-${Date.now()}`;
+        const est = g('fxCharge')(9.99, 'USD', acc());
+        st.transactions.push({ id, type: 'expense', desc: 'Netflix', amount: est, currency: 'LKR', category: 'Subscriptions', date: g('todayISO')(), accountId: 'acc-ex', note: '', createdAt: Date.now(), fx: { amount: 9.99, currency: 'USD', rate: g('convertAmount')(1, 'USD', 'LKR'), fee: 4, estimated: true } });
+        g('saveState')();
+        const marked = /≈/.test(g('txRow')(s().transactions.find((t) => t.id === id)));
+        g('openTxDetail')(id); await wait(300);
+        const btn = document.querySelector('#txd-list [data-focus="tx-charged"]');
+        btn.click(); await wait(700);
+        const real = g('round2')(est + 2.22);
+        $('tx-charged').value = String(real); $('tx-charged').dispatchEvent(new Event('input', { bubbles: true }));
+        await g('submitTx')(); await wait(400);
+        const t = s().transactions.find((x) => x.id === id);
+        const saved = t && Math.abs(t.amount - real) < 0.001 && t.fx && t.fx.estimated === false && !/≈/.test(g('txRow')(t));
+        const learned = Number.isFinite(acc().fxFee) && Math.abs(g('fxCharge')(9.99, 'USD', acc()) - real) < 0.6;
+        st.transactions = st.transactions.filter((x) => x.id !== id);
+        st.accounts = st.accounts.filter((a) => a.id !== 'acc-ex');
+        g('saveState')();
+        return (marked && !!btn && saved && learned) || `marked ${marked}, button ${!!btn}, exact saved ${saved} (${t && t.amount} vs ${real}), learned ${learned}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

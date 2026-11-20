@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.62.3';
+const APP_VERSION = '4.62.4';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2379,7 +2379,7 @@ const txRow = (t, { showDate = true, withAccount = viewId() === 'all' && state.a
     }
     const cat = catById(t.category, t.type);
     const value = toDisplay(t.amount, t.currency);
-    const signed = formatSigned(t.type === 'income' ? value : -value, dcur());
+    const signed = `${t.fx && t.fx.estimated ? '≈ ' : ''}${formatSigned(t.type === 'income' ? value : -value, dcur())}`;
     const orig = t.fx ? `<span class="tx-orig-inline">${escapeHtml(fxNote(t))}</span>` : t.currency !== dcur() ? `<span class="tx-orig-inline">${escapeHtml(formatCurrency(t.amount, t.currency))}</span>` : '';
     const sec = t.sectionId ? secById(t.sectionId) : null;
     const label = `${accName ? `${t.type === 'income' ? 'Into' : 'From'} ${accName} · ` : ''}${showDate ? cat.name : (t.note || cat.name)}${sec ? ` · ${sec.name}` : ''}${(() => { const b = t.recurringId && state.recurring.find((x) => x.id === t.recurringId); return b && b.ref ? ` · ${refLabel(b.ref)}` : t.billRef ? ` · ${refLabel(t.billRef)}` : ''; })()}${t.beforeBalance ? ' · before balance date' : ''}`;
@@ -5872,6 +5872,7 @@ const submitTx = async () => {
         const estimate = fxCharge(amount, currency, acc);
         const real = txChargedTouched && Math.abs(charged - estimate) > 0.009;
         const fee = real ? learnFxFee(acc, amount, currency, charged) : fxFeeFor(acc);
+        if (real && fee !== null) setTimeout(() => showToast(`Exact amount saved. Vela learned ${acc.name} takes about ${fee}% on foreign payments, so the next ones will be much closer.`, 'success'), 600);
         fx = { amount, currency, rate: convertAmount(1, currency, acc.currency), fee: fee === null ? fxFeeFor(acc) : fee, estimated: !real && !(prevFx(id) && !prevFx(id).estimated && Math.abs(charged - (state.transactions.find((x) => x.id === id) || {}).amount) < 0.01) };
         saveAmount = round2(charged);
         saveCurrency = acc.currency;
@@ -8064,6 +8065,8 @@ const txDetailRows = (t) => {
     add('Amount', t.type === 'transfer' ? formatDisplay(t.amount, t.currency) : formatSigned(t.type === 'income' ? value : -value, dcur()));
     if (t.currency !== dcur()) add('In its own currency', formatCurrency(t.amount, t.currency));
     if (t.fx) add('Exchange', fxNote(t));
+    // A foreign payment whose rupee amount is Vela's estimate: one tap to put in what the bank really took.
+    if (t.fx && t.fx.estimated) rows.push(['Bank amount', '', 'charged']);
     const day = parseDate(t.date);
     add('Date', `${day.toLocaleDateString('en-US', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}${txTime(t) ? ` · ${fmtTime(txTime(t))}` : ''}`);
     add('Type', t.type === 'transfer' ? 'Transfer between your accounts' : `${t.type === 'income' ? 'Income' : 'Expense'}${t.fixed ? ' · fixed every month' : ''}`);
@@ -8102,7 +8105,7 @@ const openTxDetail = (id) => {
     const amt = $('txd-amount');
     amt.textContent = t.type === 'transfer' ? formatDisplay(t.amount, t.currency) : formatSigned(t.type === 'income' ? value : -value, dcur());
     amt.className = `amount txd-amount ${t.type === 'income' ? 'is-income' : t.type === 'transfer' ? 'is-transfer' : ''}`;
-    $('txd-list').innerHTML = txDetailRows(t).slice(1).map(([k, v, add]) => `<div class="txd-row"><span>${escapeHtml(k)}</span>${add ? `<button type="button" class="link-btn txd-add" data-edit-tx="${escapeHtml(t.id)}" data-focus="tx-billref">${icon('i-plus', 'ic ic-sm')} Add account or phone no.</button>` : `<strong>${escapeHtml(v)}</strong>`}</div>`).join('');
+    $('txd-list').innerHTML = txDetailRows(t).slice(1).map(([k, v, add]) => `<div class="txd-row"><span>${escapeHtml(k)}</span>${add === 'charged' ? `<button type="button" class="link-btn txd-add" data-edit-tx="${escapeHtml(t.id)}" data-focus="tx-charged">${icon('i-edit', 'ic ic-sm')} Estimate · enter what your bank took</button>` : add ? `<button type="button" class="link-btn txd-add" data-edit-tx="${escapeHtml(t.id)}" data-focus="tx-billref">${icon('i-plus', 'ic ic-sm')} Add account or phone no.</button>` : `<strong>${escapeHtml(v)}</strong>`}</div>`).join('');
     $('txd-edit').dataset.editTx = t.id;
     openOrSwap('modal-tx-detail');
 };
