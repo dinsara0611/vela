@@ -909,7 +909,7 @@ export async function run() {
         return (open && cleared && !added) || `review open ${open}, ignored cleared ${cleared}, added ${added}`;
     });
 
-    await T('Bank connections: "Connected" only when Android really allows SMS; no notification tracking anywhere', async () => {
+    await T('Bank connections: "Connected" only when Android really allows it; SMS and bank app tracking are separate switches', async () => {
         g('switchTab')('settings'); await wait(300);
         const look = async (status) => { fakeBankPlugin(status); await g('refreshBankStatus')(); return [$('bank-sms-state').textContent, $('bank-overall').textContent, $('bank-sms-help').innerText]; };
         const ok = await look({});
@@ -918,13 +918,22 @@ export async function run() {
         const notYet = await look({ smsPermission: 'prompt', restrictedSettings: 'allowed' });
         const paused = await look({ paused: true });
         const off = await look({ smsEnabled: false });
-        const noNotifUi = !$('switch-ntf') && !document.querySelector('[data-bank-fix="ntf"]') && !/notification access/i.test($('bank-card').innerText);
+        // Bank app tracking: its own switch and state, independent of SMS.
+        const lookN = async (status) => { fakeBankPlugin({ notifAvailable: true, ...status }); await g('refreshBankStatus')(); return [$('bank-ntf-state').textContent, $('bank-overall').textContent, $('bank-ntf-help').innerText, $('bank-sms-state').textContent]; };
+        const apps = [{ pkg: 'net.combank.passbook', name: 'ePassbook', bank: 'Commercial Bank', selected: true }];
+        const both = await lookN({ notifEnabled: true, notifAccess: true, listenerConnected: true, notifState: 'connected', apps });
+        const appOnly = await lookN({ smsEnabled: false, notifEnabled: true, notifAccess: true, listenerConnected: true, notifState: 'connected', apps });
+        const nRestricted = await lookN({ notifEnabled: true, notifState: 'restricted', apps });
+        const nOff = await lookN({ notifEnabled: false, apps });
+        const noNotifUi = both[0] === 'Connected' && both[1] === 'SMS + apps' && both[3] === 'Connected' && appOnly[0] === 'Connected' && appOnly[3] === 'Off' && appOnly[1] === 'Connected'
+            && /restricted setting/.test(nRestricted[0]) && !!document.querySelector('#bank-ntf-help [data-bank-fix="ntf"]') === false && nOff[0] === 'Off' && nOff[3] === 'Connected';
+        const nRestrictedBtn = /Allow restricted settings/.test(nRestricted[2]);
         delete window.Capacitor;
         await g('refreshBankStatus')();
         const web = $('bank-overall').textContent;
         const good = ok[0] === 'Connected' && ok[1] === 'Connected' && /restricted setting/.test(restricted[0]) && /Allow restricted settings/.test(restricted[2]) && btns
-            && /Not allowed yet/.test(notYet[0]) && paused[1] === 'Paused' && off[0] === 'Off' && noNotifUi && web === 'Android only';
-        return good || JSON.stringify({ ok, restricted: restricted[0], btns, notYet: notYet[0], paused: paused[1], off: off[0], noNotifUi, web });
+            && /Not allowed yet/.test(notYet[0]) && paused[1] === 'Paused' && off[0] === 'Off' && noNotifUi && nRestrictedBtn && web === 'Android only';
+        return good || JSON.stringify({ ok, restricted: restricted[0], btns, notYet: notYet[0], paused: paused[1], off: off[0], both, appOnly, nRestricted: nRestricted[0], nOff, nRestrictedBtn, web });
     });
 
     await T('Turning SMS on asks Android once; when blocked, the unlock steps mark step 1 done', async () => {
@@ -2999,6 +3008,29 @@ export async function run() {
         const opened = $('modal-tx').getAttribute('aria-hidden') === 'false';
         g('closeSheet')('modal-tx'); await wait(300);
         return (kinds && masked && opened) || `all kinds ${kinds}, hidden lines without amounts ${masked}, add form opened ${opened}`;
+    });
+
+    await T('Bank app tracking: an ePassbook notification is read like an SMS; the same payment from SMS and the app is one entry, added once', async () => {
+        localStorage.removeItem('VELA_SMS');
+        const before = g('smsQueue').length;
+        const t0 = Date.now();
+        // The ePassbook alert: no sender ID, the bank comes from the app (net.combank.passbook).
+        const n = g('parseBankSms')({ id: `ntf-${t0}`, source: 'notification', address: 'net.combank.passbook', bank: 'Commercial Bank', body: 'Transaction Alert. LKR 2,345.00 debited from A/C 8001XXXX559 at KEELLS SUPER on 20/11/2026', date: t0 });
+        const read = n && n.amount === 2345 && n.bank === 'Commercial Bank' && n.sources[0] === 'notification';
+        // A notification from an app that isn't a bank's never becomes a bank transaction.
+        const stranger = g('parseBankSms')({ id: `ntf-${t0}-x`, source: 'notification', address: 'com.whatsapp', bank: null, body: 'LKR 2,345.00 debited from A/C 8001XXXX559', date: t0 });
+        g('smsTake')([{ id: `ntf-${t0}`, source: 'notification', address: 'net.combank.passbook', bank: 'Commercial Bank', body: 'Transaction Alert. LKR 2,345.00 debited from A/C 8001XXXX559 at KEELLS SUPER on 20/11/2026', date: t0 }]);
+        g('smsTake')([{ id: `sms-${t0 + 40000}-1`, address: 'COMBANK', body: 'Dear Customer, your A/C ...559 has been debited for LKR 2,345.00 at KEELLS SUPER on 20/11/2026', date: t0 + 40000 }]);
+        const q = g('smsQueue').slice(before);
+        const one = q.length === 1 && q[0].sources.includes('sms') && q[0].sources.includes('notification');
+        if (one) { g('smsApply')(q[0], s().accounts[0].id); g('smsHandled')([q[0].id]); await wait(300); }
+        const added = s().transactions.filter((t) => t.amount === 2345 && t.bank && /KEELLS/i.test(t.bank.merchant || t.desc)).length;
+        // The app re-posts its alert later (after a restart): not added again.
+        const again = g('smsTake')([{ id: `ntf-${t0}-repost`, source: 'notification', address: 'net.combank.passbook', bank: 'Commercial Bank', body: 'Transaction Alert. LKR 2,345.00 debited from A/C 8001XXXX559 at KEELLS SUPER on 20/11/2026', date: t0 + 120000 }]);
+        if (g('isSheetOpen')('modal-sms')) await close('modal-sms');
+        s().transactions = s().transactions.filter((t) => !(t.amount === 2345 && t.bank));
+        g('saveState')();
+        return (read && !stranger && one && added === 1 && !again) || `read ${read}, stranger app ignored ${!stranger}, one entry with both sources ${one} (${q.length}: ${q.map((x) => x.sources.join('+')).join(', ')}), added ${added}, offered again ${again}`;
     });
 
     // Cloud sync against a fake account.

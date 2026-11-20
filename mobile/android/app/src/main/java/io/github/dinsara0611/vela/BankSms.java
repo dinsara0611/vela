@@ -239,6 +239,11 @@ final class BankSms {
 
     /** Null when the message isn't a bank transaction. */
     static Info parse(String address, String rawBody) {
+        return parse(address, rawBody, null);
+    }
+
+    /** As above; bankOverride names the bank when it is already known (a notification from that bank's own app). */
+    static Info parse(String address, String rawBody, String bankOverride) {
         if (rawBody == null) return null;
         String body = SPACES.matcher(rawBody).replaceAll(" ").trim();
         if (body.isEmpty()) return null;
@@ -251,7 +256,7 @@ final class BankSms {
 
         String sender = address == null ? "" : address.trim();
         String letters = sender.replaceAll("[^A-Za-z]", "");
-        String bank = bankName(sender, body);
+        String bank = bankOverride != null ? bankOverride : bankName(sender, body);
         if (bank == null) {
             // A named sender that isn't on the list: only when the text is clearly about an account or card.
             if (letters.isEmpty()) {
@@ -277,5 +282,57 @@ final class BankSms {
             }
         }
         return new Info(dir, amt.text, amt.cur, bank);
+    }
+
+    // ---- Bank and Passbook apps (notification tracking, alongside SMS) ----
+    /**
+     * Which bank an installed app belongs to, from its package name: Commercial Bank's ePassbook, ComBank Digital,
+     * Q+ and FLASH, BOC Smart Passbook and BOC apps, Sampath Vishwa, and the other Sri Lankan banks' apps.
+     * Only apps matched here can be picked in Vela; notifications from every other app are never read.
+     */
+    private static final String[][] APP_BANKS = {
+        { "^(net\\.combank\\.|combank\\.|com\\.combank|lk\\.combank)|combank|euronetindia\\.combank|^com\\.kashmi\\.bank$", "Commercial Bank" },
+        { "^(com\\.boc\\.itdiv|lk\\.boc|com\\.boc\\.lk|lk\\.bankofceylon)|bankofceylon|\\bboc(flex|smart|pay|passbook|digital)", "BOC" },
+        { "sampath", "Sampath Bank" },
+        { "(^|\\.)hnb(\\.|$)|hnbmobile|hnbsolo|hattonnational", "HNB" },
+        { "peoplesbank|peoples\\.bank|peoplespay|(^|\\.)pbank(\\.|$)", "People's Bank" },
+        { "(^|\\.)nsb(\\.|$)|nsbbank|nationalsavings", "NSB" },
+        { "nationstrust|(^|\\.)ntb(\\.|$)|ntbmobile|nexusbyntb", "Nations Trust" },
+        { "(^|\\.)ndb(\\.|$)|ndbbank|ndbneos", "NDB" },
+        { "seylan", "Seylan Bank" },
+        { "dfcc", "DFCC" },
+        { "panasia|(^|\\.)pabc(\\.|$)", "Pan Asia Bank" },
+        { "unionb|unionbank\\.lk", "Union Bank" },
+        { "amanabank|amana\\.lk", "Amana Bank" },
+        { "cargillsbank", "Cargills Bank" },
+        { "hsbc", "HSBC" },
+        { "standardchartered|\\.sc\\.mobile|scmobile", "Standard Chartered" },
+        { "frimi", "FriMi" }
+    };
+
+    /** The bank an app belongs to, or null for any app that isn't a bank's (those are never read). */
+    static String bankForApp(String pkg) {
+        if (pkg == null || pkg.isEmpty() || pkg.startsWith("io.github.dinsara0611")) return null;
+        String p = pkg.toLowerCase(Locale.ROOT);
+        for (String[] a : APP_BANKS) if (Pattern.compile(a[0]).matcher(p).find()) return a[1];
+        return null;
+    }
+
+    /** Text that says the notification's content is hidden (lock screen or app setting): nothing to read. */
+    static boolean looksHidden(String text) {
+        if (text == null || text.trim().isEmpty()) return true;
+        return Pattern.compile("(?i)(contents? hidden|sensitive (notification )?content|hidden content|new notification|tap to view|you have (a )?new (message|notification|alert))").matcher(text).find()
+            && moved(text).isEmpty();
+    }
+
+    /**
+     * Whether an SMS and a bank-app notification are likely the same transaction, so only one Vela alert is shown.
+     * Only across different sources (two SMS with the same amount are two purchases), same bank, direction,
+     * currency and amount, within the window. The app makes the final decision with more detail.
+     */
+    static boolean likelySame(Info a, String sourceA, long timeA, Info b, String sourceB, long timeB, long windowMs) {
+        if (a == null || b == null || sourceA == null || sourceA.equals(sourceB)) return false;
+        return a.bank.equals(b.bank) && a.direction.equals(b.direction) && a.currency.equals(b.currency)
+            && Math.abs(a.value() - b.value()) < 0.005 && Math.abs(timeA - timeB) <= windowMs;
     }
 }

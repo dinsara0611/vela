@@ -118,4 +118,29 @@ public class BankSmsTest {
         assertNotNull(i);
         assertEquals(CB, i.bank);
     }
+
+    @Test
+    public void bankAppsAreFoundByPackageNameAndNothingElse() {
+        assertEquals(CB, BankSms.bankForApp("net.combank.passbook"));
+        assertEquals(CB, BankSms.bankForApp("combank.com.combankdigital"));
+        assertEquals(CB, BankSms.bankForApp("com.euronetindia.combankqpluscustomer"));
+        assertEquals("BOC", BankSms.bankForApp("com.boc.itdiv.smartpassbook"));
+        assertEquals("Sampath Bank", BankSms.bankForApp("lk.sampath.vishwa.retail"));
+        assertNull(BankSms.bankForApp("com.whatsapp"));
+        assertNull(BankSms.bankForApp("com.paypal.android.p2pmobile"));
+        assertNull(BankSms.bankForApp("io.github.dinsara0611.vela"));
+    }
+
+    @Test
+    public void passbookNotificationsUseTheAppsBankAndSameRules() {
+        BankSms.Info i = BankSms.parse(null, "Transaction Alert. LKR 1,560.00 debited from your A/C 8001XXXX559 for CEB bill payment.", CB);
+        assertNotNull(i);
+        assertEquals(CB, i.bank);
+        assertEquals("out", i.direction);
+        assertNull(BankSms.parse(null, "Your OTP is 482913. Do not share it.", CB));
+        assertTrue(BankSms.looksHidden("Contents hidden"));
+        BankSms.Info sms = BankSms.parse("COMBANK", "LKR 1,560.00 debited from A/C ...559 for CEB bill payment");
+        assertTrue(BankSms.likelySame(i, "notification", 1000L, sms, "sms", 60000L, 15 * 60 * 1000L));
+        assertTrue(!BankSms.likelySame(i, "sms", 1000L, sms, "sms", 60000L, 15 * 60 * 1000L));
+    }
 }

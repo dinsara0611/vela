@@ -11,5 +11,6 @@
     <uses-permission android:name="android.permission.RECEIVE_SMS" tools:node="remove" />
     <application>
         <receiver android:name=".SmsReceiver" tools:node="remove" />
+        <service android:name=".BankNotificationListener" tools:node="remove" />
     </application>
 </manifest>

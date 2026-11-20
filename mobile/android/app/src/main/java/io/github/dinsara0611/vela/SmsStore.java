@@ -45,6 +45,29 @@ final class SmsStore {
     // ---- settings shared by the receiver, the listener and the plugin ----
     static boolean smsOn(Context ctx) { return prefs(ctx).getBoolean("enabled", false) && !paused(ctx); }
     static boolean paused(Context ctx) { return prefs(ctx).getBoolean("paused", false); }
+    /** Bank-app notification tracking: its own switch, independent of SMS tracking. */
+    static boolean notifOn(Context ctx) { return prefs(ctx).getBoolean("notifEnabled", false) && !paused(ctx); }
+    static final long SAME_WINDOW_MS = 15 * 60 * 1000L;
+
+    /** The bank apps the user picked in Vela (only these are read). */
+    static Set<String> bankApps(Context ctx) {
+        return new HashSet<>(prefs(ctx).getStringSet("bankApps", new HashSet<>()));
+    }
+
+    /** True when the other source already reported what looks like this same transaction (so don't alert twice). */
+    static synchronized boolean alreadyNotified(Context ctx, JSONObject item, BankSms.Info info) {
+        JSONArray list = all(ctx);
+        for (int i = 0; i < list.length(); i++) {
+            JSONObject o = list.optJSONObject(i);
+            if (o == null || o.optString("id").equals(item.optString("id"))) continue;
+            String src = o.optString("source", "sms");
+            BankSms.Info other = "notification".equals(src)
+                ? BankSms.parse(null, o.optString("body"), o.optString("bank", null))
+                : BankSms.parse(o.optString("address"), o.optString("body"));
+            if (BankSms.likelySame(info, item.optString("source", "sms"), item.optLong("date"), other, src, o.optLong("date"), SAME_WINDOW_MS)) return true;
+        }
+        return false;
+    }
 
     // ---- encrypted storage ----
     private static SecretKey key() throws Exception {
@@ -195,7 +218,7 @@ final class SmsStore {
             JSONObject o = list.optJSONObject(i);
             if (o != null) nm.cancel(notificationId(o.optString("id")));
         }
-        prefs(ctx).edit().remove(KEY).remove("pending").remove(HANDLED).remove("lastDetected").apply();
+        prefs(ctx).edit().remove(KEY).remove("pending").remove(HANDLED).remove("lastDetected").remove("hiddenAt").apply();
     }
 
     static int notificationId(String id) {

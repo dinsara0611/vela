@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Vela Privacy Policy</title>
-<meta name="description" content="How Vela handles your money data and bank SMS.">
+<meta name="description" content="How Vela handles your money data, bank SMS and bank app notifications.">
 <style>
     :root { --bg: #07070b; --card: #12121a; --text: #ecebf5; --text-2: #b4b2c8; --accent: #b47cff; --line: #262636; }
     @media (prefers-color-scheme: light) { :root { --bg: #f7f6fb; --card: #ffffff; --text: #17161f; --text-2: #4d4b5e; --accent: #7a3cd6; --line: #e3e1ee; } }
@@ -27,7 +27,7 @@
     <p class="meta">Last updated: 16 November 2026 · Applies to the Vela app on Android and the web</p>
 
     <div class="card">
-        <p><strong>In short:</strong> Vela keeps your money records on your phone. If you sign in, they are synced to your own account so you can use them on another device. Bank SMS are read on your phone only, and are never sent to Vela's servers or to any AI. Vela never asks for your bank password, PIN or one-time codes, and doesn't sell or share your data.</p>
+        <p><strong>In short:</strong> Vela keeps your money records on your phone. If you sign in, they are synced to your own account so you can use them on another device. Bank SMS and bank app notifications are read on your phone only, and are never sent to Vela's servers or to any AI. Vela never asks for your bank password, PIN or one-time codes, and doesn't sell or share your data.</p>
     </div>
 
     <h2>What Vela stores</h2>
@@ -38,7 +38,7 @@
     </ul>
 
     <h2>Optional account and sync</h2>
-    <p>If you sign in (Google or email), your entries, settings and receipt photos are stored in your own private account on Supabase, so they are kept when you change phones. Only you can read them (row-level security is tied to your account). For bank-detected entries this includes the bank name, reference, last 4 digits of the card or account, the shop name and how it was added (SMS, or shared/pasted). The text of the bank message itself is not uploaded.</p>
+    <p>If you sign in (Google or email), your entries, settings and receipt photos are stored in your own private account on Supabase, so they are kept when you change phones. Only you can read them (row-level security is tied to your account). For bank-detected entries this includes the bank name, reference, last 4 digits of the card or account, the shop name and how it was added (SMS, bank app notification, or shared/pasted). The text of the bank message itself is not uploaded.</p>
 
     <h2>Bank SMS tracking (optional, Android)</h2>
     <ul>
@@ -50,8 +50,16 @@
         <li>Without the SMS permission (and in the Google Play version) you can share a bank SMS to Vela from your Messages app, or paste it. It's read on your phone in the same way.</li>
     </ul>
 
+    <h2>Bank app tracking (optional, Android)</h2>
+    <ul>
+        <li>A second, separate way to detect transactions: the transaction alerts that your bank's own app (for example Commercial Bank ePassbook, ComBank Digital or BOC Smart Passbook) shows as Android notifications. It works on its own or together with SMS tracking.</li>
+        <li>Only works after you turn it on in Vela and give Vela <strong>Notification access</strong> in Android settings. You pick which bank apps Vela reads; notifications from every other app are ignored without being read. Turn it off any time in Vela, or remove Vela from Android's Notification access.</li>
+        <li>The same rules as bank SMS apply: codes, login alerts and promotions are never kept; only what is needed for the transaction is kept, encrypted on your phone, until you confirm or ignore it; nothing is sent to Vela's servers or to any AI.</li>
+        <li>When the SMS and the bank app report the same payment, Vela records it once.</li>
+    </ul>
+
     <h2>Vela AI (optional)</h2>
-    <p>If you use Vela AI, your question and a summary of your money (month totals, categories, budgets and recent entries' descriptions and amounts) are sent through Vela's server to Google Gemini to answer you. Bank SMS are never sent to the AI. Don't type passwords, PINs or codes into the chat.</p>
+    <p>If you use Vela AI, your question and a summary of your money (month totals, categories, budgets and recent entries' descriptions and amounts) are sent through Vela's server to Google Gemini to answer you. Bank SMS and bank app notifications are never sent to the AI. Don't type passwords, PINs or codes into the chat.</p>
 
     <h2>Other services</h2>
     <ul>
