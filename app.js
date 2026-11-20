@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.63.2';
+const APP_VERSION = '4.63.3';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -5695,16 +5695,10 @@ const setTxType = (type, keepCategory) => {
     renderTxSuggest();
     updatePriceHint();
     updateDateHint();
-    setTxKind(txKind);
-    updateTripRow();
-    renderTxSections();
-    updateBeforeRow();
-    updateInBudgetRow();
-    updatePartsRow();
-    updateChargedRow();
+    // Each row on its own: one that fails with odd saved data must not hide the rows after it.
+    const safe = (f) => { try { f(); } catch (err) { console.warn('Vela form row:', f.name || 'row', err && err.message); } };
     $('tx-billref-field').hidden = type !== 'expense';
-    updateShareRow();
-    updateFundsRow();
+    [() => setTxKind(txKind), updateTripRow, renderTxSections, updateBeforeRow, updateInBudgetRow, updatePartsRow, updateChargedRow, updateShareRow, updateFundsRow].forEach(safe);
 };
 let txChargedTouched = false;
 // The bill's own number on an entry: CEB / water account number, or the phone number of a phone bill or reload.
@@ -5762,9 +5756,12 @@ let txFundsOn = null;
 const txIncomeCat = () => (document.querySelector('input[name="tx-category"]:checked') || {}).value || '';
 const txFundsWanted = () => (typeof txFundsOn === 'boolean' ? txFundsOn : fundIncomeCats().has(txIncomeCat()));
 const updateFundsRow = () => {
-    const show = txType === 'income' && secList().length > 0 && !$('tx-id').value && !txShareBill();
+    const show = txType === 'income' && !$('tx-id').value && !txShareBill();
     $('tx-funds-row').hidden = !show;
     if (!show) return;
+    // No funds yet: the switch says where to make them instead of hiding.
+    $('tx-funds').disabled = !secList().length;
+    if (!secList().length) { setSwitch($('tx-funds'), false); $('tx-funds-desc').textContent = 'You have no funds yet. Make them in Plan > Funds, then Vela can divide your income.'; return; }
     const on = txFundsWanted();
     const cat = catById(txIncomeCat(), 'income');
     setSwitch($('tx-funds'), on);
@@ -11058,7 +11055,7 @@ const initEvents = () => {
     $('tx-amount').addEventListener('input', () => { resetTxCover(); if (!$('tx-parts-row').hidden) updatePartsRow(); });
     $('tx-desc').addEventListener('change', () => { if (!$('tx-parts-row').hidden) updatePartsRow(); });
     $('tx-inbudget').addEventListener('click', () => { txInBudget = !isOn($('tx-inbudget')); updateInBudgetRow(); });
-    document.addEventListener('change', (e) => { if (e.target && e.target.name === 'tx-category') { txFundsOn = null; updateInBudgetRow(); updateFundsRow(); } });
+    document.addEventListener('change', (e) => { if (e.target && e.target.name === 'tx-category') { txFundsOn = null; try { updateInBudgetRow(); } catch (err) { console.warn('Vela form row:', err && err.message); } updateFundsRow(); } });
     $('tx-funds').addEventListener('click', () => { txFundsOn = !isOn($('tx-funds')); updateFundsRow(); });
     $('tx-date').addEventListener('change', updateBeforeRow);
     $('tx-time').addEventListener('change', updateBeforeRow);
