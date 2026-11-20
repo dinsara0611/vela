@@ -223,7 +223,7 @@ export async function run() {
         ['ComBank cash from another bank\'s ATM', 'Withdrawal at Hatton National Bank HNB PANNIPITI LK for LKR 20,000.00 on 14/11/26 06:52 PM from your debit card ending #5370.',
             { type: 'atm', amount: 20000, last4: '5370', bank: 'Commercial Bank', date: '2026-11-14' }],
         ['ComBank foreign purchase with the rupee figure', 'Purchase at NETFLIX.COM for USD 9.99 (LKR 3,312.45) on 16/11/26 from card ending #5370. Avl Bal LKR 80,000.00',
-            { type: 'expense', amount: 3312.45, currency: 'LKR', desc: 'Netflix', category: 'Entertainment' }],
+            { type: 'expense', amount: 3312.45, currency: 'LKR', desc: 'Netflix', category: 'Subscriptions' }],
         ['ComBank shop with phone number and country', 'Dear Cardholder, Purchase at Google One 650-2530000 US for LKR 6,425.00 on 15/11/26 05:36 PM has been authorised on your debit card ending #5370.',
             { amount: 6425, desc: 'Google', time: '17:36' }],
         ['ComBank unknown shop keeps its own name', 'Dear Cardholder, Purchase at SUNIL STORES (PVT) LTD 0712755777 LK for LKR 1,000.00 on 16/11/26 10:14 AM has been authorised on your debit card ending #5370.',
@@ -478,7 +478,7 @@ export async function run() {
         if (!realLogo) return 'real logos missing (or shown for a brand without a verified logo)';
         const plain = g('entryBadge')('Lunch with Amal', 'Food', 'expense');
         const ok = names.join('|') === 'Koko|Keells Super|Abc Traders|Cafe Kopi|Odel' && koko.desc === 'Koko' && koko.category === 'Shopping'
-            && net.desc === 'Netflix' && net.category === 'Entertainment' && /brand-badge/.test(badge) && !/brand-badge/.test(plain);
+            && net.desc === 'Netflix' && net.category === 'Subscriptions' && /brand-badge/.test(badge) && !/brand-badge/.test(plain);
         return ok || JSON.stringify({ names, koko: koko && [koko.desc, koko.category], net: net && [net.desc, net.category] });
     });
 
@@ -1832,7 +1832,7 @@ export async function run() {
         const tile = document.querySelector('[data-sub-pick="Spotify Premium"]');
         const logo = !!(tile && tile.querySelector('img'));
         tile.click(); await wait(400);
-        const form = $('bill-name').value === 'Spotify Premium' && $('bill-frequency').value === 'monthly' && $('bill-category').value === 'Entertainment';
+        const form = $('bill-name').value === 'Spotify Premium' && $('bill-frequency').value === 'monthly' && $('bill-category').value === 'Subscriptions';
         $('bill-amount').value = '1290';
         g('fillCurrencySelect')($('bill-currency'), 'LKR');
         g('submitBill')(); await wait(400);
@@ -3209,6 +3209,15 @@ export async function run() {
         Object.assign(st.config, { sections: keep.sections, sectionMoves: keep.moves });
         g('saveState')();
         return (shown && hint && inFund && notBudget && divideClosed && back) || `row ${shown}, hint ${hint}, in Bills fund ${inFund} (${JSON.stringify(g('sectionBalances')())}), out of budget ${notBudget}, no split sheet ${divideClosed}, deleted back ${back}`;
+    });
+
+    await T('Subscriptions category: SLT, Netflix, ChatGPT pick Subscriptions; CEB and Dialog stay Utilities', async () => {
+        const has = s().categories.some((c) => c.id === 'Subscriptions' && c.type === 'expense');
+        const cat = (name) => g('brandCategory')(g('brandOfName')(name));
+        const subs = ['SLT', 'Netflix', 'ChatGPT Plus', 'PEO TV'].map(cat);
+        const util = ['CEB', 'Dialog'].map(cat);
+        const sms = g('parseBankSms')({ id: `sms-${Date.now()}-sub`, source: 'sms', address: 'COMBANK', body: 'Dear Cardholder, Purchase at NETFLIX.COM for USD 9.99 has been authorised on your debit card ending #5174.', date: Date.now() });
+        return (has && subs.every((c) => c === 'Subscriptions') && util.every((c) => c === 'Utilities') && sms.category === 'Subscriptions') || `category ${has}, subs ${subs}, utilities ${util}, sms ${sms && sms.category}`;
     });
 
     // Cloud sync against a fake account.

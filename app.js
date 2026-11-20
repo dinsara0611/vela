@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.63.0';
+const APP_VERSION = '4.63.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -22,7 +22,7 @@ const NATIVE_AUTH_REDIRECT = 'io.github.dinsara0611.vela://auth-callback';
 
 const PALETTE = ['pink', 'violet', 'orange', 'green', 'cyan', 'yellow', 'magenta', 'indigo', 'teal', 'slate'];
 const ICON_CHOICES = [
-    'c-Food', 'c-Utilities', 'c-Rent', 'c-Entertainment', 'c-Travel', 'c-Health', 'c-Shopping', 'c-Other',
+    'c-Food', 'c-Utilities', 'c-Rent', 'c-Entertainment', 'c-Subscriptions', 'c-Travel', 'c-Health', 'c-Shopping', 'c-Other',
     'c-Salary', 'c-Freelance', 'c-Business', 'c-Gift', 'c-Investment', 'c-OtherIncome',
     'x-book', 'x-school', 'x-coffee', 'x-paw', 'x-gym', 'x-plane', 'x-tools', 'x-music', 'x-fuel', 'x-phone'
 ];
@@ -31,6 +31,7 @@ const DEFAULT_CATEGORIES = [
     { id: 'Utilities', name: 'Utilities', type: 'expense', icon: 'c-Utilities', color: 'violet' },
     { id: 'Rent', name: 'Rent', type: 'expense', icon: 'c-Rent', color: 'orange' },
     { id: 'Entertainment', name: 'Fun', type: 'expense', icon: 'c-Entertainment', color: 'green' },
+    { id: 'Subscriptions', name: 'Subscriptions', type: 'expense', icon: 'c-Subscriptions', color: 'indigo' },
     { id: 'Travel', name: 'Transport', type: 'expense', icon: 'c-Travel', color: 'cyan' },
     { id: 'Health', name: 'Health', type: 'expense', icon: 'c-Health', color: 'yellow' },
     { id: 'Shopping', name: 'Shopping', type: 'expense', icon: 'c-Shopping', color: 'magenta' },
@@ -6488,7 +6489,7 @@ const BRAND_KINDS = [
     [/educat|school|class|tuition|course|campus|stud|exam/i, 'udemy coursera duolingo edx skillshare quizlet chegg icbt nsbm sliit iit apiit esoft britishcouncil cima acca ielts'],
     [/fuel|petrol|diesel|gas station/i, 'ceypetco lankaioc sinopec shell'],
     [/game|gaming|play ?store|g ?play/i, 'steam playstation xbox nintendo roblox pubg freefire epicgames ea riot minecraft mobilelegends supercell callofduty hoyoverse king ubisoft blizzard codashop'],
-    [/subscri|stream/i, 'netflix spotify disney primevideo hbomax youtube crunchyroll deezer soundcloud twitch audible hulu paramount tidal scribd viu zee5 hotstar sonyliv anghami patreon openai claude gemini perplexity canva notion dropbox grammarly'],
+    [/subscri|stream/i, 'netflix spotify disney primevideo hbomax youtube crunchyroll deezer soundcloud twitch audible hulu paramount tidal scribd viu zee5 hotstar sonyliv anghami patreon openai claude gemini perplexity canva notion dropbox grammarly slt peotv microsoft adobe linkedin capcut zoom tinder midjourney cursor github figma nordvpn expressvpn surfshark proton onepassword bitwarden headspace calmapp starlink'],
     [/hospital|medical|doctor|pharm|health/i, 'asiri nawaloka lankahospitals hemas durdans ninewells kingshospital osusala healthguard']
 ].map(([re, slugs]) => [re, new Set(slugs.split(' '))]);
 const brandCategory = (brand) => {
@@ -7586,16 +7587,16 @@ const deleteTrip = () => {
    Subscriptions: pick the service, type what you pay, it's a monthly bill with a reminder
    ========================================================================= */
 const SUBSCRIPTIONS = [
-    ['netflix', 'Netflix', 'Entertainment'], ['spotify', 'Spotify Premium', 'Entertainment'], ['youtube', 'YouTube Premium', 'Entertainment'],
-    ['disney', 'Disney+', 'Entertainment'], ['primevideo', 'Prime Video', 'Entertainment'], ['hbomax', 'HBO Max', 'Entertainment'],
-    ['apple', 'iCloud+', 'Other'], ['google', 'Google One', 'Other'], ['openai', 'ChatGPT Plus', 'Other'], ['claude', 'Claude Pro', 'Other'],
-    ['gemini', 'Gemini Advanced', 'Other'], ['microsoft', 'Microsoft 365', 'Other'], ['canva', 'Canva Pro', 'Other'], ['adobe', 'Adobe Creative Cloud', 'Other'],
-    ['notion', 'Notion', 'Other'], ['dropbox', 'Dropbox', 'Other'], ['duolingo', 'Duolingo Super', 'Other'], ['grammarly', 'Grammarly', 'Other'],
-    ['linkedin', 'LinkedIn Premium', 'Other'], ['crunchyroll', 'Crunchyroll', 'Entertainment'], ['audible', 'Audible', 'Entertainment'],
-    ['deezer', 'Deezer', 'Entertainment'], ['playstation', 'PlayStation Plus', 'Entertainment'], ['xbox', 'Xbox Game Pass', 'Entertainment'],
-    ['nintendo', 'Nintendo Switch Online', 'Entertainment'], ['peotv', 'PEO TV', 'Utilities'], ['dialog', 'Dialog TV', 'Utilities'],
-    ['slt', 'SLT Fibre', 'Utilities'], ['capcut', 'CapCut Pro', 'Other'], ['zoom', 'Zoom Pro', 'Other'], ['tinder', 'Tinder Gold', 'Entertainment'],
-    ['viu', 'Viu', 'Entertainment'], ['hotstar', 'Hotstar', 'Entertainment'], ['zee5', 'ZEE5', 'Entertainment'], ['perplexity', 'Perplexity Pro', 'Other']
+    ['netflix', 'Netflix', 'Subscriptions'], ['spotify', 'Spotify Premium', 'Subscriptions'], ['youtube', 'YouTube Premium', 'Subscriptions'],
+    ['disney', 'Disney+', 'Subscriptions'], ['primevideo', 'Prime Video', 'Subscriptions'], ['hbomax', 'HBO Max', 'Subscriptions'],
+    ['apple', 'iCloud+', 'Subscriptions'], ['google', 'Google One', 'Subscriptions'], ['openai', 'ChatGPT Plus', 'Subscriptions'], ['claude', 'Claude Pro', 'Subscriptions'],
+    ['gemini', 'Gemini Advanced', 'Subscriptions'], ['microsoft', 'Microsoft 365', 'Subscriptions'], ['canva', 'Canva Pro', 'Subscriptions'], ['adobe', 'Adobe Creative Cloud', 'Subscriptions'],
+    ['notion', 'Notion', 'Subscriptions'], ['dropbox', 'Dropbox', 'Subscriptions'], ['duolingo', 'Duolingo Super', 'Subscriptions'], ['grammarly', 'Grammarly', 'Subscriptions'],
+    ['linkedin', 'LinkedIn Premium', 'Subscriptions'], ['crunchyroll', 'Crunchyroll', 'Subscriptions'], ['audible', 'Audible', 'Subscriptions'],
+    ['deezer', 'Deezer', 'Subscriptions'], ['playstation', 'PlayStation Plus', 'Subscriptions'], ['xbox', 'Xbox Game Pass', 'Subscriptions'],
+    ['nintendo', 'Nintendo Switch Online', 'Subscriptions'], ['peotv', 'PEO TV', 'Subscriptions'], ['dialog', 'Dialog TV', 'Subscriptions'],
+    ['slt', 'SLT Fibre', 'Subscriptions'], ['capcut', 'CapCut Pro', 'Subscriptions'], ['zoom', 'Zoom Pro', 'Subscriptions'], ['tinder', 'Tinder Gold', 'Subscriptions'],
+    ['viu', 'Viu', 'Subscriptions'], ['hotstar', 'Hotstar', 'Subscriptions'], ['zee5', 'ZEE5', 'Subscriptions'], ['perplexity', 'Perplexity Pro', 'Subscriptions']
 ];
 const SUB_SLUGS = new Set([...SUBSCRIPTIONS.map(([slug]) => slug), ...BRAND_KINDS[4][1]]);
 // Your subscriptions: monthly bills for a streaming / app / TV service (or added from the Subscription menu).
