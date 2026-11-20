@@ -3033,6 +3033,30 @@ export async function run() {
         return (read && !stranger && one && added === 1 && !again) || `read ${read}, stranger app ignored ${!stranger}, one entry with both sources ${one} (${q.length}: ${q.map((x) => x.sources.join('+')).join(', ')}), added ${added}, offered again ${again}`;
     });
 
+    await T('Bill number by hand: an entry without one offers Add in its details; typed in the form it is saved, shown, and taught to its bill', async () => {
+        const st = s();
+        const id = `tx-br-${Date.now()}`;
+        st.recurring.push({ id: 'br-ceb', type: 'expense', name: 'CEB', amount: 1560, currency: 'LKR', category: 'Utilities', frequency: 'monthly', nextDate: g('todayISO')(), anchorDay: 20, autoLog: false, accountId: st.accounts[0].id, createdAt: 1 });
+        st.transactions.push({ id, type: 'expense', desc: 'CEB', amount: 1560, currency: 'LKR', category: 'Utilities', date: g('todayISO')(), accountId: st.accounts[0].id, recurringId: 'br-ceb', fixed: true, note: '', createdAt: Date.now() });
+        g('saveState')();
+        g('openTxDetail')(id); await wait(300);
+        const offer = document.querySelector('#txd-list .txd-add');
+        offer.click(); await wait(700);
+        const formOpen = $('modal-tx').getAttribute('aria-hidden') === 'false' && !$('tx-billref-field').hidden;
+        $('tx-billref').value = '4205044100';
+        await g('submitTx')(); await wait(400);
+        const t = s().transactions.find((x) => x.id === id);
+        const saved = t && t.billRef === '4205044100';
+        const learned = s().recurring.find((x) => x.id === 'br-ceb').ref === '4205044100';
+        g('openTxDetail')(id); await wait(300);
+        const shown = /Acc 4205044100/.test($('txd-list').textContent);
+        g('closeSheet')('modal-tx-detail'); await wait(300);
+        st.transactions = st.transactions.filter((x) => x.id !== id);
+        st.recurring = st.recurring.filter((x) => x.id !== 'br-ceb');
+        g('saveState')();
+        return (!!offer && formOpen && saved && learned && shown) || `offer ${!!offer}, form with the field ${formOpen}, saved ${saved}, bill learned ${learned}, shown ${shown}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };

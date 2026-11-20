@@ -38,7 +38,7 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 
-    <link rel="stylesheet" href="style.css?v=4.62.0">
+    <link rel="stylesheet" href="style.css?v=4.62.1">
 </head>
 <body data-view="dashboard">
 
@@ -843,6 +843,10 @@
                     </div>
                     <p class="tx-source" id="tx-source" hidden></p>
                     <button type="button" class="link-btn tx-allocate" id="tx-allocate" data-action="tx-allocate" hidden><svg class="ic ic-sm"><use href="#i-wallet"/></svg><span id="tx-allocate-text">Allocate to funds</span></button>
+                    <div class="field" id="tx-billref-field">
+                        <label class="field-label" for="tx-billref">Account / phone no. <span class="faint">(optional, for bills)</span></label>
+                        <input type="text" id="tx-billref" class="input" placeholder="CEB or water account no., or phone no." maxlength="40" autocomplete="off" inputmode="text">
+                    </div>
                     <div class="field">
                         <label class="field-label" for="tx-note">Note <span class="faint">(optional)</span></label>
                         <textarea id="tx-note" class="input" placeholder="Anything to remember" maxlength="240"></textarea>
@@ -2029,7 +2033,7 @@
 
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.118.0/dist/umd/supabase.js"></script>
-    <script src="app.js?v=4.62.0"></script>
+    <script src="app.js?v=4.62.1"></script>
     <script>
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', function () {

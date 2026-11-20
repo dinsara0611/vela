@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.62.0';
+const APP_VERSION = '4.62.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -4093,6 +4093,7 @@ const smsEdit = (id, asMove = false) => {
     $('tx-date').value = i.date;
     $('tx-time').value = i.time || '';
     $('tx-note').value = `From ${i.bank} (${sourceShort(i.sources)})`;
+    $('tx-billref').value = i.billRef || '';
     updateDescLogo();
     selectTxCategory(i.category);
     txCatTouched = true;
@@ -5595,8 +5596,17 @@ const setTxType = (type, keepCategory) => {
     updateInBudgetRow();
     updatePartsRow();
     updateChargedRow();
+    $('tx-billref-field').hidden = type !== 'expense';
 };
 let txChargedTouched = false;
+// The bill's own number on an entry: CEB / water account number, or the phone number of a phone bill or reload.
+const txBillRef = () => String($('tx-billref').value || '').trim().replace(/\s+/g, ' ').slice(0, 40);
+// A fixed bill that doesn't know its number yet learns it from the entry (so the next bank SMS is matched to it).
+const teachBillRef = (t) => {
+    if (!t || !t.billRef || !t.recurringId) return;
+    const b = state.recurring.find((x) => x.id === t.recurringId);
+    if (b && !b.ref) { b.ref = t.billRef; queueSync('recurring', b.id, 'upsert', false); }
+};
 const txFxAccount = () => state.accounts.find((a) => a.id === ($('tx-account').value || (state.accounts[0] && state.accounts[0].id)));
 const updateChargedRow = () => {
     const acc = txFxAccount();
@@ -5753,6 +5763,7 @@ const openEditTx = (id) => {
     $('tx-date').value = t.date;
     $('tx-time').value = txTime(t) || '';
     $('tx-note').value = t.note || '';
+    $('tx-billref').value = t.billRef || (() => { const b = t.recurringId && state.recurring.find((x) => x.id === t.recurringId); return (b && b.ref) || ''; })();
     txWaiting = t.pending === true;
     txTripId = t.tripId || null;
     txBefore = t.beforeBalance === true;
@@ -5862,6 +5873,7 @@ const submitTx = async () => {
         if (txType === 'income' && typeof txInBudget === 'boolean') record.inBudget = txInBudget; else delete record.inBudget;
         if (fx) record.fx = fx; else delete record.fx;
         if (txType === 'expense' && txTripId) record.tripId = txTripId; else delete record.tripId;
+        if (txType === 'expense' && txBillRef()) record.billRef = txBillRef(); else delete record.billRef;
         if (txType === 'expense' && txSectionId && secById(txSectionId)) record.sectionId = txSectionId; else delete record.sectionId;
         if (!$('tx-before-row').hidden && txBefore) record.beforeBalance = true; else delete record.beforeBalance;
         // Marked done here: same as tapping Received / Paid. Marked not done: it waits again, with reminders.
@@ -5869,10 +5881,12 @@ const submitTx = async () => {
         if (!prev.pending && waiting) delete record.paidAt;
         if (prev.pending !== waiting) setTimeout(scheduleReminders, 0);
         state.transactions[idx] = record;
+        teachBillRef(record);
     } else {
         record = { id: generateId(), type: txType, desc, amount: saveAmount, currency: saveCurrency, category, date, note, createdAt: Date.now(), recurringId: null, accountId, receipt, fixed: txKind === 'fixed', pending: date > todayISO() || txWaiting };
         if (cleanTime($('tx-time').value)) record.time = $('tx-time').value;
         if (txType === 'income' && typeof txInBudget === 'boolean') record.inBudget = txInBudget;
+        if (txType === 'expense' && txBillRef()) record.billRef = txBillRef();
         if (txType === 'expense' && txParts >= 2) {
             const plan = makePlan({ name: desc, amount: saveAmount, currency: saveCurrency, category, accountId, firstDate: date, count: txParts, done: 1 });
             if (plan) { record.recurringId = plan.id; record.note = [record.note, `Part 1 of ${txParts}`].filter(Boolean).join(' · '); setTimeout(() => showToast(`${desc}: part 1 of ${txParts} saved. The next part is expected ${shortDate(plan.nextDate)}.`, 'success'), 450); }
@@ -5893,6 +5907,7 @@ const submitTx = async () => {
             setTimeout(scheduleReminders, 0);
         }
         state.transactions.push(record);
+        teachBillRef(record);
     }
     if (coverNeed > 0.004 && txCover === 'none') delete record.sectionId;
     if (coverNeed > 0.004 && txCover && secById(txCover) && record.sectionId) {
@@ -8023,6 +8038,7 @@ const txDetailRows = (t) => {
     if (bill) add('Fixed payment', bill.name);
     const ref = t.billRef || (bill && bill.ref);
     if (ref) add('Paid for', refLabel(ref));
+    else if (t.type === 'expense' && (bill || /util|bill|phone|mobile|internet|electric|water|reload/i.test(`${catById(t.category, t.type).name} ${t.desc}`) || /(ceb|leco|nwsdb|water|dialog|mobitel|slt|hutch|airtel)/i.test(t.desc))) rows.push(['Paid for', '', 'add']);
     if (t.feeFor) add('Bank fee', t.feeEstimated ? 'Usual fee (the SMS did not say the amount)' : 'Charged by the bank');
     if (t.type === 'income' && t.inBudget === false) add('Budget', 'Not counted in the budget');
     if (t.bank) {
@@ -8046,7 +8062,7 @@ const openTxDetail = (id) => {
     const amt = $('txd-amount');
     amt.textContent = t.type === 'transfer' ? formatDisplay(t.amount, t.currency) : formatSigned(t.type === 'income' ? value : -value, dcur());
     amt.className = `amount txd-amount ${t.type === 'income' ? 'is-income' : t.type === 'transfer' ? 'is-transfer' : ''}`;
-    $('txd-list').innerHTML = txDetailRows(t).slice(1).map(([k, v]) => `<div class="txd-row"><span>${escapeHtml(k)}</span><strong>${escapeHtml(v)}</strong></div>`).join('');
+    $('txd-list').innerHTML = txDetailRows(t).slice(1).map(([k, v, add]) => `<div class="txd-row"><span>${escapeHtml(k)}</span>${add ? `<button type="button" class="link-btn txd-add" data-edit-tx="${escapeHtml(t.id)}" data-focus="tx-billref">${icon('i-plus', 'ic ic-sm')} Add account or phone no.</button>` : `<strong>${escapeHtml(v)}</strong>`}</div>`).join('');
     $('txd-edit').dataset.editTx = t.id;
     openOrSwap('modal-tx-detail');
 };
@@ -8055,7 +8071,7 @@ const initTxHold = () => {
     document.addEventListener('pointerdown', (e) => {
         const row = e.target.closest('[data-edit-tx]');
         txHeld = false;
-        if (!row || row.id === 'txd-edit' || e.target.closest('[data-pay], .tx-confirm')) return;
+        if (!row || row.id === 'txd-edit' || row.classList.contains('txd-add') || e.target.closest('[data-pay], .tx-confirm')) return;
         cancel();
         txHold = { x: e.clientX, y: e.clientY, timer: setTimeout(() => {
             txHold = null;
@@ -10440,7 +10456,7 @@ const initEvents = () => {
         if (d.gotoPlan) { goToPlan(d.gotoPlan); return; }
         if (d.gotoActivity) { goToActivity(d.gotoActivity); return; }
         if (d.planTab) { planTab = d.planTab; renderPlan(); return; }
-        if (d.editTx) { openEditTx(d.editTx); return; }
+        if (d.editTx) { openEditTx(d.editTx); if (d.focus && $(d.focus)) setTimeout(() => { $(d.focus).scrollIntoView({ block: 'center' }); $(d.focus).focus(); }, 380); return; }
         if (d.editGoal) { openEditGoal(d.editGoal); return; }
         if (d.depositGoal) { openDeposit(d.depositGoal); if (d.depositAmount) { $('funds-amount').value = d.depositAmount; updateFundsHint(); } return; }
         if (d.editBudget) { openBudget(d.editBudget); return; }

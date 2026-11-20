@@ -5037,3 +5037,5 @@ body.approve-waiting { overflow: hidden; }
 .txd-row > span { color: var(--text-3); font-size: 13px; flex: none; max-width: 42%; }
 .txd-row > strong { font-weight: 600; font-size: 14px; text-align: right; overflow-wrap: anywhere; white-space: normal; }
 [data-edit-tx].is-held { transform: scale(.98); transition: transform .15s; }
+
+.txd-add { font-size: 14px; font-weight: 600; color: var(--primary-text, var(--primary)); display: inline-flex; align-items: center; gap: 4px; }
