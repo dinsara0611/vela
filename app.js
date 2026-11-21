@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.64.0';
+const APP_VERSION = '4.64.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -2455,6 +2455,7 @@ const SMS_OTP = [
 const SMS_HARD_IGNORE = [
     [/\b(declined|was not successful|unsuccessful|not successful|failed|rejected|could not be (processed|completed)|insufficient (funds|balance))\b/i, 'failed or declined'],
     [/\b(log(ged)?[- ]?in|sign(ed)?[- ]?in|login attempt|new device|password (was )?changed|pin (was )?changed)\b/i, 'login or security alert'],
+    [/\b(attempted|awaiting (your )?approval|pending (your )?(approval|authori[sz]ation))\b|\b(use|enter) (the |this )?(code|otp|pin)\b/i, 'a request waiting for your code, not a payment yet'],
     [/\b(will be debited|is due on|payment due|due date|minimum (payment|due|amount)|min\.? ?(amt|amount|payment)? ?due|e-?statement|statement (is )?(ready|generated))\b/i, 'reminder or statement, not a transaction']
 ];
 // Marketing and announcements: ignored unless the text is also worded like a real, completed transaction.
@@ -2529,8 +2530,13 @@ const smsNorm = (body) => body.toLowerCase()
     .replace(/available\s*credit/g, 'avl-cc');
 // What kind of transaction the (normalised) text describes, most specific first; null when it isn't one.
 const smsKindOf = (t) => {
-    if (/\b(revers(al|ed)|reverted|void(ed)?|cancell?ed transaction|transaction cancell?ed|(ecom|pos|atm|txn|trx|pur) ?rev)\b/.test(t)) return SMS_KIND.reversal;
+    if (/\b(revers(al|ed)|reverted|void(ed)?|cancell?ed transaction|transaction cancell?ed|(ecom|pos|atm|txn|trx|pur) ?rev)\b|\b(transaction|txn|purchase|payment)\b.{0,90}\b(has been|was|is) cancell?ed\b/.test(t)) return SMS_KIND.reversal;
     if (/\brefund(ed)?\b/.test(t)) return SMS_KIND.refund;
+    if (/\bwas received on\b.{0,40}\bfrom the combank digital\b/.test(t) && !/\bown accounts?\b/.test(t)) {
+        if (/\bbill\b/.test(t)) return SMS_KIND.bill;
+        if (/\btransfer\b/.test(t)) return SMS_KIND.transfer_out;
+        return SMS_KIND.online;
+    }
     if (/\bthank you for (your |the )?payment\b|\bpayment\b.{0,60}\b(to|towards|for) (your )?(cc-card|card)\b|\bcard (re)?payment\b|\bcc-card (bill )?(payment|settlement)\b/.test(t)) return SMS_KIND.card_payment;
     // "Transfer Credit Rs 5000.00 To A/C …" (BOC) is money coming in; "CEFT Transfer Debit Rs …" money going out.
     const cr = t.search(/\b(credited|credit (for|of)|(transfer|ceft|slips|fund|funds|inward|direct|online|ib) credit|credit (rs|lkr|usd|inr)\b)/);
@@ -2544,7 +2550,7 @@ const smsKindOf = (t) => {
     if (dir !== 'in' && (/\b(cash withdrawal|cash wdl|atm (cash )?(withdrawal|wdl|w\/d)|withdrawal (at|from|of)|withdrawn (at|from))\b/.test(t)
         || (/\batm\b/.test(t) && !/\b(pos|purchase|e-?com|internet)\b/.test(t)))) return SMS_KIND.atm;
     if (/\b(cefts?|slips|rtgs|(fund|funds|ib|online|inward|outward|bank) ?transfer|transfer(red)?|remittance)\b/.test(t)) {
-        if (dir === 'in' || (dir === null && /\b(inward|received|remittance|transfer(red)? from)\b/.test(t))) return SMS_KIND.transfer_in;
+        if (dir === 'in' || (dir === null && /\b(inward|received|remittance|transfer(red)? from)\b/.test(t) && !/\btransfer(red)? to\b|\bto other banks?\b|\bthird party\b/.test(t))) return SMS_KIND.transfer_in;
         if (dir === 'out' || /\bto\b/.test(t)) return SMS_KIND.transfer_out;
     }
     if (dir !== 'in' && /\b(bill ?pmt|bill payment|utility payment|paid to|payment to)\b/.test(t)) return SMS_KIND.bill;
@@ -3366,8 +3372,10 @@ const smsLearn = (i, ok) => {
    { type: 'expense' | 'income' | 'atm' | 'reversal' | 'cardpay', kind, amount, currency, bank, desc, merchant, date, time,
      ref, last4, confidence: 'high' | 'medium', checks: [...], dedupe, masked, fx? } */
 let smsLastReason = '';
+let smsLastCancel = null;
 const parseBankSms = (msg) => {
     smsLastReason = '';
+    smsLastCancel = null;
     // Some banks' SMS split words across lines ("credit ed", "debit ed", "with drawn"): put them back together.
     const body = String(msg.body || '').replace(/\s+/g, ' ').trim()
         .replace(/\b(credit|debit|deposit|transferr|withdraw|deduct|charg|revers|authoris|authoriz|process)\s+(ed)\b/gi, '$1$2')
@@ -3406,7 +3414,14 @@ const parseBankSms = (msg) => {
 
     const all = smsAmounts(body);
     const moved = all.filter((a) => !a.balance);
-    if (!moved.length) return no(all.length ? 'only a balance, no transaction' : 'no amount');
+    if (!moved.length) {
+        if (bank && !all.length && smsKindOf(t) === SMS_KIND.reversal) {
+            const m = body.match(/\b(?:transaction|txn|purchase|payment)\s+(?:at|to|with)\s+(.+?)\s+(?:on|using|with|from|has|was|for)\b/i);
+            smsLastCancel = { bank: bank.name, merchant: m ? titleCase(m[1].trim()).slice(0, 40) : '', last4: smsLast4(body), date: toISODate(new Date(msg.date || Date.now())) };
+            return no('cancellation without an amount');
+        }
+        return no(all.length ? 'only a balance, no transaction' : 'no amount');
+    }
     let kind = smsKindOf(t);
     if (!kind) return no('no transaction wording');
     const checks = [];
@@ -3435,6 +3450,10 @@ const parseBankSms = (msg) => {
     // "... from the ComBank Digital" / "via BOC Smart": the bank itself (its app) is how the money moved, not who it was.
     if (brand && bank && brand.slug === bank.logo) { merchant = ''; brand = null; }
     if (brand) merchant = brand.name;
+    // ComBank Digital's "… in the amount of LKR 300.00 was received on … from the ComBank Digital": the words before
+    // "in the amount of" are the kind of payment, not a shop.
+    const appMove = /\bin the amount of\b[\s\S]{0,40}\bwas received on\b[\s\S]{0,40}\bfrom the combank digital\b/i.test(body);
+    if (appMove) { merchant = ''; brand = null; }
     const ownMove = /\bown\s+accounts?\s+transfer|\btransfer\s+(?:between|to|from)\s+(?:your\s+)?own\s+accounts?\b/i.test(body);
     if (ownMove) checks.push('between your own accounts: if it came from (or went to) another account in Vela, record it as a transfer');
     // Money coming back from a shop is a refund, not income.
@@ -3455,6 +3474,7 @@ const parseBankSms = (msg) => {
         : kind.kind === 'refund' ? `Refund${merchant ? `: ${merchant}` : ''}`
         : kind.kind === 'reversal' ? `Reversal${merchant ? `: ${merchant}` : ''}`
         : ownMove ? 'Own account transfer'
+        : appMove && kind.kind === 'transfer_out' ? (/\bother banks?\b/i.test(body) ? 'Transfer to another bank' : 'Fund transfer')
         : merchant || (kind.kind === 'salary' ? 'Salary' : `${bankName} ${kind.label.toLowerCase()}`);
     let category = type === 'income'
         ? (kind.kind === 'salary' || /\bsalary\b/i.test(body) ? 'Salary' : kind.kind === 'interest' ? 'Investment' : 'OtherIncome')
@@ -4214,11 +4234,40 @@ const smsTake = (messages) => {
     const fresh = [];
     const skipped = [];
     let touched = false;
-    (messages || []).forEach((m) => {
+    const cancelled = (w, c) => w.type === 'expense' && w.bank === c.bank && w.date <= c.date && daysBetween(parseDate(w.date), parseDate(c.date)) <= 5
+        && (!c.last4 || !w.last4 || c.last4 === w.last4) && (c.merchant ? merchantsAgree(w.merchant || w.desc, c.merchant) && !!merchantWord(c.merchant) : true);
+    const dropWaiting = (w, why) => {
+        smsQueue = smsQueue.filter((x) => x !== w);
+        const k = fresh.indexOf(w); if (k >= 0) fresh.splice(k, 1);
+        skipped.push(...(w.sourceIds || [w.id]));
+        touched = true;
+        showToast(`${w.desc} ${formatCurrency(w.amount, w.currency)}: ${why}, so it's not added`, 'info');
+    };
+    [...(messages || [])].sort((a, b) => (Number(a && a.date) || 0) - (Number(b && b.date) || 0)).forEach((m) => {
         if (!m || known.has(String(m.id))) return;
         known.add(String(m.id));
         const i = parseBankSms(m);
+        if (!i && smsLastCancel) {
+            const c = smsLastCancel;
+            skipped.push(String(m.id));
+            const w = smsQueue.concat(fresh).filter((x) => cancelled(x, c)).sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+            if (w) { dropWaiting(w, `${c.bank} cancelled it`); return; }
+            // Already added: a reversal card for it, so you confirm the removal.
+            const t = sortByNewest(state.transactions.filter((x) => x.bank && x.type === 'expense' && !x.pending && cancelled({ ...recordedAsDetection(x), merchant: x.bank.merchant || x.desc, desc: x.desc, date: x.date }, c)))[0];
+            if (t) {
+                const amt = t.fx ? t.fx.amount : t.amount;
+                const cur = t.fx ? t.fx.currency : t.currency;
+                fresh.push({ ...recordedAsDetection(t), id: String(m.id), sources: ['sms'], sourceIds: [String(m.id)], bodyKeys: [], source: 'sms', masked: '', dedupe: `cancel:${m.id}`, type: 'reversal', kind: 'reversal', amount: t.amount, currency: t.currency,
+                    desc: `Cancelled: ${t.desc}`, merchant: c.merchant, date: c.date, bank: c.bank, confidence: 'high', checks: [`${c.bank} says this payment (${formatCurrency(amt, cur)}) was cancelled`] });
+            }
+            return;
+        }
         if (!i) { skipped.push(String(m.id)); return; }
+        // A reversal of a payment still waiting for review: neither is added.
+        if (i.type === 'reversal') {
+            const w = smsQueue.concat(fresh).find((x) => x.type === 'expense' && x.bank === i.bank && sameMoney(x.amount, x.currency, i.amount, i.currency) && x.date <= i.date && daysBetween(parseDate(x.date), parseDate(i.date)) <= 30);
+            if (w) { dropWaiting(w, `${i.bank} reversed it`); skipped.push(i.id); return; }
+        }
         // The bank's rupee message for a dollar payment already in Vela as an estimate: now exact, not a new entry.
         if (settleRecordedFx(i)) { touched = true; skipped.push(i.id); return; }
         // The same pair while both still wait for review: one card, the rupees are what was taken.

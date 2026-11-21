@@ -91,6 +91,8 @@ final class BankSms {
     private static final Pattern[] HARD_IGNORE = {
         ci("\\b(declined|was not successful|unsuccessful|not successful|failed|rejected|could not be (processed|completed)|insufficient (funds|balance))\\b"),
         ci("\\b(log(ged)?[- ]?in|sign(ed)?[- ]?in|login attempt|new device|password (was )?changed|pin (was )?changed)\\b"),
+        // "Transfer … attempted. Please use code 444288 to approve": waiting for your code, no money moved yet.
+        ci("\\b(attempted|awaiting (your )?approval|pending (your )?(approval|authori[sz]ation))\\b|\\b(use|enter) (the |this )?(code|otp|pin)\\b"),
         ci("\\b(will be debited|is due on|payment due|due date|minimum (payment|due|amount)|min\\.? ?(amt|amount|payment)? ?due|e-?statement|statement (is )?(ready|generated))\\b")
     };
     // Marketing and announcements: dropped unless the text is also worded like a real, completed transaction.
@@ -170,7 +172,13 @@ final class BankSms {
     }
 
     // ---- What kind of transaction (app.js smsKindOf), on lower-case text ----
-    private static final Pattern REVERSAL = lc("\\b(revers(al|ed)|reverted|void(ed)?|cancell?ed transaction|transaction cancell?ed|(ecom|pos|atm|txn|trx|pur) ?rev)\\b");
+    private static final Pattern REVERSAL = lc("\\b(revers(al|ed)|reverted|void(ed)?|cancell?ed transaction|transaction cancell?ed|(ecom|pos|atm|txn|trx|pur) ?rev)\\b"
+        + "|\\b(transaction|txn|purchase|payment)\\b.{0,90}\\b(has been|was|is) cancell?ed\\b");
+    // ComBank Digital: "Transfer to Other Banks in the amount of LKR 300.00 was received on … from the ComBank Digital" is
+    // your instruction received by the bank: money going out ("Own Accounts Transfer" stays money in).
+    private static final Pattern APP_RECEIVED = lc("\\bwas received on\\b.{0,40}\\bfrom the combank digital\\b");
+    private static final Pattern OWN_ACCOUNTS = lc("\\bown accounts?\\b");
+    private static final Pattern TRANSFER_OUT_WORDS = lc("\\btransfer(red)? to\\b|\\bto other banks?\\b|\\bthird party\\b");
     private static final Pattern REFUND = lc("\\brefund(ed)?\\b");
     private static final Pattern CARD_PAYMENT = lc("\\bthank you for (your |the )?payment\\b|\\bpayment\\b.{0,60}\\b(to|towards|for) (your )?(cc-card|card)\\b|\\bcard (re)?payment\\b|\\bcc-card (bill )?(payment|settlement)\\b");
     private static final Pattern CREDITED = lc("\\b(credited|credit (for|of))\\b");
@@ -196,6 +204,7 @@ final class BankSms {
         if (has(REVERSAL, t)) return "reversal";
         if (has(REFUND, t)) return "in";
         if (has(CARD_PAYMENT, t)) return "cardpay";
+        if (has(APP_RECEIVED, t) && !has(OWN_ACCOUNTS, t)) return "out";
         int cr = at(CREDITED, t);
         int dr = at(DEBITED, t);
         String dir = cr >= 0 && (dr < 0 || cr < dr) ? "in" : dr >= 0 ? "out" : null;
@@ -206,7 +215,7 @@ final class BankSms {
         // "ATM POS Transaction" (NSB) is a card purchase; a withdrawal says so, or mentions an ATM and no purchase.
         if (notIn && (has(CASH_OUT, t) || (has(ATM, t) && !has(PURCHASE_WORDS, t)))) return "atm";
         if (has(TRANSFER, t)) {
-            if ("in".equals(dir) || (dir == null && has(TRANSFER_IN, t))) return "in";
+            if ("in".equals(dir) || (dir == null && has(TRANSFER_IN, t) && !has(TRANSFER_OUT_WORDS, t))) return "in";
             if ("out".equals(dir) || has(TO, t)) return "out";
         }
         if (notIn && (has(BILL, t) || has(ONLINE, t) || has(CARD, t))) return "out";

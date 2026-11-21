@@ -3303,6 +3303,22 @@ export async function run() {
         return (!!li && open && rows && link && counted) || `row ${!!li}, sheet ${open}, entry listed ${rows}, subscriptions link ${link}, SLT-like counted ${counted}`;
     });
 
+    await T('Bank messages: code requests are not payments; ComBank Digital transfer to another bank goes out; a cancelled purchase is not added', async () => {
+        const P = (body, extra = {}) => g('parseBankSms')({ id: `p-${Math.random()}`, source: 'sms', address: 'COMBANK', body, date: Date.now(), ...extra });
+        const otp = P('ComBank Digital-Transfer to Other Banks LKR 300.00 attempted. Please use code 444288 to approve. Do NOT share this number with anyone.');
+        const app = { source: 'notification', address: 'combank.com.combankdigital', bank: 'Commercial Bank' };
+        const out = P('New Fund transfer notification. Transfer to Other Banks in the amount of LKR 300.00 was received on 21/11/2026 from the ComBank Digital.', app);
+        const outOk = out && out.type === 'expense' && out.amount === 300 && out.desc === 'Transfer to another bank';
+        const before = g('smsQueue').length;
+        const t0 = Date.now();
+        g('smsTake')([
+            { id: `cx-${t0}-2`, address: 'COMBANK', body: 'YOUR TRANSACTION AT PAYPAL ON YOUR CARD ENDING WITH 5174 HAS BEEN CANCELLED.', date: t0 },
+            { id: `cx-${t0}-1`, address: 'COMBANK', body: 'Dear Cardholder, Purchase at PAYPAL 4029357733 LU for USD 1.00 on 19/11/26 09:28 PM has been authorised on your debit card ending #5174.', date: t0 - 60000 }
+        ]);
+        const noPaypal = !g('smsQueue').slice(before).some((i) => /paypal/i.test(i.desc));
+        return (!otp && outOk && noPaypal) || `code request ignored ${!otp}, transfer out ${outOk} (${out && out.type} ${out && out.desc}), cancelled not added ${noPaypal}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };
