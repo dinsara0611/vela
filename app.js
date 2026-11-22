@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.64.1';
+const APP_VERSION = '4.64.2';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1855,8 +1855,10 @@ const viewTx = () => {
 const ownedBy = (x, v) => (x.accountId || (state.accounts[0] && state.accounts[0].id)) === v;
 // Saving for goals each month, kept aside from the budget so it isn't spent.
 const ymKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-const goalMonthly = (g) => (g.saved >= g.target ? 0 : Math.min(g.monthly || 0, Math.max(0, g.target - g.saved) + ((g.months || {})[ymKey()] || 0)));
-const goalSavedThisMonth = (g) => Math.max(0, (g.months || {})[ymKey()] || 0);
+// Saved this month can't be more than the goal holds now: money put in and then taken back out (or the saved amount
+// edited down) isn't saved.
+const goalSavedThisMonth = (g) => Math.max(0, Math.min(g.saved || 0, (g.months || {})[ymKey()] || 0));
+const goalMonthly = (g) => (g.saved >= g.target ? 0 : Math.min(g.monthly || 0, Math.max(0, g.target - g.saved) + goalSavedThisMonth(g)));
 const goalsKeep = (list) => round2(list.reduce((a, g) => a + toDisplay(goalMonthly(g), g.currency), 0));
 // What to save a month to reach the target by its date.
 const goalSuggestMonthly = (target, saved, deadline) => {
@@ -2407,7 +2409,15 @@ const smsPrefs = () => {
 };
 const saveSmsPrefs = (p) => { try { localStorage.setItem(SMS_KEY, JSON.stringify({ ...p, seen: p.seen.slice(-800) })); } catch (e) { /* storage blocked */ } };
 const smsPlugin = () => nativePlugin('SmsReader');
-let smsQueue = [];
+const SMS_QUEUE_KEY = 'VELA_SMS_QUEUE';
+let smsQueue = (() => {
+    try {
+        const list = JSON.parse(localStorage.getItem(SMS_QUEUE_KEY) || '[]');
+        const old = Date.now() - 60 * 86400000;
+        return Array.isArray(list) ? list.filter((i) => i && i.id && i.amount > 0 && (!i.arrivedAt || i.arrivedAt > old)) : [];
+    } catch (err) { return []; }
+})();
+const saveSmsQueue = () => { try { localStorage.setItem(SMS_QUEUE_KEY, JSON.stringify(smsQueue)); } catch (err) { /* storage full or blocked */ } };
 let smsEditing = null; // the message being edited in the entry form
 
 // Banks, card issuers and wallets whose alerts Vela knows by name. `sender` is tested against the letters of the SMS
@@ -3890,7 +3900,7 @@ const smsPairOnce = (key) => {
         mergeDetection(a, b);
         a.checks = a.checks.filter((c) => !/may be the same/.test(c));
         a.confidence = a.checks.length ? 'medium' : 'high';
-        smsQueue = smsQueue.filter((x) => x.id !== b.id);
+        smsQueue = smsQueue.filter((x) => x.id !== b.id); saveSmsQueue();
     }
     smsAdd(a.id);
     if (smsQueue.some((x) => x.id === a.id)) renderSmsSheet(); // still waiting (asked which account)
@@ -3927,6 +3937,7 @@ const smsHandled = async (given) => {
     p.seen = [...new Set(p.seen.concat(ids))];
     saveSmsPrefs(p);
     smsQueue = smsQueue.filter((i) => !ids.includes(i.id));
+    saveSmsQueue();
     const plugin = smsPlugin();
     if (plugin) { try { await plugin.clearHandled({ ids }); } catch (e) { /* ignore */ } }
     refreshBankStatus();
@@ -4228,7 +4239,8 @@ const smsEditSaved = (record) => {
     smsHandled([i.id]);
 };
 
-const smsTake = (messages) => {
+const smsTake = (messages) => { const n = smsTakeNow(messages); saveSmsQueue(); return n; };
+const smsTakeNow = (messages) => {
     const p = smsPrefs();
     const known = new Set(p.seen.concat(...smsQueue.map((i) => i.sourceIds || [i.id])));
     const fresh = [];
@@ -4420,6 +4432,7 @@ const checkPastedSms = () => {
     if (!i) { $('sms-paste-result').textContent = `This doesn’t look like a bank transaction (${smsLastReason}), so nothing will be added.`; return; }
     if (smsAlreadyRecorded(i)) { $('sms-paste-result').textContent = 'That transaction is already in Vela.'; return; }
     smsQueue = smsQueue.filter((x) => x.id !== i.id).concat(i);
+    saveSmsQueue();
     closeSheet('modal-sms-paste');
     setTimeout(showSmsSheet, 350);
 };
@@ -4656,6 +4669,7 @@ const deleteDetectionRecords = () => showConfirm({
         const plugin = smsPlugin();
         if (plugin) { try { await plugin.deleteDetections(); } catch (e) { /* ignore */ } }
         smsQueue = [];
+        saveSmsQueue();
         state.transactions.forEach((t) => {
             if (!t.bank) return;
             t.bank = { bank: t.bank.bank, sources: t.bank.sources, verifiedAt: t.bank.verifiedAt };
@@ -4679,6 +4693,7 @@ const disconnectBank = () => showConfirm({
         Object.assign(p, { enabled: false, paused: false, autoAdd: false });
         saveSmsPrefs(p);
         smsQueue = [];
+        saveSmsQueue();
         closeSheet('modal-sms');
         await refreshBankStatus();
         showToast('Bank SMS tracking is off', 'success');
@@ -7103,6 +7118,9 @@ const submitGoal = () => {
         const idx = state.savings.findIndex((g) => g.id === id);
         if (idx === -1) return false;
         record = { ...state.savings[idx], name, target, currency, saved, deadline, monthly };
+        // Saved amount edited down: this month's saving goes down with it.
+        const drop = round2(state.savings[idx].saved - saved);
+        if (drop > 0 && record.months && record.months[ymKey()]) record.months = { ...record.months, [ymKey()]: round2(Math.max(0, record.months[ymKey()] - drop)) };
         if (fundId) record.fundId = fundId; else delete record.fundId;
         state.savings[idx] = record;
     } else {

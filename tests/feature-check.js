@@ -3319,6 +3319,20 @@ export async function run() {
         return (!otp && outOk && noPaypal) || `code request ignored ${!otp}, transfer out ${outOk} (${out && out.type} ${out && out.desc}), cancelled not added ${noPaypal}`;
     });
 
+    await T('Goal: Rs 2,000 put in then the saved amount set back to 0 is not "saved this month"; review cards are kept on the phone', async () => {
+        const st = s();
+        st.savings.push({ id: 'gm-1', name: 'GM test', target: 400000, currency: 'LKR', saved: 0, monthly: 1000, months: { [g('ymKey')()]: 2000 }, createdAt: 1 });
+        const capped = g('goalSavedThisMonth')(st.savings.find((x) => x.id === 'gm-1')) === 0;
+        st.savings = st.savings.filter((x) => x.id !== 'gm-1');
+        g('saveState')();
+        const t0 = Date.now();
+        g('smsTake')([{ id: `keep-${t0}`, address: 'COMBANK', body: 'Dear Cardholder, Purchase at KEELLS SUPER LK for LKR 1,234.00 on 22/11/26 10:00 AM has been authorised on your debit card ending #5174.', date: t0 }]);
+        const kept = JSON.parse(localStorage.getItem('VELA_SMS_QUEUE') || '[]').some((i) => (i.sourceIds || [i.id]).includes(`keep-${t0}`));
+        await g('smsHandled')([`keep-${t0}`]);
+        const gone = !JSON.parse(localStorage.getItem('VELA_SMS_QUEUE') || '[]').some((i) => (i.sourceIds || [i.id]).includes(`keep-${t0}`));
+        return (capped && kept && gone) || `goal capped ${capped}, card kept ${kept}, removed after handling ${gone}`;
+    });
+
     // Cloud sync against a fake account.
     const fakeCloud = (settings) => {
         const cloud = { records: [], settings, settingsUploads: 0, deletes: [] };
