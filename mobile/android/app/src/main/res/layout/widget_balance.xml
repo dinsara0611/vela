@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Vela home-screen widget (balances, budget, bills, goals, recent): big figure, a line, up to four rows; the eye hides the amounts. -->
+<!-- Vela widget, wide: icon, title, eye; the big figure; a line; up to four rows; when it was updated. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/w_body"
     android:layout_width="match_parent"
@@ -14,9 +14,12 @@
         android:orientation="horizontal"
         android:gravity="center_vertical">
         <ImageView
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:src="@mipmap/ic_launcher_round"
+            android:id="@+id/w_icon"
+            android:layout_width="28dp"
+            android:layout_height="28dp"
+            android:padding="5dp"
+            android:background="@drawable/widget_badge_balances"
+            android:src="@drawable/ic_w_balances"
             android:contentDescription="@null" />
         <TextView
             android:id="@+id/w_title"
@@ -31,8 +34,8 @@
             android:ellipsize="end" />
         <ImageView
             android:id="@+id/w_eye"
-            android:layout_width="32dp"
-            android:layout_height="32dp"
+            android:layout_width="30dp"
+            android:layout_height="30dp"
             android:padding="6dp"
             android:background="@drawable/widget_eye_bg"
             android:src="@drawable/ic_widget_eye_off"
@@ -43,7 +46,7 @@
         android:id="@+id/w_total"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginTop="2dp"
+        android:layout_marginTop="6dp"
         android:text="Rs. ••••"
         android:textColor="#FFFFFF"
         android:textSize="24sp"
@@ -83,7 +86,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_marginTop="6dp"
-        android:text="Open Vela to load your balances"
+        android:text="Open Vela to load your figures"
         android:textColor="#7D7D82"
         android:textSize="10sp"
         android:maxLines="1" />

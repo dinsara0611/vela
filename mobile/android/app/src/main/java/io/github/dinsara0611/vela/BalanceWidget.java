@@ -79,15 +79,45 @@ public class BalanceWidget extends AppWidgetProvider {
         return PendingIntent.getActivity(c, code, open, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
     }
 
+    @Override
+    public void onAppWidgetOptionsChanged(Context c, AppWidgetManager mgr, int id, android.os.Bundle options) {
+        draw(c, mgr, id); // resized: the small or the wide layout
+    }
+
+    /** The small layout for this widget (its own icon, colour and name). */
+    protected int smallLayout() { return R.layout.widget_small_balances; }
+    protected int icon() { return R.drawable.ic_w_balances; }
+    protected int badge() { return R.drawable.widget_badge_balances; }
+
     void draw(Context c, AppWidgetManager mgr, int id) {
-        RemoteViews v = new RemoteViews(c.getPackageName(), R.layout.widget_balance);
+        RemoteViews small = build(c, true);
+        RemoteViews wide = build(c, false);
+        if (android.os.Build.VERSION.SDK_INT >= 31) {
+            // The launcher picks the layout that fits as the widget is resized.
+            java.util.Map<android.util.SizeF, RemoteViews> bySize = new java.util.HashMap<>();
+            bySize.put(new android.util.SizeF(100f, 40f), small);
+            bySize.put(new android.util.SizeF(200f, 150f), wide);
+            mgr.updateAppWidget(id, new RemoteViews(bySize));
+        } else {
+            android.os.Bundle o = mgr.getAppWidgetOptions(id);
+            int w = o == null ? 0 : o.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0);
+            int h = o == null ? 0 : o.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0);
+            mgr.updateAppWidget(id, w >= 200 && h >= 150 ? wide : small);
+        }
+    }
+
+    private RemoteViews build(Context c, boolean isSmall) {
+        RemoteViews v = new RemoteViews(c.getPackageName(), isSmall ? smallLayout() : R.layout.widget_balance);
+        int titleId = isSmall ? R.id.w_title2 : R.id.w_title;
         String kind = kind();
         boolean hidden = isHidden(c, kind);
         String big = MASK;
         String sub = "";
         String updated = "Open Vela to load your figures";
         int shown = 0;
-        v.setTextViewText(R.id.w_title, emptyTitle());
+        v.setImageViewResource(R.id.w_icon, icon());
+        v.setInt(R.id.w_icon, "setBackgroundResource", badge());
+        v.setTextViewText(titleId, emptyTitle());
         try {
             String raw = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_DATA, null);
             JSONObject all = raw == null ? null : new JSONObject(raw);
@@ -96,9 +126,9 @@ public class BalanceWidget extends AppWidgetProvider {
                 big = hidden ? MASK : d.optString("big", "");
                 sub = hidden ? d.optString("subHidden", "") : d.optString("sub", "");
                 updated = all.optString("updated", "");
-                v.setTextViewText(R.id.w_title, d.optString("title", emptyTitle()));
+                v.setTextViewText(titleId, d.optString("title", emptyTitle()));
                 JSONArray list = d.optJSONArray("rows");
-                if (list != null) {
+                if (!isSmall && list != null) {
                     for (int i = 0; i < list.length() && i < ROWS.length; i++) {
                         JSONObject a = list.getJSONObject(i);
                         v.setViewVisibility(ROWS[i], View.VISIBLE);
@@ -114,11 +144,15 @@ public class BalanceWidget extends AppWidgetProvider {
         } catch (Exception e) {
             // Unreadable figures: show the empty widget, never crash the home screen.
         }
-        for (int i = shown; i < ROWS.length; i++) v.setViewVisibility(ROWS[i], View.GONE);
+        if (!isSmall) {
+            for (int i = shown; i < ROWS.length; i++) v.setViewVisibility(ROWS[i], View.GONE);
+            v.setTextViewText(R.id.w_updated, updated);
+        }
         v.setTextViewText(R.id.w_total, big);
+        // Long amounts step down so they fit the small widget.
+        if (isSmall) v.setTextViewTextSize(R.id.w_total, android.util.TypedValue.COMPLEX_UNIT_SP, big.length() > 14 ? 15f : big.length() > 11 ? 17f : 20f);
         v.setTextViewText(R.id.w_sub, sub);
         v.setViewVisibility(R.id.w_sub, sub.isEmpty() ? View.GONE : View.VISIBLE);
-        v.setTextViewText(R.id.w_updated, updated);
         v.setImageViewResource(R.id.w_eye, hidden ? R.drawable.ic_widget_eye_off : R.drawable.ic_widget_eye);
         v.setContentDescription(R.id.w_eye, hidden ? "Show amounts" : "Hide amounts");
 
@@ -126,6 +160,6 @@ public class BalanceWidget extends AppWidgetProvider {
         Intent toggle = new Intent(c, getClass()).setAction(ACTION_TOGGLE);
         v.setOnClickPendingIntent(R.id.w_eye, PendingIntent.getBroadcast(c, code, toggle, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
         v.setOnClickPendingIntent(R.id.w_body, openApp(c, opens(), code + 1));
-        mgr.updateAppWidget(id, v);
+        return v;
     }
 }

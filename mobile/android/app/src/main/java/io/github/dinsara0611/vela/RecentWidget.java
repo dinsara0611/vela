@@ -5,4 +5,7 @@ public class RecentWidget extends BalanceWidget {
     @Override protected String kind() { return "recent"; }
     @Override protected String opens() { return "activity"; }
     @Override protected String emptyTitle() { return "Recent"; }
+    @Override protected int smallLayout() { return R.layout.widget_small_recent; }
+    @Override protected int icon() { return R.drawable.ic_w_recent; }
+    @Override protected int badge() { return R.drawable.widget_badge_recent; }
 }

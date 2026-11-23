@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Vela quick-add widget (small: icons only): new expense, income or transfer in one tap. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="12dp"
+    android:background="@drawable/widget_bg">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        
+        android:orientation="horizontal">
+        <LinearLayout android:id="@+id/wq_expense" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1"
+            android:orientation="horizontal" android:gravity="center" android:background="@drawable/widget_btn_expense">
+            <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_w_expense" android:contentDescription="Expense" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/wq_income" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_marginStart="8dp"
+            android:orientation="horizontal" android:gravity="center" android:background="@drawable/widget_btn_income">
+            <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_w_income" android:contentDescription="Income" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/wq_transfer" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:layout_marginStart="8dp"
+            android:orientation="horizontal" android:gravity="center" android:background="@drawable/widget_btn_neutral">
+            <ImageView android:layout_width="22dp" android:layout_height="22dp" android:src="@drawable/ic_w_transfer" android:contentDescription="Transfer" />
+        </LinearLayout>
+    </LinearLayout>
+</LinearLayout>
