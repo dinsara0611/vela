@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/w_body" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="14dp" android:background="@drawable/widget_card_bg">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
+        <FrameLayout android:layout_width="28dp" android:layout_height="20dp" android:background="@drawable/widget_card_chip" />
+        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="10dp"
+            android:text="VELA" android:letterSpacing="0.2" android:textColor="#D9FFFFFF" android:textSize="11sp" android:textStyle="bold" android:maxLines="1" />
+        <ImageView android:id="@+id/w_eye" android:layout_width="28dp" android:layout_height="28dp" android:padding="6dp"
+            android:background="@drawable/widget_eye_light_bg" android:src="@drawable/ic_widget_eye_off" android:tint="#FFFFFF" android:contentDescription="Show amounts" />
+    </LinearLayout>
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+    <TextView android:id="@+id/w_title" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="All accounts" android:textColor="#D9FFFFFF" android:textSize="11sp" android:maxLines="1" android:ellipsize="end" />
+    <TextView android:id="@+id/w_total" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Rs. ••••" android:textColor="#FFFFFF" android:textSize="20sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
+    <TextView android:id="@+id/w_sub" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Open Vela to load" android:textColor="#B3FFFFFF" android:textSize="10sp" android:maxLines="1" android:ellipsize="end" />
+</LinearLayout>

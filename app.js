@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.64.4';
+const APP_VERSION = '4.65.0';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1612,13 +1612,16 @@ const widgetData = () => {
     const keep = scopeAll;
     scopeAll = true;
     try {
-        const accs = state.accounts.map((a) => { const v = toDisplay(accountBalance(a), a.currency); return { name: a.name, amount: money(v), minus: v < -0.004, v }; })
-            .sort((x, y) => Math.abs(y.v) - Math.abs(x.v)).slice(0, 4).map(({ v, ...r }) => r);
+        const accAll = state.accounts.map((a) => { const v = toDisplay(accountBalance(a), a.currency); return { name: a.name, amount: money(v), minus: v < -0.004, v }; })
+            .sort((x, y) => Math.abs(y.v) - Math.abs(x.v));
+        const accTop = Math.max(1, ...accAll.map((x) => Math.abs(x.v)));
+        const accs = accAll.slice(0, 4).map(({ v, ...r }) => ({ ...r, share: Math.round((Math.abs(v) / accTop) * 100) }));
         const total = netWorth();
         const balances = {
             title: state.accounts.length > 1 ? 'All accounts' : ((state.accounts[0] || {}).name || 'Vela'),
             big: money(total), minus: total < -0.004,
-            rows: state.accounts.length > 1 ? accs : []
+            rows: state.accounts.length > 1 ? accs : [],
+            count: state.accounts.length === 1 ? '1 account' : `${state.accounts.length} accounts`
         };
         const st = monthStats();
         const month = new Date().toLocaleDateString('en-US', { month: 'long' });
@@ -1629,6 +1632,16 @@ const widgetData = () => {
         const budget = st.budget > 0
             ? { title: `Budget · ${month}`, big: money(Math.abs(left)), minus: left < 0, sub: left < 0 ? `Over the budget · spent ${Math.round(st.budgetPct)}%` : `Left to spend · ${Math.round(st.budgetPct)}% used`, rows: [{ name: 'Spent', amount: money(st.spent) }, { name: 'Budget', amount: money(st.budget) }, ...cats].slice(0, 4) }
             : { title: `Spent · ${month}`, big: money(st.spent), sub: 'No budget set yet', rows: cats };
+        {
+            const nowD = new Date();
+            const daysLeft = daysInMonth(nowD.getFullYear(), nowD.getMonth()) - nowD.getDate() + 1;
+            budget.pct = st.budget > 0 ? Math.max(0, Math.round(st.budgetPct)) : -1;
+            budget.daysLeft = `${daysLeft} day${daysLeft === 1 ? '' : 's'}`;
+            budget.spent = money(st.spent);
+            budget.limit = st.budget > 0 ? money(st.budget) : '';
+            budget.left = st.budget > 0 ? money(Math.max(0, left)) : '';
+            budget.perDay = st.budget > 0 ? money(Math.max(0, left) / daysLeft) : '';
+        }
         const today = todayISO();
         const soon = state.recurring.filter((b) => b.type === 'expense').sort((a, b) => (a.nextDate > b.nextDate ? 1 : -1));
         const waiting = state.transactions.filter((t) => t.pending && t.type === 'expense' && !t.recurringId);
@@ -1642,6 +1655,9 @@ const widgetData = () => {
             sub: dueMonth.length ? `${dueMonth.length} still to pay this month${dueMonth.some((x) => x.date < today) ? ' · some late' : ''}` : 'Nothing left to pay this month',
             rows: due.slice(0, 4).map((x) => ({ name: `${x.name} · ${x.date < today ? 'late' : x.date === today ? 'today' : shortDate(x.date)}`, amount: money(x.v), minus: x.date < today }))
         };
+        const whenDue = (d) => { const n = daysBetween(parseDate(today), parseDate(d)); return n < 0 ? 'Late' : n === 0 ? 'Today' : n === 1 ? 'Tomorrow' : n < 14 ? `In ${n} days` : shortDate(d); };
+        bills.items = due.slice(0, 4).map((x) => ({ name: x.name, day: String(Number(x.date.slice(8, 10))), mon: parseDate(x.date).toLocaleDateString('en-US', { month: 'short' }).toUpperCase(), when: whenDue(x.date), late: x.date < today, amount: money(x.v) }));
+        bills.count = dueMonth.length ? `${dueMonth.length} to pay this month` : 'All paid this month';
         const goalsList = state.savings || [];
         const gSaved = goalsList.reduce((n, g) => n + toDisplay(g.saved, g.currency), 0);
         const gTarget = goalsList.reduce((n, g) => n + toDisplay(g.target, g.currency), 0);
@@ -1650,12 +1666,27 @@ const widgetData = () => {
             sub: goalsList.length ? `saved of ${money(gTarget)}` : 'No goals yet · open Vela to add one',
             rows: goalsList.slice(0, 4).map((g) => ({ name: `${g.name} · ${g.target > 0 ? Math.min(100, Math.round((g.saved / g.target) * 100)) : 0}%`, amount: money(toDisplay(g.saved, g.currency)) }))
         };
+        goals.pct = gTarget > 0 ? Math.min(100, Math.round((gSaved / gTarget) * 100)) : 0;
+        goals.items = goalsList.slice(0, 3).map((g) => ({ name: g.name, pct: g.target > 0 ? Math.min(100, Math.round((g.saved / g.target) * 100)) : 0, amount: money(toDisplay(g.saved, g.currency)) }));
         const done = sortByNewest(state.transactions.filter((t) => !t.pending && !isUpcoming(t)));
         const spentToday = done.filter((t) => t.type === 'expense' && t.date === today).reduce((n, t) => n + toDisplay(t.amount, t.currency), 0);
         const recent = {
             title: 'Recent', big: money(spentToday), sub: `spent today · ${money(st.spent)} this month`,
             rows: done.slice(0, 4).map((t) => { const v = toDisplay(t.amount, t.currency); return { name: `${t.type === 'transfer' && t.desc === 'ATM withdrawal' ? 'Cash from ATM' : t.desc} · ${t.date === today ? (txTime(t) ? fmtTime(txTime(t)) : 'today') : shortDate(t.date)}`, amount: t.type === 'transfer' ? money(v) : formatSigned(t.type === 'income' ? v : -v, cur), plus: t.type === 'income' }; })
         };
+        {
+            const days = [];
+            for (let i = 6; i >= 0; i--) {
+                const d = addDays(parseDate(today), -i);
+                const key = toISODate(d);
+                days.push({ d: d.toLocaleDateString('en-US', { weekday: 'narrow' }), v: done.filter((t) => t.type === 'expense' && t.date === key).reduce((n, t) => n + toDisplay(t.amount, t.currency), 0) });
+            }
+            const top = Math.max(0, ...days.map((x) => x.v));
+            recent.week = days.map((x) => ({ d: x.d, h: top > 0 ? Math.round((x.v / top) * 100) : 0 }));
+            const nToday = done.filter((t) => t.date === today).length;
+            recent.count = nToday ? `${nToday} entr${nToday === 1 ? 'y' : 'ies'} today` : 'No entries today';
+            recent.items = done.slice(0, 3).map((t) => { const v = toDisplay(t.amount, t.currency); return { name: t.type === 'transfer' && t.desc === 'ATM withdrawal' ? 'Cash from ATM' : t.desc, when: t.date === today ? (txTime(t) ? fmtTime(txTime(t)) : 'Today') : shortDate(t.date), kind: t.type === 'income' ? 'in' : t.type === 'transfer' ? 'move' : 'out', amount: t.type === 'transfer' ? money(v) : formatSigned(t.type === 'income' ? v : -v, cur) }; });
+        }
         budget.subHidden = budget.sub; bills.subHidden = bills.sub;
         goals.subHidden = goalsList.length ? `${goalsList.length} goal${goalsList.length === 1 ? '' : 's'}` : goals.sub;
         recent.subHidden = 'spent today';

@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/w_body" android:layout_width="match_parent" android:layout_height="match_parent"
+    android:orientation="vertical" android:padding="12dp" android:background="@drawable/widget_bg_orange">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
+        <LinearLayout android:layout_width="56dp" android:layout_height="wrap_content" android:orientation="vertical" android:background="@drawable/widget_cal_tile">
+            <TextView android:id="@+id/w_mon" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:paddingTop="2dp" android:paddingBottom="2dp"
+                android:background="@drawable/widget_cal_head" android:text="BILLS" android:textColor="#FFFFFF" android:textSize="10sp" android:textStyle="bold" android:maxLines="1" />
+            <TextView android:id="@+id/w_day" android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center" android:paddingBottom="2dp"
+                android:text="•" android:textColor="#1A1A1A" android:textSize="24sp" android:textStyle="bold" android:maxLines="1" />
+        </LinearLayout>
+        <FrameLayout android:layout_width="0dp" android:layout_height="1dp" android:layout_weight="1" />
+        <ImageView android:id="@+id/w_eye" android:layout_width="28dp" android:layout_height="28dp" android:padding="6dp"
+            android:background="@drawable/widget_eye_bg" android:src="@drawable/ic_widget_eye_off" android:contentDescription="Show amounts" />
+    </LinearLayout>
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" />
+    <TextView android:id="@+id/w_title" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Bills coming" android:textColor="#FFFFFF" android:textSize="13sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
+    <TextView android:id="@+id/w_when" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Open Vela to load" android:textColor="#FFA24C" android:textSize="11sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
+    <TextView android:id="@+id/w_total" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:text="Rs. ••••" android:textColor="#EDEDEE" android:textSize="13sp" android:maxLines="1" android:ellipsize="end" />
+</LinearLayout>

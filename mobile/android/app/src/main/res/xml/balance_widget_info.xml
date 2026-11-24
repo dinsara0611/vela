@@ -10,7 +10,7 @@
     android:maxResizeHeight="450dp"
     android:resizeMode="horizontal|vertical"
     android:updatePeriodMillis="0"
-    android:initialLayout="@layout/widget_small_balances"
-    android:previewLayout="@layout/widget_small_balances"
+    android:initialLayout="@layout/widget_balances_small"
+    android:previewLayout="@layout/widget_balances_small"
     android:widgetCategory="home_screen"
     android:description="@string/widget_description" />
