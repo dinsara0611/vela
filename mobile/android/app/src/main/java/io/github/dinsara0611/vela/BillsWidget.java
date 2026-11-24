@@ -11,7 +11,7 @@ import java.util.Calendar;
 import java.util.Date;
 import java.util.Locale;
 
-/** Home-screen widget: bills still to pay. Small: the next bill as a calendar page. Big: the month as a calendar. */
+/** Home-screen widget: bills still to pay. Small: the next bill as a calendar page. Big and tall: the month as a calendar. */
 public class BillsWidget extends BalanceWidget {
     @Override protected String kind() { return "bills"; }
     @Override protected String opens() { return "bills"; }
@@ -74,6 +74,8 @@ public class BillsWidget extends BalanceWidget {
     }
 
     @Override protected int shortLayout() { return R.layout.widget_bills_short; }
+    /** Square or tall: a small month calendar on top, the next bill underneath. */
+    @Override protected int tallLayout() { return R.layout.widget_bills_tall; }
 
     @Override
     protected void fillShort(Context c, RemoteViews v, JSONObject d, boolean hidden, boolean none) throws Exception {

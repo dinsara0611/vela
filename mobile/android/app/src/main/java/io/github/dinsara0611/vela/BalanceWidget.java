@@ -115,6 +115,8 @@ public class BalanceWidget extends AppWidgetProvider {
     protected int bigLayout() { return R.layout.widget_balances_big; }
     /** One row tall (or any very short size): icon or ring, the main figure and one line. */
     protected int shortLayout() { return R.layout.widget_balances_short; }
+    /** A tall (square) layout, or 0 when the widget has none. */
+    protected int tallLayout() { return 0; }
 
     /** The short layout's figures: the title, the amount and one line. Widgets with a ring or a date add those. */
     protected void fillShort(Context c, RemoteViews v, JSONObject d, boolean hidden, boolean none) throws Exception {
@@ -210,19 +212,20 @@ public class BalanceWidget extends AppWidgetProvider {
             bySize.put(new android.util.SizeF(40f, 30f), build(c, 0));
             bySize.put(new android.util.SizeF(100f, 105f), build(c, 1));
             bySize.put(new android.util.SizeF(230f, 110f), build(c, 2));
+            if (tallLayout() != 0) bySize.put(new android.util.SizeF(150f, 190f), build(c, 3));
             mgr.updateAppWidget(id, new RemoteViews(bySize));
         } else {
             android.os.Bundle o = mgr.getAppWidgetOptions(id);
             int w = o == null ? 0 : o.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0);
             int h = o == null ? 0 : o.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0);
-            mgr.updateAppWidget(id, build(c, w >= 230 && h >= 110 ? 2 : h >= 105 ? 1 : 0));
+            mgr.updateAppWidget(id, build(c, tallLayout() != 0 && w >= 150 && h >= 190 ? 3 : w >= 230 && h >= 110 ? 2 : h >= 105 ? 1 : 0));
         }
     }
 
-    /** size: 0 short, 1 small, 2 big. */
+    /** size: 0 short, 1 small, 2 big, 3 tall (same figures as big). */
     private RemoteViews build(Context c, int size) {
         boolean small = size == 1;
-        RemoteViews v = new RemoteViews(c.getPackageName(), size == 0 ? shortLayout() : small ? smallLayout() : bigLayout());
+        RemoteViews v = new RemoteViews(c.getPackageName(), size == 0 ? shortLayout() : small ? smallLayout() : size == 3 ? tallLayout() : bigLayout());
         String kind = kind();
         boolean hidden = isHidden(c, kind);
         JSONObject d = null;
