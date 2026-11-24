@@ -52,6 +52,7 @@ export async function run() {
     for (let i = 0; i < 100 && g('rateStatus') === 'syncing'; i++) await wait(100);
     // Fresh guest on a phone in Sri Lanka, live rate 1 USD = 300 LKR (round numbers for checks).
     localStorage.clear();
+    (0, eval)('smsQueue = []'); // the review queue is kept on the phone: start each run without an old one
     const fresh = g('createDefaultState')();
     g('applyRegionDefaults')(fresh);
     fresh.config.currency = 'LKR';
@@ -410,9 +411,10 @@ export async function run() {
 
     await T('Bank SMS: turn on, pop-up, add to chosen account, match a waiting entry', async () => {
         const calls = { cleared: [] };
+        const dmy = today.slice(8, 10) + '/' + today.slice(5, 7) + '/' + today.slice(2, 4); // dated today: the waiting entry is today's
         const msgs = [
-            { id: 'sms-1', address: 'COMBANK', body: 'Your Debit Card ending 4321 has been debited with LKR 1,750.00 at PIZZA HUT on 16/11/26', date: Date.now() - 3600000 },
-            { id: 'sms-2', address: 'COMBANK', body: 'Your A/C has been credited with LKR 45,000.00 from KOTHALAWALA on 16/11/26', date: Date.now() - 1800000 }
+            { id: 'sms-1', address: 'COMBANK', body: `Your Debit Card ending 4321 has been debited with LKR 1,750.00 at PIZZA HUT on ${dmy}`, date: Date.now() - 3600000 },
+            { id: 'sms-2', address: 'COMBANK', body: `Your A/C has been credited with LKR 45,000.00 from KOTHALAWALA on ${dmy}`, date: Date.now() - 1800000 }
         ];
         // A waiting income the second message confirms.
         s().transactions.push({ id: 'wait-2', type: 'income', desc: 'Rent kothalawala', amount: 45000, currency: 'LKR', category: 'OtherIncome', date: today, note: '', createdAt: 6, recurringId: null, accountId: 'acc-cash', receipt: null, fixed: false, pending: true });
