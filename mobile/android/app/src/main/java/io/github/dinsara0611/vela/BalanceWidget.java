@@ -29,6 +29,25 @@ public class BalanceWidget extends AppWidgetProvider {
     static final String KEY_HIDDEN = "hidden";
     static final String ACTION_TOGGLE = "io.github.dinsara0611.vela.WIDGET_TOGGLE";
     static final String OPEN_URL = "io.github.dinsara0611.vela://widget/";
+    /** One tap on a widget: show its amounts and get ready to open. A second tap soon after opens Vela. */
+    static final String ACTION_TAP = "io.github.dinsara0611.vela.WIDGET_TAP";
+    static final long DOUBLE_TAP_MS = 1500;
+    private static final String KEY_ARMED = "armed_until_";
+
+    /** True for a short time after the first tap: the widget then opens Vela on the next tap. */
+    static boolean armed(Context c, String kind) {
+        return System.currentTimeMillis() < c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getLong(KEY_ARMED + kind, 0);
+    }
+
+    /** Arms the widget for a second tap, then (after the time is up) draws it back to "one tap shows". */
+    static void arm(Context c, String kind, String hint, Runnable redraw, android.content.BroadcastReceiver.PendingResult wait) {
+        c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putLong(KEY_ARMED + kind, System.currentTimeMillis() + DOUBLE_TAP_MS).apply();
+        redraw.run();
+        try { android.widget.Toast.makeText(c, hint, android.widget.Toast.LENGTH_SHORT).show(); } catch (Exception e) { /* no message: still works */ }
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+            try { redraw.run(); } finally { if (wait != null) wait.finish(); }
+        }, DOUBLE_TAP_MS + 100);
+    }
     static final String MASK = "Rs. ••••";
 
 
@@ -71,6 +90,12 @@ public class BalanceWidget extends AppWidgetProvider {
             p.edit().putBoolean(key, !p.getBoolean(key, true)).apply();
             AppWidgetManager mgr = AppWidgetManager.getInstance(c);
             for (int id : mgr.getAppWidgetIds(new ComponentName(c, getClass()))) draw(c, mgr, id);
+        } else if (ACTION_TAP.equals(intent.getAction())) {
+            // First tap: show everything (amounts too). Vela opens only on a double tap.
+            c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(hiddenKey(kind()), false).apply();
+            AppWidgetManager mgr = AppWidgetManager.getInstance(c);
+            int[] ids = mgr.getAppWidgetIds(new ComponentName(c, getClass()));
+            arm(c, kind(), "Tap again to open Vela", () -> { for (int id : ids) draw(c, mgr, id); }, goAsync());
         }
     }
 
@@ -207,7 +232,12 @@ public class BalanceWidget extends AppWidgetProvider {
         int code = kind.hashCode() & 0xFFFF;
         Intent toggle = new Intent(c, getClass()).setAction(ACTION_TOGGLE);
         v.setOnClickPendingIntent(R.id.w_eye, PendingIntent.getBroadcast(c, code, toggle, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
-        v.setOnClickPendingIntent(R.id.w_body, openApp(c, opens(), code + 1));
+        if (armed(c, kind)) {
+            v.setOnClickPendingIntent(R.id.w_body, openApp(c, opens(), code + 1));
+        } else {
+            Intent tap = new Intent(c, getClass()).setAction(ACTION_TAP);
+            v.setOnClickPendingIntent(R.id.w_body, PendingIntent.getBroadcast(c, code + 2, tap, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
+        }
         return v;
     }
 }
