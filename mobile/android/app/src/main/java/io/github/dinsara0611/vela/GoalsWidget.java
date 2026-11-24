@@ -50,4 +50,19 @@ public class GoalsWidget extends BalanceWidget {
             v.setTextViewText(amts[i], g == null ? "" : mask(hidden, g.optString("amount", "")));
         }
     }
+
+    @Override protected int shortLayout() { return R.layout.widget_goals_short; }
+
+    @Override
+    protected void fillShort(Context c, RemoteViews v, JSONObject d, boolean hidden, boolean none) throws Exception {
+        JSONArray items = d.optJSONArray("items");
+        int n = items == null ? 0 : items.length();
+        JSONObject one = n == 1 ? items.getJSONObject(0) : null;
+        int pct = one != null ? one.optInt("pct", 0) : d.optInt("pct", 0);
+        v.setImageViewBitmap(R.id.w_ring, ring(pct, COLORS[0]));
+        v.setTextViewText(R.id.w_pct, pct + "%");
+        v.setTextViewText(R.id.w_title, one != null ? one.optString("name", "Goals") : "Goals");
+        v.setTextViewText(R.id.w_total, n == 0 && !none ? "No goals yet" : hidden || none ? MASK : one != null ? one.optString("amount", "") : d.optString("big", ""));
+        v.setTextViewText(R.id.w_sub, none ? "Open Vela to load" : n == 0 ? "Tap twice to add one" : hidden ? d.optString("subHidden", "") : d.optString("sub", ""));
+    }
 }

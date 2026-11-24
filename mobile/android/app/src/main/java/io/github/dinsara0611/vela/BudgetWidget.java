@@ -39,4 +39,18 @@ public class BudgetWidget extends BalanceWidget {
         v.setTextViewText(R.id.w_s3, noBudget ? "Not set" : mask(hidden || none, d.optString("limit", "")));
         v.setTextViewText(R.id.w_s4, d.optString("daysLeft", "—"));
     }
+
+    @Override protected int shortLayout() { return R.layout.widget_budget_short; }
+
+    @Override
+    protected void fillShort(Context c, RemoteViews v, JSONObject d, boolean hidden, boolean none) throws Exception {
+        int pct = d.optInt("pct", -1);
+        boolean over = d.optBoolean("minus", false);
+        v.setImageViewBitmap(R.id.w_ring, ring(pct < 0 ? 0 : pct, GREEN));
+        v.setTextViewText(R.id.w_pct, pct < 0 ? "—" : pct + "%");
+        v.setTextViewText(R.id.w_title, d.optString("title", "Budget"));
+        v.setTextViewText(R.id.w_total, hidden || none ? MASK : d.optString("big", MASK));
+        v.setTextColor(R.id.w_total, !hidden && over ? RED : WHITE);
+        v.setTextViewText(R.id.w_sub, none ? "Open Vela to load" : pct < 0 ? "spent this month" : over ? "over the budget" : "left to spend");
+    }
 }

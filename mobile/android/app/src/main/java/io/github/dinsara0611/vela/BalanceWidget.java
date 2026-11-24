@@ -113,6 +113,16 @@ public class BalanceWidget extends AppWidgetProvider {
     /** Each widget has its own look: a small layout (2 x 2 and smaller) and a big one (wider and taller). */
     protected int smallLayout() { return R.layout.widget_balances_small; }
     protected int bigLayout() { return R.layout.widget_balances_big; }
+    /** One row tall (or any very short size): icon or ring, the main figure and one line. */
+    protected int shortLayout() { return R.layout.widget_balances_short; }
+
+    /** The short layout's figures: the title, the amount and one line. Widgets with a ring or a date add those. */
+    protected void fillShort(Context c, RemoteViews v, JSONObject d, boolean hidden, boolean none) throws Exception {
+        v.setTextViewText(R.id.w_title, d.optString("title", emptyTitle()));
+        v.setTextViewText(R.id.w_total, hidden || none ? MASK : d.optString("big", MASK));
+        v.setTextColor(R.id.w_total, !hidden && d.optBoolean("minus", false) ? 0xFFFFB3BD : WHITE);
+        v.setTextViewText(R.id.w_sub, none ? "Open Vela to load" : d.optString("count", ""));
+    }
 
     static final int WHITE = 0xFFFFFFFF, SOFT = 0xFFEDEDEE, RED = 0xFFFF5C6C, GREEN = 0xFF1EE88A;
     static final int[] ROWS = { R.id.w_row1, R.id.w_row2, R.id.w_row3, R.id.w_row4 };
@@ -194,24 +204,25 @@ public class BalanceWidget extends AppWidgetProvider {
     }
 
     void draw(Context c, AppWidgetManager mgr, int id) {
-        RemoteViews small = build(c, true);
-        RemoteViews big = build(c, false);
         if (android.os.Build.VERSION.SDK_INT >= 31) {
-            // The launcher picks the layout that fits as the widget is resized.
+            // The launcher picks the biggest layout that fits as the widget is resized: never squeezed.
             java.util.Map<android.util.SizeF, RemoteViews> bySize = new java.util.HashMap<>();
-            bySize.put(new android.util.SizeF(100f, 40f), small);
-            bySize.put(new android.util.SizeF(230f, 110f), big);
+            bySize.put(new android.util.SizeF(40f, 30f), build(c, 0));
+            bySize.put(new android.util.SizeF(100f, 105f), build(c, 1));
+            bySize.put(new android.util.SizeF(230f, 110f), build(c, 2));
             mgr.updateAppWidget(id, new RemoteViews(bySize));
         } else {
             android.os.Bundle o = mgr.getAppWidgetOptions(id);
             int w = o == null ? 0 : o.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0);
             int h = o == null ? 0 : o.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0);
-            mgr.updateAppWidget(id, w >= 230 && h >= 110 ? big : small);
+            mgr.updateAppWidget(id, build(c, w >= 230 && h >= 110 ? 2 : h >= 105 ? 1 : 0));
         }
     }
 
-    private RemoteViews build(Context c, boolean small) {
-        RemoteViews v = new RemoteViews(c.getPackageName(), small ? smallLayout() : bigLayout());
+    /** size: 0 short, 1 small, 2 big. */
+    private RemoteViews build(Context c, int size) {
+        boolean small = size == 1;
+        RemoteViews v = new RemoteViews(c.getPackageName(), size == 0 ? shortLayout() : small ? smallLayout() : bigLayout());
         String kind = kind();
         boolean hidden = isHidden(c, kind);
         JSONObject d = null;
@@ -223,7 +234,8 @@ public class BalanceWidget extends AppWidgetProvider {
             d = null;
         }
         try {
-            fill(c, v, d == null ? new JSONObject() : d, hidden, small, d == null);
+            if (size == 0) fillShort(c, v, d == null ? new JSONObject() : d, hidden, d == null);
+            else fill(c, v, d == null ? new JSONObject() : d, hidden, small, d == null);
         } catch (Exception e) {
             // Unreadable figures: keep the layout's own text, never crash the home screen.
         }

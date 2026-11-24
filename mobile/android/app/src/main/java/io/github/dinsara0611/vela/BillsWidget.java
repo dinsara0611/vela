@@ -72,4 +72,19 @@ public class BillsWidget extends BalanceWidget {
         v.setTextColor(R.id.w_when, first != null && first.optBoolean("late", false) ? RED : ORANGE);
         v.setTextViewText(R.id.w_amt, first == null ? "" : mask(hidden, first.optString("amount", "")));
     }
+
+    @Override protected int shortLayout() { return R.layout.widget_bills_short; }
+
+    @Override
+    protected void fillShort(Context c, RemoteViews v, JSONObject d, boolean hidden, boolean none) throws Exception {
+        JSONArray items = d.optJSONArray("items");
+        JSONObject first = items != null && items.length() > 0 ? items.getJSONObject(0) : null;
+        Date now = new Date();
+        v.setTextViewText(R.id.w_mon, first != null ? first.optString("mon", "") : new SimpleDateFormat("MMM", Locale.US).format(now).toUpperCase(Locale.US));
+        v.setTextViewText(R.id.w_day, first != null ? first.optString("day", "") : new SimpleDateFormat("d", Locale.US).format(now));
+        v.setTextViewText(R.id.w_title, first != null ? first.optString("name", "") : "Bills coming");
+        v.setTextViewText(R.id.w_total, first != null ? (hidden ? MASK : first.optString("amount", "")) : none ? MASK : "Nothing to pay");
+        v.setTextViewText(R.id.w_sub, none ? "Open Vela to load" : first != null ? first.optString("when", "") : "All paid this month");
+        v.setTextColor(R.id.w_sub, first != null && first.optBoolean("late", false) ? RED : ORANGE);
+    }
 }

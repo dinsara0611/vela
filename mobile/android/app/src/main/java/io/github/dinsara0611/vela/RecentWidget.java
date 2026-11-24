@@ -43,4 +43,13 @@ public class RecentWidget extends BalanceWidget {
             v.setTextColor(AMOUNTS[i], hidden ? SOFT : "in".equals(k) ? GREEN : "move".equals(k) ? SOFT : 0xFFFF7A88);
         }
     }
+
+    @Override protected int shortLayout() { return R.layout.widget_recent_short; }
+
+    @Override
+    protected void fillShort(Context c, RemoteViews v, JSONObject d, boolean hidden, boolean none) throws Exception {
+        v.setTextViewText(R.id.w_title, "Spent today");
+        v.setTextViewText(R.id.w_total, hidden || none ? MASK : d.optString("big", MASK));
+        v.setTextViewText(R.id.w_sub, none ? "Open Vela to load" : d.optString("count", ""));
+    }
 }
