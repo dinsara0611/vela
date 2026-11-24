@@ -175,13 +175,13 @@ public class BalanceWidget extends AppWidgetProvider {
             // The launcher picks the layout that fits as the widget is resized.
             java.util.Map<android.util.SizeF, RemoteViews> bySize = new java.util.HashMap<>();
             bySize.put(new android.util.SizeF(100f, 40f), small);
-            bySize.put(new android.util.SizeF(230f, 130f), big);
+            bySize.put(new android.util.SizeF(230f, 110f), big);
             mgr.updateAppWidget(id, new RemoteViews(bySize));
         } else {
             android.os.Bundle o = mgr.getAppWidgetOptions(id);
             int w = o == null ? 0 : o.getInt(AppWidgetManager.OPTION_APPWIDGET_MIN_WIDTH, 0);
             int h = o == null ? 0 : o.getInt(AppWidgetManager.OPTION_APPWIDGET_MAX_HEIGHT, 0);
-            mgr.updateAppWidget(id, w >= 230 && h >= 130 ? big : small);
+            mgr.updateAppWidget(id, w >= 230 && h >= 110 ? big : small);
         }
     }
 

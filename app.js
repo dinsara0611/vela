@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.65.0';
+const APP_VERSION = '4.65.1';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -1657,6 +1657,13 @@ const widgetData = () => {
         };
         const whenDue = (d) => { const n = daysBetween(parseDate(today), parseDate(d)); return n < 0 ? 'Late' : n === 0 ? 'Today' : n === 1 ? 'Tomorrow' : n < 14 ? `In ${n} days` : shortDate(d); };
         bills.items = due.slice(0, 4).map((x) => ({ name: x.name, day: String(Number(x.date.slice(8, 10))), mon: parseDate(x.date).toLocaleDateString('en-US', { month: 'short' }).toUpperCase(), when: whenDue(x.date), late: x.date < today, amount: money(x.v) }));
+        {
+            const ym = today.slice(0, 7);
+            const marks = {};
+            due.filter((x) => x.date.slice(0, 7) === ym).forEach((x) => { const dd = Number(x.date.slice(8, 10)); marks[dd] = marks[dd] === 'late' || x.date < today ? 'late' : 'due'; });
+            bills.days = Object.entries(marks).map(([d, k]) => ({ d: Number(d), late: k === 'late' }));
+            bills.month = new Date().toLocaleDateString('en-US', { month: 'long' });
+        }
         bills.count = dueMonth.length ? `${dueMonth.length} to pay this month` : 'All paid this month';
         const goalsList = state.savings || [];
         const gSaved = goalsList.reduce((n, g) => n + toDisplay(g.saved, g.currency), 0);
