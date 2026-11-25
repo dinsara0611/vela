@@ -39,6 +39,15 @@
             </intent-filter>
         </activity>
 
+        <!-- Widgets: the fingerprint check before amounts show on the home screen. -->
+        <activity
+            android:name=".WidgetUnlockActivity"
+            android:theme="@style/VelaUnlock"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
+            android:launchMode="singleTask" />
+
         <!-- Bank SMS tracking: sees incoming bank messages (only acts when the user turned it on in Vela). -->
         <receiver
             android:name=".SmsReceiver"

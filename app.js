@@ -8,7 +8,7 @@
 /* =========================================================================
    1. Constants
    ========================================================================= */
-const APP_VERSION = '4.65.4';
+const APP_VERSION = '4.65.5';
 const STORAGE_KEY = 'VELA_STATE';
 const RATE_URL = 'https://open.er-api.com/v6/latest/USD';
 const JSPDF_CDN = 'https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js';
@@ -3488,6 +3488,8 @@ const parseBankSms = (msg) => {
     const refM = /\b(?:ref(?:erence)?(?: ?no\.?| ?number)?|txn ?(?:id|no)|trx ?(?:id|no)|transaction (?:id|no)|auth(?:orization)? code|approval code|rrn|trace no)\s*[:#.\-]?\s*([A-Z0-9][A-Z0-9\-\/]{3,24})/i.exec(body);
     const ref = refM && /\d/.test(refM[1]) ? refM[1].replace(/[\-\/.]+$/, '') : null;
     const last4 = smsLast4(body);
+    // Is that number a card's (not an account's)?
+    const last4Card = !!last4 && [...body.matchAll(/(?:card|\bcrd\b)[^\d]{0,30}?([0-9Xx*#.\-]{3,26})/gi)].some((m) => m[1].replace(/[.\-]+$/, '').endsWith(last4));
     let merchant = smsMerchant(body, kind);
     // "Remarks :KOKO." / "Narration: Salary ABC": who it was from or what it was for, when no name was found.
     if (!merchant) {
@@ -3498,6 +3500,10 @@ const parseBankSms = (msg) => {
     // "... from the ComBank Digital" / "via BOC Smart": the bank itself (its app) is how the money moved, not who it was.
     if (brand && bank && brand.slug === bank.logo) { merchant = ''; brand = null; }
     if (brand) merchant = brand.name;
+    // A subscription in the message ("Google One", "ANTHROPIC* CLAUDE SUB", or one of your own subscriptions by
+    // name): that service, filed under Subscriptions, so it can settle the subscription's bill.
+    const subName = kind.dir === 'out' ? smsSubscription(body, brand) : null;
+    if (subName) { merchant = subName; brand = brandFor(subName) || brand; }
     // ComBank Digital's "… in the amount of LKR 300.00 was received on … from the ComBank Digital": the words before
     // "in the amount of" are the kind of payment, not a shop.
     const appMove = /\bin the amount of\b[\s\S]{0,40}\bwas received on\b[\s\S]{0,40}\bfrom the combank digital\b/i.test(body);
@@ -3526,14 +3532,14 @@ const parseBankSms = (msg) => {
         : merchant || (kind.kind === 'salary' ? 'Salary' : `${bankName} ${kind.label.toLowerCase()}`);
     let category = type === 'income'
         ? (kind.kind === 'salary' || /\bsalary\b/i.test(body) ? 'Salary' : kind.kind === 'interest' ? 'Investment' : 'OtherIncome')
-        : kind.kind === 'fee' ? 'Other' : (brandCategory(brand) || guessCategory(merchant) || (kind.kind === 'bill' ? 'Utilities' : 'Other'));
+        : kind.kind === 'fee' ? 'Other' : subName && expenseCatExists('Subscriptions') ? 'Subscriptions' : (brandCategory(brand) || guessCategory(merchant) || (kind.kind === 'bill' ? 'Utilities' : 'Other'));
     const catType = type === 'income' ? 'income' : 'expense';
     if (!state.categories.some((c) => c.id === category && c.type === catType)) category = FALLBACK_CATEGORY[catType];
     const dedupe = ref ? `ref:${bankName}:${ref.toUpperCase()}` : `sig:${bankName}:${kind.dir}:${amt.cur}:${amt.value}:${when.date}:${when.time || ''}:${last4 || ''}`;
     if (type === 'cardpay') checks.push('a payment to your own card is a transfer, not income');
     return {
         id: String(msg.id), type, kind: kind.kind, kindLabel: kind.label, amount: amt.value, currency: amt.cur, fx,
-        bank: bankName, desc: desc.slice(0, 80), merchant, category, date: when.date, time: when.time, ref, last4,
+        bank: bankName, desc: desc.slice(0, 80), merchant, category, date: when.date, time: when.time, ref, last4, last4Card,
         confidence: checks.length ? 'medium' : 'high', checks, dedupe, masked: maskSms(body).slice(0, 400),
         cardSide: /\bdebited\b/.test(t) ? 'from' : 'to',
         source, sources: [source], sourceIds: [String(msg.id)], bodyKeys: [hashToInt(body.toLowerCase())],
@@ -3636,7 +3642,7 @@ const sourceShort = (sources) => (sources || ['sms']).map((s) => ({ sms: 'SMS', 
 // What a confirmed detection is saved with: enough to show where it came from and to recognise it again.
 // The message text itself is not kept.
 const bankMeta = (i) => ({
-    bank: i.bank, kind: i.kind, ref: i.ref, last4: i.last4, merchant: i.merchant || '', smsId: i.id, dedupe: i.dedupe, time: i.time,
+    bank: i.bank, kind: i.kind, ref: i.ref, last4: i.last4, last4Card: !!i.last4Card, merchant: i.merchant || '', smsId: i.id, dedupe: i.dedupe, time: i.time,
     sources: sourceList(i), sourceIds: i.sourceIds || [i.id], bodyKeys: i.bodyKeys || [], shape: i.shape || null, arrivedAt: i.arrivedAt || null,
     confidence: i.confidence, verifiedAt: new Date().toISOString()
 });
@@ -3686,15 +3692,25 @@ const sameDetection = (a, b) => {
         if (a.merchant && b.merchant && !merchantsAgree(a.merchant, b.merchant)) return null;
         return 'maybe';
     }
-    if (a.last4 && b.last4 && a.last4 !== b.last4) return null;
+    // A card number and an account number are different numbers for one payment (the SMS names the card, the
+    // ePassbook app the account): only two numbers of the same kind that differ mean two payments.
+    if (a.last4 && b.last4 && a.last4 !== b.last4 && !!a.last4Card === !!b.last4Card) return null;
     const windowMs = (smsPrefs().windowMin || 15) * 60000;
-    if (!a.arrivedAt || !b.arrivedAt || Math.abs(a.arrivedAt - b.arrivedAt) > windowMs) return null;
+    const gap = a.arrivedAt && b.arrivedAt ? Math.abs(a.arrivedAt - b.arrivedAt) : Infinity;
+    if (gap > windowMs) {
+        // The SMS comes when the card is used, the bank app often only when the bank posts it (hours later):
+        // the same shop and amount within a day is that payment; up to three days, you are asked.
+        const named = merchantWord(a.merchant) && merchantWord(b.merchant) && merchantsAgree(a.merchant, b.merchant);
+        if (named && gap <= 86400000) return 'same';
+        if (named && gap <= 3 * 86400000) return 'maybe';
+        return null;
+    }
     if (a.merchant && b.merchant && !merchantsAgree(a.merchant, b.merchant)) return 'maybe';
     return 'same';
 };
 // A saved transaction seen as a detection, for matching.
 const recordedAsDetection = (t) => ({
-    bank: t.bank.bank, ref: t.bank.ref, last4: t.bank.last4, merchant: t.bank.merchant, amount: t.amount, currency: t.currency,
+    bank: t.bank.bank, ref: t.bank.ref, last4: t.bank.last4, last4Card: !!t.bank.last4Card, merchant: t.bank.merchant, amount: t.amount, currency: t.currency,
     type: t.bank.kind === 'atm' || t.type === 'transfer' ? 'atm' : t.bank.kind === 'reversal' ? 'reversal' : t.type,
     sources: t.bank.sources || ['sms'], bodyKeys: t.bank.bodyKeys || [], shape: t.bank.shape || null, arrivedAt: t.bank.arrivedAt, time: t.bank.time || null,
     sourceIds: (t.bank.sourceIds && t.bank.sourceIds.length ? t.bank.sourceIds : [t.bank.smsId]).filter(Boolean)
@@ -4110,6 +4126,14 @@ const expectedMatchFor = (rec, refKeys = []) => {
     const bill = state.recurring.find((b) => (!b.autoLog || b.type === 'income') && b.type === rec.type && b.nextDate && near(b.nextDate) && same(billDue(b), b.currency)
         && (!b.accountId || b.accountId === rec.accountId));
     if (bill) return { kind: 'bill', bill };
+    // A subscription named in the bank message: its bill, even when the charge moved with the exchange rate or tax.
+    if (rec.type === 'expense' && rec.category === 'Subscriptions') {
+        const key = (x) => String(x || '').toLowerCase().replace(/[^a-z0-9]+/g, '');
+        const close = (amt, cur) => { const a = toDisplay(amt, cur); const r = toDisplay(rec.amount, rec.currency); return a > 0 && r > 0 && r / a >= 0.5 && r / a <= 2; };
+        const sub = mySubscriptions().find((b) => !b.autoLog && b.nextDate && near(b.nextDate) && key(b.name) === key(rec.desc) && close(billDue(b), b.currency)
+            && (!b.accountId || b.accountId === rec.accountId));
+        if (sub) return { kind: 'bill', bill: sub };
+    }
     const tx = state.transactions.find((t) => t.id !== rec.id && t.pending && t.type === rec.type && near(t.date) && same(t.amount, t.currency) && (!t.accountId || t.accountId === rec.accountId));
     return tx ? { kind: 'tx', tx } : null;
 };
@@ -7784,6 +7808,29 @@ const SUBSCRIPTIONS = [
     ['slt', 'SLT Fibre', 'Subscriptions'], ['capcut', 'CapCut Pro', 'Subscriptions'], ['zoom', 'Zoom Pro', 'Subscriptions'], ['tinder', 'Tinder Gold', 'Subscriptions'],
     ['viu', 'Viu', 'Subscriptions'], ['hotstar', 'Hotstar', 'Subscriptions'], ['zee5', 'ZEE5', 'Subscriptions'], ['perplexity', 'Perplexity Pro', 'Subscriptions']
 ];
+// Plans whose name is in the bank message, where the company's name alone (Google, Apple, Microsoft) could be anything.
+const SMS_SUB_NAMES = [
+    [/\bgoogle\s*one\b/i, 'Google One'], [/\byoutube\s*(?:premium|music)\b/i, 'YouTube Premium'], [/\bicloud\b/i, 'iCloud+'],
+    [/\bapple\s*music\b/i, 'Apple Music'], [/\bapple\s*tv\b/i, 'Apple TV+'], [/\bapple\s*one\b/i, 'Apple One'],
+    [/\b(?:microsoft|office)\s*365\b/i, 'Microsoft 365'], [/\bgame\s*pass\b/i, 'Xbox Game Pass'], [/\bprime\s*video\b|\bamazon\s*prime\b/i, 'Prime Video'],
+    [/\b(?:playstation|ps)\s*plus\b/i, 'PlayStation Plus'], [/\bchatgpt\b/i, 'ChatGPT Plus'], [/\bgemini\s*(?:advanced|pro)\b/i, 'Gemini Advanced']
+];
+const SUB_GENERIC = new Set(['google', 'apple', 'microsoft', 'amazon', 'meta', 'paypal']);
+// The subscription a bank message is for, or null. Your own subscriptions come first (their name in the text),
+// then well-known plans, then a subscription service's name (Netflix, Spotify, Claude...).
+const smsSubscription = (body, brand) => {
+    const text = String(body || '').toLowerCase().replace(/[^a-z0-9+]+/g, ' ');
+    const has = (name) => { const n = String(name || '').toLowerCase().replace(/[^a-z0-9+]+/g, ' ').trim(); return n.length >= 3 && ` ${text} `.includes(` ${n} `); };
+    const mine = mySubscriptions().find((b) => has(b.name));
+    if (mine) return mine.name;
+    const known = SMS_SUB_NAMES.find(([re]) => re.test(body));
+    if (known) return known[1];
+    if (brand && SUB_SLUGS.has(brand.slug) && !SUB_GENERIC.has(brand.slug)) {
+        const own = mySubscriptions().find((b) => (brandOfName(b.name) || {}).slug === brand.slug);
+        return own ? own.name : brand.name;
+    }
+    return /\b(?:subscription|sub)\b/i.test(body) && brand ? brand.name : null;
+};
 const SUB_SLUGS = new Set([...SUBSCRIPTIONS.map(([slug]) => slug), ...BRAND_KINDS[4][1]]);
 // Your subscriptions: monthly bills for a streaming / app / TV service (or added from the Subscription menu).
 const mySubscriptions = () => state.recurring.filter((b) => b.type === 'expense' && (b.sub || b.category === 'Subscriptions' || SUB_SLUGS.has((brandOfName(b.name) || {}).slug)));

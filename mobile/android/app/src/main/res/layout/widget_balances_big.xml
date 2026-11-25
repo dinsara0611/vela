@@ -1,51 +1,33 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Balances, wide or tall: the Vela icon, "All accounts", the eye; the total; each account; when it was updated. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/w_body" android:layout_width="match_parent" android:layout_height="match_parent"
-    android:orientation="vertical" android:padding="16dp" android:background="@drawable/widget_card_bg">
+    android:orientation="vertical" android:padding="14dp" android:background="@drawable/widget_bg">
     <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal" android:gravity="center_vertical">
-        <FrameLayout android:layout_width="28dp" android:layout_height="20dp" android:background="@drawable/widget_card_chip" />
-        <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="10dp"
-            android:text="VELA" android:letterSpacing="0.2" android:textColor="#D9FFFFFF" android:textSize="11sp" android:textStyle="bold" android:maxLines="1" />
-        <ImageView android:id="@+id/w_eye" android:layout_width="28dp" android:layout_height="28dp" android:padding="6dp"
-            android:background="@drawable/widget_eye_light_bg" android:src="@drawable/ic_widget_eye_off" android:tint="#FFFFFF" android:contentDescription="Show amounts" />
+        <ImageView android:layout_width="20dp" android:layout_height="20dp" android:src="@mipmap/ic_launcher_round" android:contentDescription="@null" />
+        <TextView android:id="@+id/w_title" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="8dp"
+            android:text="All accounts" android:textColor="#A8A8AA" android:textSize="12sp" android:maxLines="1" android:ellipsize="end" />
+        <ImageView android:id="@+id/w_eye" android:layout_width="32dp" android:layout_height="32dp" android:padding="6dp"
+            android:background="@drawable/widget_eye_bg" android:src="@drawable/ic_widget_eye_off" android:contentDescription="Show amounts" />
     </LinearLayout>
-    <FrameLayout android:layout_width="match_parent" android:layout_height="10dp" />
-    <TextView android:id="@+id/w_title" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="All accounts" android:textColor="#D9FFFFFF" android:textSize="11sp" android:maxLines="1" android:ellipsize="end" />
-    <TextView android:id="@+id/w_total" android:layout_width="match_parent" android:layout_height="wrap_content"
+    <TextView android:id="@+id/w_total" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp"
         android:text="Rs. ••••" android:textColor="#FFFFFF" android:textSize="24sp" android:textStyle="bold" android:maxLines="1" android:ellipsize="end" />
-    <TextView android:id="@+id/w_sub" android:layout_width="match_parent" android:layout_height="wrap_content"
-        android:text="Open Vela to load" android:textColor="#B3FFFFFF" android:textSize="10sp" android:maxLines="1" android:ellipsize="end" />
-    <LinearLayout android:id="@+id/w_row1" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp" android:visibility="gone">
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-            <TextView android:id="@+id/w_name1" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:textColor="#E6FFFFFF" android:textSize="12sp" android:maxLines="1" android:ellipsize="end" />
-            <TextView android:id="@+id/w_amt1" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:textColor="#FFFFFF" android:textSize="12sp" android:textStyle="bold" android:maxLines="1" />
-        </LinearLayout>
-        <ProgressBar android:id="@+id/w_bar1" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp"
-            android:layout_marginTop="4dp" android:max="100" android:progress="0" android:progressDrawable="@drawable/widget_share_bar" />
+    <LinearLayout android:id="@+id/w_row1" style="@style/VelaWidgetRow" android:visibility="gone">
+        <TextView android:id="@+id/w_name1" style="@style/VelaWidgetName" />
+        <TextView android:id="@+id/w_amt1" style="@style/VelaWidgetAmount" />
     </LinearLayout>
-    <LinearLayout android:id="@+id/w_row2" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp" android:visibility="gone">
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-            <TextView android:id="@+id/w_name2" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:textColor="#E6FFFFFF" android:textSize="12sp" android:maxLines="1" android:ellipsize="end" />
-            <TextView android:id="@+id/w_amt2" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:textColor="#FFFFFF" android:textSize="12sp" android:textStyle="bold" android:maxLines="1" />
-        </LinearLayout>
-        <ProgressBar android:id="@+id/w_bar2" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp"
-            android:layout_marginTop="4dp" android:max="100" android:progress="0" android:progressDrawable="@drawable/widget_share_bar" />
+    <LinearLayout android:id="@+id/w_row2" style="@style/VelaWidgetRow" android:visibility="gone">
+        <TextView android:id="@+id/w_name2" style="@style/VelaWidgetName" />
+        <TextView android:id="@+id/w_amt2" style="@style/VelaWidgetAmount" />
     </LinearLayout>
-    <LinearLayout android:id="@+id/w_row3" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp" android:visibility="gone">
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-            <TextView android:id="@+id/w_name3" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:textColor="#E6FFFFFF" android:textSize="12sp" android:maxLines="1" android:ellipsize="end" />
-            <TextView android:id="@+id/w_amt3" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:textColor="#FFFFFF" android:textSize="12sp" android:textStyle="bold" android:maxLines="1" />
-        </LinearLayout>
-        <ProgressBar android:id="@+id/w_bar3" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp"
-            android:layout_marginTop="4dp" android:max="100" android:progress="0" android:progressDrawable="@drawable/widget_share_bar" />
+    <LinearLayout android:id="@+id/w_row3" style="@style/VelaWidgetRow" android:visibility="gone">
+        <TextView android:id="@+id/w_name3" style="@style/VelaWidgetName" />
+        <TextView android:id="@+id/w_amt3" style="@style/VelaWidgetAmount" />
     </LinearLayout>
-    <LinearLayout android:id="@+id/w_row4" android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="vertical" android:layout_marginTop="8dp" android:visibility="gone">
-        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:orientation="horizontal">
-            <TextView android:id="@+id/w_name4" android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:textColor="#E6FFFFFF" android:textSize="12sp" android:maxLines="1" android:ellipsize="end" />
-            <TextView android:id="@+id/w_amt4" android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginStart="8dp" android:textColor="#FFFFFF" android:textSize="12sp" android:textStyle="bold" android:maxLines="1" />
-        </LinearLayout>
-        <ProgressBar android:id="@+id/w_bar4" style="?android:attr/progressBarStyleHorizontal" android:layout_width="match_parent" android:layout_height="4dp"
-            android:layout_marginTop="4dp" android:max="100" android:progress="0" android:progressDrawable="@drawable/widget_share_bar" />
+    <LinearLayout android:id="@+id/w_row4" style="@style/VelaWidgetRow" android:visibility="gone">
+        <TextView android:id="@+id/w_name4" style="@style/VelaWidgetName" />
+        <TextView android:id="@+id/w_amt4" style="@style/VelaWidgetAmount" />
     </LinearLayout>
+    <TextView android:id="@+id/w_updated" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="6dp"
+        android:text="Open Vela to load your figures" android:textColor="#7D7D82" android:textSize="10sp" android:maxLines="1" android:ellipsize="end" />
 </LinearLayout>

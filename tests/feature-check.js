@@ -226,7 +226,7 @@ export async function run() {
         ['ComBank foreign purchase with the rupee figure', 'Purchase at NETFLIX.COM for USD 9.99 (LKR 3,312.45) on 16/11/26 from card ending #5370. Avl Bal LKR 80,000.00',
             { type: 'expense', amount: 3312.45, currency: 'LKR', desc: 'Netflix', category: 'Subscriptions' }],
         ['ComBank shop with phone number and country', 'Dear Cardholder, Purchase at Google One 650-2530000 US for LKR 6,425.00 on 15/11/26 05:36 PM has been authorised on your debit card ending #5370.',
-            { amount: 6425, desc: 'Google', time: '17:36' }],
+            { amount: 6425, desc: 'Google One', category: 'Subscriptions', time: '17:36' }],
         ['ComBank unknown shop keeps its own name', 'Dear Cardholder, Purchase at SUNIL STORES (PVT) LTD 0712755777 LK for LKR 1,000.00 on 16/11/26 10:14 AM has been authorised on your debit card ending #5370.',
             { amount: 1000, desc: 'Sunil Stores' }],
         ['shop name containing "bal" is not a balance', 'Dear Cardholder, Purchase at HERBAL CARE LK for LKR 950.00 on 16/11/26 09:10 AM has been authorised on your debit card ending #5370.',
@@ -3036,6 +3036,35 @@ export async function run() {
         return (read && !stranger && one && added === 1 && !again) || `read ${read}, stranger app ignored ${!stranger}, one entry with both sources ${one} (${q.length}: ${q.map((x) => x.sources.join('+')).join(', ')}), added ${added}, offered again ${again}`;
     });
 
+    await T('Subscriptions from the bank: "Google One" on a card SMS is a subscription that pays its bill; the ePassbook alert hours later (account number, not card) is the same payment', async () => {
+        localStorage.removeItem('VELA_SMS');
+        const st = s();
+        const today = g('todayISO')();
+        const [y, m, d] = today.split('-');
+        const dmy = `${d}/${m}/${y.slice(2)}`;
+        const body = `Dear Cardholder, Purchase at Google One Mountain View US for LKR 1,600.00 on ${dmy} 11:39 AM has been authorised on your debit card ending #4666.`;
+        const p = g('parseBankSms')({ id: 'sub-1', address: 'COMBANK', body, date: Date.now() });
+        const named = p && p.desc === 'Google One' && p.category === 'Subscriptions' && p.last4Card === true;
+        // A Google purchase that is not Google One stays a plain Google purchase.
+        const play = g('parseBankSms')({ id: 'sub-2', address: 'COMBANK', body: body.replace('Google One', 'GOOGLE *Play'), date: Date.now() });
+        const plain = play && play.category !== 'Subscriptions';
+        // Your Google One bill (a little cheaper last time): settled by name, not only by the exact amount.
+        st.recurring.push({ id: 'sub-g1', type: 'expense', name: 'Google One', amount: 1450, currency: 'LKR', category: 'Subscriptions', frequency: 'monthly', nextDate: today, anchorDay: Number(d), autoLog: false, accountId: st.accounts[0].id, createdAt: 1 });
+        const m1 = g('expectedMatchFor')({ id: 'x', type: 'expense', desc: 'Google One', category: 'Subscriptions', amount: 1600, currency: 'LKR', date: today, accountId: st.accounts[0].id });
+        const settles = !!(m1 && m1.kind === 'bill' && m1.bill.id === 'sub-g1');
+        st.recurring = st.recurring.filter((b) => b.id !== 'sub-g1');
+        // The ePassbook alert three hours later with the account number: one payment, not two.
+        const t0 = Date.now();
+        const sms = g('parseBankSms')({ id: `sub-s-${t0}`, source: 'sms', address: 'COMBANK', body, date: t0 });
+        const app = g('parseBankSms')({ id: `sub-n-${t0}`, source: 'notification', address: 'net.combank.passbook', bank: 'Commercial Bank', body: 'Debit Alert. LKR 1,600.00 debited from A/C 8001XXXX4667 for GOOGLE ONE MOUNTAIN VIEW', date: t0 + 3 * 3600000 });
+        const one = g('sameDetection')(sms, app) === 'same';
+        // Two SMS for the same shop and amount a day apart are still two payments.
+        const sms2 = g('parseBankSms')({ id: `sub-s2-${t0}`, source: 'sms', address: 'COMBANK', body: body.replace('11:39 AM', '02:15 PM'), date: t0 + 26 * 3600000 });
+        const two = g('sameDetection')(sms, sms2) !== 'same';
+        g('saveState')();
+        return (named && plain && settles && one && two) || `Google One named ${named} (${p && p.desc}/${p && p.category}), Google Play not a subscription ${plain}, bill settled by name ${settles}, SMS + app one ${one}, two SMS a day apart two ${two}`;
+    });
+
     await T('Bill number by hand: an entry without one offers Add in its details; typed in the form it is saved, shown, and taught to its bill', async () => {
         const st = s();
         const id = `tx-br-${Date.now()}`;
@@ -3315,7 +3344,7 @@ export async function run() {
         const t0 = Date.now();
         g('smsTake')([
             { id: `cx-${t0}-2`, address: 'COMBANK', body: 'YOUR TRANSACTION AT PAYPAL ON YOUR CARD ENDING WITH 5174 HAS BEEN CANCELLED.', date: t0 },
-            { id: `cx-${t0}-1`, address: 'COMBANK', body: 'Dear Cardholder, Purchase at PAYPAL 4029357733 LU for USD 1.00 on 19/11/26 09:28 PM has been authorised on your debit card ending #5174.', date: t0 - 60000 }
+            { id: `cx-${t0}-1`, address: 'COMBANK', body: `Dear Cardholder, Purchase at PAYPAL 4029357733 LU for USD 1.00 on ${(() => { const [y, m, d] = g('todayISO')().split('-'); return `${d}/${m}/${y.slice(2)}`; })()} 09:28 AM has been authorised on your debit card ending #5174.`, date: t0 - 60000 }
         ]);
         const noPaypal = !g('smsQueue').slice(before).some((i) => /paypal/i.test(i.desc));
         return (!otp && outOk && noPaypal) || `code request ignored ${!otp}, transfer out ${outOk} (${out && out.type} ${out && out.desc}), cancelled not added ${noPaypal}`;

@@ -19,7 +19,8 @@ import org.json.JSONObject;
 
 /**
  * Home-screen widgets, each with its own look (a bank card, a budget ring, a bills calendar, goal rings, a 7-day
- * chart) and two sizes, with an eye button that hides the amounts. Amounts are hidden by default (anyone can see a home screen). The app sends the figures, already
+ * chart) and several sizes, with an eye button that hides the amounts. Amounts are hidden by default (anyone can see a home screen)
+ * and show only after the fingerprint or the phone's PIN (WidgetUnlockActivity). The app sends the figures, already
  * formatted, whenever they change (see BalanceWidgetPlugin); the widget itself never reads Vela's data.
  * This class is the balances widget; BudgetWidget, BillsWidget, GoalsWidget and RecentWidget show other parts.
  */
@@ -57,7 +58,7 @@ public class BalanceWidget extends AppWidgetProvider {
     protected String opens() { return "home"; }
     protected String emptyTitle() { return "All accounts"; }
 
-    private static String hiddenKey(String kind) { return "balances".equals(kind) ? KEY_HIDDEN : KEY_HIDDEN + "_" + kind; }
+    static String hiddenKey(String kind) { return "balances".equals(kind) ? KEY_HIDDEN : KEY_HIDDEN + "_" + kind; }
 
     static boolean isHidden(Context c) { return isHidden(c, "balances"); }
 
@@ -85,14 +86,12 @@ public class BalanceWidget extends AppWidgetProvider {
     public void onReceive(Context c, Intent intent) {
         super.onReceive(c, intent);
         if (ACTION_TOGGLE.equals(intent.getAction())) {
-            SharedPreferences p = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
-            String key = hiddenKey(kind());
-            p.edit().putBoolean(key, !p.getBoolean(key, true)).apply();
+            // The eye on a shown widget hides it again (showing goes through the fingerprint check).
+            c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(hiddenKey(kind()), true).apply();
             AppWidgetManager mgr = AppWidgetManager.getInstance(c);
             for (int id : mgr.getAppWidgetIds(new ComponentName(c, getClass()))) draw(c, mgr, id);
         } else if (ACTION_TAP.equals(intent.getAction())) {
-            // First tap: show everything (amounts too). Vela opens only on a double tap.
-            c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean(hiddenKey(kind()), false).apply();
+            // A tap on a shown widget: get ready; a second tap soon after opens Vela.
             AppWidgetManager mgr = AppWidgetManager.getInstance(c);
             int[] ids = mgr.getAppWidgetIds(new ComponentName(c, getClass()));
             arm(c, kind(), "Tap again to open Vela", () -> { for (int id : ids) draw(c, mgr, id); }, goAsync());
@@ -115,8 +114,11 @@ public class BalanceWidget extends AppWidgetProvider {
     protected int bigLayout() { return R.layout.widget_balances_big; }
     /** One row tall (or any very short size): icon or ring, the main figure and one line. */
     protected int shortLayout() { return R.layout.widget_balances_short; }
-    /** A tall (square) layout, or 0 when the widget has none. */
-    protected int tallLayout() { return 0; }
+    /** A tall (square) layout, or 0 when the widget has none. Balances: the same card with room for four accounts. */
+    protected int tallLayout() { return getClass() == BalanceWidget.class ? R.layout.widget_balances_big : 0; }
+    /** The size being drawn (0 short, 1 small, 2 big, 3 tall) and when Vela last sent figures. */
+    protected int size;
+    protected String updated = "";
 
     /** The short layout's figures: the title, the amount and one line. Widgets with a ring or a date add those. */
     protected void fillShort(Context c, RemoteViews v, JSONObject d, boolean hidden, boolean none) throws Exception {
@@ -135,25 +137,28 @@ public class BalanceWidget extends AppWidgetProvider {
 
     /** Fills the layout with this widget's figures. d is empty when Vela has not sent any yet. */
     protected void fill(Context c, RemoteViews v, JSONObject d, boolean hidden, boolean small, boolean none) throws Exception {
-        // Balances: a bank card with the total and, on the big card, each account with a bar for its share.
+        // Balances: the total and, when there is room, each account and when the figures were updated.
         v.setTextViewText(R.id.w_title, d.optString("title", "All accounts"));
         String big = hidden || none ? MASK : d.optString("big", MASK);
         v.setTextViewText(R.id.w_total, big);
         v.setTextColor(R.id.w_total, !hidden && d.optBoolean("minus", false) ? 0xFFFFB3BD : WHITE);
-        if (small) fit(v, R.id.w_total, big, 20f);
-        v.setTextViewText(R.id.w_sub, none ? "Open Vela to load" : d.optString("count", ""));
-        if (small) return;
+        if (small) {
+            fit(v, R.id.w_total, big, 20f);
+            v.setTextViewText(R.id.w_sub, none ? "Open Vela to load" : d.optString("count", ""));
+            return;
+        }
         JSONArray rows = d.optJSONArray("rows");
-        int[] bars = { R.id.w_bar1, R.id.w_bar2, R.id.w_bar3, R.id.w_bar4 };
+        int room = size == 3 ? 4 : 3; // a tall widget has room for four accounts, a wide one for three
         for (int i = 0; i < ROWS.length; i++) {
-            JSONObject a = rows != null && i < rows.length() ? rows.getJSONObject(i) : null;
+            JSONObject a = i < room && rows != null && i < rows.length() ? rows.getJSONObject(i) : null;
             v.setViewVisibility(ROWS[i], a == null ? View.GONE : View.VISIBLE);
             if (a == null) continue;
             v.setTextViewText(NAMES[i], a.optString("name", ""));
             v.setTextViewText(AMOUNTS[i], mask(hidden, a.optString("amount", "")));
-            v.setTextColor(AMOUNTS[i], !hidden && a.optBoolean("minus", false) ? 0xFFFFB3BD : WHITE);
-            v.setProgressBar(bars[i], 100, hidden ? 0 : Math.max(2, a.optInt("share", 0)), false);
+            v.setTextColor(AMOUNTS[i], !hidden && a.optBoolean("minus", false) ? 0xFFFFB3BD : SOFT);
         }
+        int more = rows == null ? 0 : rows.length() - room;
+        v.setTextViewText(R.id.w_updated, none ? "Open Vela to load your figures" : (more > 0 ? "+" + more + " more · " : "") + updated);
     }
 
     /** Long amounts step down so they fit a small widget. */
@@ -233,9 +238,11 @@ public class BalanceWidget extends AppWidgetProvider {
             String raw = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_DATA, null);
             JSONObject all = raw == null ? null : new JSONObject(raw);
             d = all == null ? null : all.optJSONObject(kind);
+            updated = all == null ? "" : all.optString("updated", "");
         } catch (Exception e) {
             d = null;
         }
+        this.size = size;
         try {
             if (size == 0) fillShort(c, v, d == null ? new JSONObject() : d, hidden, d == null);
             else fill(c, v, d == null ? new JSONObject() : d, hidden, small, d == null);
@@ -245,6 +252,13 @@ public class BalanceWidget extends AppWidgetProvider {
         v.setImageViewResource(R.id.w_eye, hidden ? R.drawable.ic_widget_eye_off : R.drawable.ic_widget_eye);
         v.setContentDescription(R.id.w_eye, hidden ? "Show amounts" : "Hide amounts");
         int code = kind.hashCode() & 0xFFFF;
+        if (hidden) {
+            // Hidden: a tap (on the eye or anywhere) asks for the fingerprint first, then shows the amounts.
+            PendingIntent unlock = WidgetUnlockActivity.intent(c, kind, code + 3);
+            v.setOnClickPendingIntent(R.id.w_eye, unlock);
+            v.setOnClickPendingIntent(R.id.w_body, unlock);
+            return v;
+        }
         Intent toggle = new Intent(c, getClass()).setAction(ACTION_TOGGLE);
         v.setOnClickPendingIntent(R.id.w_eye, PendingIntent.getBroadcast(c, code, toggle, PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE));
         if (armed(c, kind)) {
