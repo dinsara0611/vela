@@ -1,0 +1,91 @@
+# Builds the Vela iPhone app on a Mac (GitHub's macOS runner) to prove it compiles.
+# No signing: no certificates, no Apple account, no secrets. Signing and TestFlight need the owner's
+# own Apple Developer account and are done on a Mac (see mobile/ios/README.md).
+name: iOS build
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'mobile/ios/**'
+      - 'mobile/package.json'
+      - 'mobile/package-lock.json'
+      - 'mobile/capacitor.config.json'
+      - '.github/workflows/ios-build.yml'
+  pull_request:
+    paths:
+      - 'mobile/ios/**'
+      - 'mobile/package.json'
+      - 'mobile/package-lock.json'
+      - 'mobile/capacitor.config.json'
+      - '.github/workflows/ios-build.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: mobile
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: mobile/package-lock.json
+
+      - name: Pick the newest Xcode
+        run: |
+          ls -d /Applications/Xcode*.app
+          XC=$(ls -d /Applications/Xcode_*.app | sort -V | tail -1)
+          sudo xcode-select -s "$XC"
+          xcodebuild -version
+
+      - name: Install packages
+        run: npm ci
+
+      - name: Copy the web app and sync iOS
+        run: |
+          npm run build:web
+          npx cap sync ios
+
+      - name: Build for the iPhone simulator (unsigned)
+        working-directory: mobile/ios/App
+        run: |
+          set -o pipefail
+          xcodebuild -project App.xcodeproj -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
+            -derivedDataPath "$RUNNER_TEMP/dd-sim" \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee "$RUNNER_TEMP/build-simulator.log" | grep -E "error:|BUILD (SUCCEEDED|FAILED)|\*\* " || true
+          grep -q "BUILD SUCCEEDED" "$RUNNER_TEMP/build-simulator.log"
+
+      - name: Build an unsigned iPhone archive (Release)
+        working-directory: mobile/ios/App
+        run: |
+          set -o pipefail
+          xcodebuild -project App.xcodeproj -scheme App -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/dd-device" \
+            -archivePath "$RUNNER_TEMP/Vela.xcarchive" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" archive 2>&1 | tee "$RUNNER_TEMP/build-archive.log" | grep -E "error:|ARCHIVE (SUCCEEDED|FAILED)|\*\* " || true
+          grep -q "ARCHIVE SUCCEEDED" "$RUNNER_TEMP/build-archive.log"
+
+      - name: Check the widget extension is inside the app
+        run: |
+          APP="$RUNNER_TEMP/Vela.xcarchive/Products/Applications/App.app"
+          ls "$APP/PlugIns"
+          test -d "$APP/PlugIns/VelaWidgetsExtension.appex"
+          test -f "$APP/public/index.html"
+
+      - name: Keep the build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-build-logs
+          path: ${{ runner.temp }}/build-*.log
+          if-no-files-found: ignore
