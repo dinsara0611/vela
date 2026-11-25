@@ -54,6 +54,9 @@ const LOCK_AFTER_MS = 60 * 1000;
    ========================================================================= */
 const isNative = () => !!(window.Capacitor && typeof window.Capacitor.isNativePlatform === 'function' && window.Capacitor.isNativePlatform());
 const nativePlugin = (name) => (isNative() && window.Capacitor.Plugins ? window.Capacitor.Plugins[name] : null);
+// The iPhone app (same web app, Capacitor iOS). iPhone does not let apps read SMS or other apps' notifications.
+const isIOS = () => isNative() && typeof window.Capacitor.getPlatform === 'function' && window.Capacitor.getPlatform() === 'ios';
+const phoneName = () => (isIOS() ? 'iPhone' : 'Android');
 // Screen privacy (Android app): black in screenshots, screen recording, recent apps and Circle to Search.
 let secureScreenOn = true;
 const updateSecureScreenRow = async () => {
@@ -63,6 +66,12 @@ const updateSecureScreenRow = async () => {
     row.hidden = !sp;
     if (!sp) return;
     try { secureScreenOn = !!(await sp.get()).on; } catch (e) { /* older app build */ row.hidden = true; return; }
+    if (isIOS()) {
+        // iPhone does not let apps block screenshots or screen recording: Vela can only hide itself in the app switcher.
+        row.querySelector('.setting-title').textContent = 'Hide in the app switcher';
+        row.querySelector('.setting-desc').textContent = 'When you leave Vela, the app switcher shows a black screen instead of your money. iPhone doesn’t let apps block screenshots.';
+        $('switch-secure-screen').setAttribute('aria-label', 'Hide in the app switcher');
+    }
     setSwitch($('switch-secure-screen'), secureScreenOn);
 };
 const toggleSecureScreen = async () => {
@@ -71,7 +80,7 @@ const toggleSecureScreen = async () => {
     try {
         secureScreenOn = !!(await sp.set({ on: !secureScreenOn })).on;
         setSwitch($('switch-secure-screen'), secureScreenOn);
-        showToast(secureScreenOn ? 'Vela is hidden in screenshots and recent apps' : 'Screenshots allowed. Turn it back on when you’re done.', secureScreenOn ? 'success' : 'info');
+        showToast(isIOS() ? (secureScreenOn ? 'Vela is hidden in the app switcher' : 'Vela shows in the app switcher') : secureScreenOn ? 'Vela is hidden in screenshots and recent apps' : 'Screenshots allowed. Turn it back on when you’re done.', secureScreenOn ? 'success' : 'info');
     } catch (e) { showToast('Couldn’t change it on this phone.', 'error'); }
 };
 const authRedirectUrl = () => (isNative() ? NATIVE_AUTH_REDIRECT : window.location.origin + window.location.pathname);
@@ -2393,7 +2402,7 @@ const enableReminders = async (on) => {
     }
     if (on && !(await ensureNotifPermission(ln, true))) {
         setSwitch($('switch-reminders'), false);
-        showToast('Notifications are blocked. Open Android Settings > Apps > Vela > Notifications and allow them.', 'warning');
+        showToast(isIOS() ? 'Notifications are blocked. Open iPhone Settings > Vela > Notifications and allow them.' : 'Notifications are blocked. Open Android Settings > Apps > Vela > Notifications and allow them.', 'warning');
         renderSettings();
         return;
     }
@@ -4418,7 +4427,7 @@ const scanSms = async (show = true) => {
 };
 const enableSmsTracking = async (on) => {
     const plugin = smsPlugin();
-    if (!plugin) { showToast('Reading bank SMS works in the Android app. Here you can paste a bank SMS instead.', 'info'); setSwitch($('switch-sms'), false); return; }
+    if (!plugin) { showToast(isIOS() ? 'iPhone doesn’t let apps read SMS. Copy a bank SMS and paste it in Vela instead.' : 'Reading bank SMS works in the Android app. Here you can paste a bank SMS instead.', 'info'); setSwitch($('switch-sms'), false); return; }
     if (on && bankStatus && bankStatus.smsAvailable === false) { setSwitch($('switch-sms'), false); showToast('This version can’t read SMS. Share or paste a bank SMS instead.', 'info'); return; }
     if (on) {
         let perm = 'prompt';
@@ -4484,6 +4493,27 @@ const applyNativeInsets = async () => {
         const root = document.documentElement.style;
         ['top', 'right', 'bottom', 'left'].forEach((k) => { if (Number.isFinite(i[k])) root.setProperty(`--safe-area-inset-${k}`, `${Math.round(i[k] * 10) / 10}px`); });
     } catch (e) { /* the page keeps using env() */ }
+};
+const takeBankTexts = async () => {
+    const p = nativePlugin('BankText');
+    if (!p) return;
+    let texts = [];
+    try { texts = ((await p.take()) || {}).texts || []; } catch (e) { return; }
+    const msgs = texts.map((t) => String(t || '').trim()).filter(Boolean)
+        .map((body) => ({ id: `shared-${hashToInt(body)}`, address: 'Shared', body, date: Date.now(), shared: true }));
+    if (!msgs.length) return;
+    const n = smsTake(msgs);
+    await splashDone;
+    if (n) haptic('MEDIUM');
+    if (smsQueue.length && !isLocked()) showSmsSheet();
+    else if (!n) showToast('That bank message was already checked, or it isn’t a transaction.', 'info');
+    refreshBankStatus();
+};
+const initBankText = () => {
+    const p = nativePlugin('BankText');
+    if (!p) return;
+    p.addListener('bankText', () => takeBankTexts());
+    setTimeout(takeBankTexts, 1800);
 };
 const initSms = () => {
     const plugin = smsPlugin();
@@ -4589,7 +4619,9 @@ const renderBankConnections = () => {
     const noNtf = !s || s.notifAvailable === false;
     const shareOnly = !plugin || (noSms && noNtf);
     $('bank-web-note').hidden = !shareOnly;
-    $('bank-web-note').innerHTML = !plugin
+    $('bank-web-note').innerHTML = isIOS()
+        ? 'iPhone doesn’t let any app read your SMS or other apps’ notifications, so Vela can’t find bank transactions by itself. To add one, copy the bank SMS and tap <strong>Check a bank SMS</strong>. You can also make a Shortcuts automation that sends bank messages to Vela with the action <strong>Check a bank SMS in Vela</strong>. Vela always asks before adding anything.'
+        : !plugin
         ? 'Automatic SMS detection works in the Vela Android app. Here you can paste a bank SMS to add it.'
         : 'This version of Vela doesn’t read SMS by itself (Google blocks SMS access for apps installed from WhatsApp, a browser or Google Play without approval). Add ComBank transactions by <strong>sharing a bank SMS to Vela</strong> from your Messages app, or tap <strong>Check a bank SMS</strong>. Automatic detection needs <strong>Vela Full</strong>.';
     $('bank-conns').hidden = shareOnly;
@@ -4612,7 +4644,7 @@ const renderBankConnections = () => {
     $('bank-sms-state').textContent = sms.text;
     $('bank-sms-help').hidden = !sms.help;
     $('bank-sms-help').innerHTML = sms.help || '';
-    const overall = !plugin ? { state: 'off', text: 'Android only' } : noSms ? { state: 'off', text: 'Share & paste' } : (s && s.paused) ? { state: 'paused', text: 'Paused' }
+    const overall = isIOS() ? { state: 'off', text: 'Paste & Shortcuts' } : !plugin ? { state: 'off', text: 'Android only' } : noSms ? { state: 'off', text: 'Share & paste' } : (s && s.paused) ? { state: 'paused', text: 'Paused' }
         : [sms, ntf].some((c) => c.state === 'on') ? { state: 'on', text: sms.state === 'on' && ntf.state === 'on' ? 'SMS + apps' : 'Connected' } : [sms, ntf].some((c) => c.state === 'warn') ? { state: 'warn', text: 'Needs attention' } : { state: 'off', text: 'Not connected' };
     $('bank-overall').dataset.state = overall.state;
     $('bank-overall').textContent = overall.text;
@@ -4626,7 +4658,7 @@ const renderBankConnections = () => {
     $('sms-auto-row').hidden = shareOnly;
     const warnNotif = s && (s.smsEnabled || s.notifEnabled) && !s.postNotifications;
     $('bank-notif-warn').hidden = !warnNotif;
-    $('bank-sub').textContent = warnNotif ? 'Vela’s notifications are off: you’ll see new transactions when you open Vela.' : 'All banks: bank SMS and bank / Passbook app alerts';
+    $('bank-sub').textContent = warnNotif ? 'Vela’s notifications are off: you’ll see new transactions when you open Vela.' : isIOS() ? 'All banks: paste a bank SMS or send it from Shortcuts' : 'All banks: bank SMS and bank / Passbook app alerts';
     // Every bank Vela knows by name, with its logo; other named banks and cards are read too, with a review.
     $('bank-chips').innerHTML = SMS_BANKS.map((b) => {
         const br = BRANDS.find((x) => x.slug === b.logo);
@@ -5565,12 +5597,12 @@ const renderSettings = () => {
     $('reminders-desc').textContent = !native
         ? 'Works in the Android app. Here, bills due soon show on Home.'
         : state.config.reminders && notifPermission === 'denied'
-            ? 'Blocked by Android. Allow notifications for Vela in Android settings, then turn this on.'
+            ? `Blocked by ${phoneName()}. Allow notifications for Vela in ${phoneName()} settings, then turn this on.`
             : 'The day before each bill, and every evening at 8 pm.';
     renderBankConnections();
     refreshBankStatus();
     $('report-month-desc').textContent = `Income, spending and categories for ${monthName(activityMonth.y, activityMonth.m)}`;
-    $('app-version').textContent = `Vela ${APP_VERSION}${isNative() ? ' for Android' : ''}. Exchange rates from open.er-api.com`;
+    $('app-version').textContent = `Vela ${APP_VERSION}${isNative() ? ` for ${phoneName()}` : ''}. Exchange rates from open.er-api.com`;
 };
 
 /* =========================================================================
@@ -10356,7 +10388,7 @@ const checkBiometric = async () => {
         const res = await bio.isAvailable({ preferMultipleBiometryType: true });
         biometricAvailable = !!(res && res.isAvailable);
         const t = Number(res && res.biometryType);
-        bioKind = t === 4 || t === 5 ? 'face' : t === 6 ? 'both' : 'finger';
+        bioKind = t === 2 || t === 4 || t === 5 ? 'face' : t === 6 ? 'both' : 'finger';
     } catch (err) {
         biometricAvailable = false;
     }
@@ -10773,6 +10805,7 @@ const onAppVisible = () => {
     if (pendingCount()) flushSync();
     renderActive();
     scanSms();
+    takeBankTexts();
     refreshBankStatus();
     setTimeout(showPaymentsPopup, 900);
     recheckDevice();
@@ -12151,6 +12184,7 @@ const initNative = () => {
     });
     checkBiometric();
     initSms();
+    initBankText();
     if (state.config.reminders) setTimeout(() => scheduleReminders({ ask: true }), 2500);
     const splash = nativePlugin('SplashScreen');
     if (splash) setTimeout(() => splash.hide({ fadeOutDuration: 250 }).catch(() => {}), 150);

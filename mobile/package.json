@@ -2,12 +2,13 @@
   "name": "vela-mobile",
   "version": "4.65.4",
   "private": true,
-  "description": "Vela Android app (Capacitor wrapper around the web app in the repository root).",
+  "description": "Vela Android and iPhone apps (Capacitor wrapper around the web app in the repository root).",
   "scripts": {
     "build:web": "node scripts/build-web.mjs",
     "icons": "node scripts/make-icons.mjs && capacitor-assets generate --android --iconBackgroundColor \"#07070b\" --iconBackgroundColorDark \"#07070b\" --splashBackgroundColor \"#07070b\" --splashBackgroundColorDark \"#07070b\"",
     "sync": "npm run build:web && cap sync android",
-    "apk": "npm run sync && cd android && gradlew.bat assembleRelease"
+    "apk": "npm run sync && cd android && gradlew.bat assembleRelease",
+    "sync:ios": "npm run build:web && cap sync ios"
   },
   "dependencies": {
     "@capacitor/android": "8.5.3",
@@ -16,6 +17,7 @@
     "@capacitor/core": "8.5.3",
     "@capacitor/filesystem": "8.1.5",
     "@capacitor/haptics": "8.0.2",
+    "@capacitor/ios": "8.5.3",
     "@capacitor/local-notifications": "8.3.1",
     "@capacitor/share": "8.0.3",
     "@capacitor/splash-screen": "8.0.2",
